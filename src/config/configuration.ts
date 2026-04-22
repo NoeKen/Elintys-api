@@ -1,7 +1,6 @@
 export default () => ({
   port: parseInt(process.env.PORT ?? '3001', 10),
   nodeEnv: process.env.NODE_ENV ?? 'development',
-  mongoUri: process.env.MONGODB_URI,
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',

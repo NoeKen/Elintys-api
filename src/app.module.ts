@@ -25,15 +25,15 @@ import { EmailsModule } from './modules/emails/emails.module';
       envFilePath: '.env',
     }),
     MongooseModule.forRootAsync({
+      imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (configService: ConfigService) => {
-        const uri =
-          configService.get<string>('mongoUri') ??
-          configService.get<string>('MONGODB_URI') ??
-          process.env.MONGODB_URI;
+        const uri = configService.get<string>('MONGODB_URI');
 
         if (!uri) {
-          throw new Error('Missing MongoDB connection string. Set MONGODB_URI in the environment.');
+          throw new Error(
+            'MONGODB_URI is not defined. Please set it in your environment variables.',
+          );
         }
 
         return { uri };
