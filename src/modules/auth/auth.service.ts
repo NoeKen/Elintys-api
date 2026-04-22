@@ -7,6 +7,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
+import { SignOptions } from 'jsonwebtoken';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { User, UserDocument } from './user.schema';
@@ -18,6 +19,8 @@ interface TokenPair {
   accessToken: string;
   refreshToken: string;
 }
+
+type JwtExpiresIn = SignOptions['expiresIn'];
 
 @Injectable()
 export class AuthService {
@@ -96,14 +99,19 @@ export class AuthService {
   }
 
   private generateTokens(payload: JwtPayload): TokenPair {
+    const accessTokenExpiresIn = this.configService.getOrThrow('jwt.expiresIn') as JwtExpiresIn;
+    const refreshTokenExpiresIn = this.configService.getOrThrow(
+      'jwt.refreshExpiresIn',
+    ) as JwtExpiresIn;
+
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.getOrThrow<string>('jwt.secret'),
-      expiresIn: this.configService.getOrThrow<string>('jwt.expiresIn'),
+      expiresIn: accessTokenExpiresIn,
     });
 
     const refreshToken = this.jwtService.sign(payload, {
       secret: this.configService.getOrThrow<string>('jwt.refreshSecret'),
-      expiresIn: this.configService.getOrThrow<string>('jwt.refreshExpiresIn'),
+      expiresIn: refreshTokenExpiresIn,
     });
 
     return { accessToken, refreshToken };
