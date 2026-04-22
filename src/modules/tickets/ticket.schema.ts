@@ -73,4 +73,3 @@ export const TicketPurchaseSchema = SchemaFactory.createForClass(TicketPurchase)
 TicketPurchaseSchema.index({ event: 1 });
 TicketPurchaseSchema.index({ buyerId: 1 });
 TicketPurchaseSchema.index({ guestEmail: 1 });
-TicketPurchaseSchema.index({ qrCode: 1 });

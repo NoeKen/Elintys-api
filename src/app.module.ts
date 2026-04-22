@@ -26,9 +26,18 @@ import { EmailsModule } from './modules/emails/emails.module';
     }),
     MongooseModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.getOrThrow<string>('mongoUri'),
-      }),
+      useFactory: (configService: ConfigService) => {
+        const uri =
+          configService.get<string>('mongoUri') ??
+          configService.get<string>('MONGODB_URI') ??
+          process.env.MONGODB_URI;
+
+        if (!uri) {
+          throw new Error('Missing MongoDB connection string. Set MONGODB_URI in the environment.');
+        }
+
+        return { uri };
+      },
     }),
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     EmailsModule,

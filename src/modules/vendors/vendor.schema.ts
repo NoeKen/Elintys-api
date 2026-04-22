@@ -68,6 +68,5 @@ export class VendorProfile {
 }
 
 export const VendorProfileSchema = SchemaFactory.createForClass(VendorProfile);
-VendorProfileSchema.index({ user: 1 });
 VendorProfileSchema.index({ category: 1, isActive: 1 });
 VendorProfileSchema.index({ rating: -1 });

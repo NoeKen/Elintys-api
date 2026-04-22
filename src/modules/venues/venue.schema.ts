@@ -61,6 +61,5 @@ export class VenueProfile {
 }
 
 export const VenueProfileSchema = SchemaFactory.createForClass(VenueProfile);
-VenueProfileSchema.index({ user: 1 });
 VenueProfileSchema.index({ 'address.city': 1, isActive: 1 });
 VenueProfileSchema.index({ capacity: 1 });
