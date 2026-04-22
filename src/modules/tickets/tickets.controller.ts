@@ -9,6 +9,7 @@ import {
   Post,
   Put,
 } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { TicketsService } from './tickets.service';
 import { CreateTicketTypeDto } from './dto/create-ticket-type.dto';
 import { UpdateTicketTypeDto } from './dto/update-ticket-type.dto';
@@ -16,12 +17,20 @@ import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.de
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
+@ApiTags('Tickets')
+@ApiBearerAuth('access-token')
 @Controller('ticket-types')
 export class TicketsController {
   constructor(private readonly ticketsService: TicketsService) {}
 
   @Post('events/:eventId')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Créer un type de billet pour un événement' })
+  @ApiParam({ name: 'eventId', description: 'MongoDB ObjectId de l\'événement' })
+  @ApiResponse({ status: 201, description: 'Type de billet créé' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Accès refusé' })
+  @ApiResponse({ status: 404, description: 'Événement introuvable' })
   createType(
     @Param('eventId') eventId: string,
     @CurrentUser() user: JwtPayload,
@@ -32,12 +41,22 @@ export class TicketsController {
 
   @Public()
   @Get('events/:eventId')
+  @ApiOperation({ summary: 'Lister les types de billets d\'un événement' })
+  @ApiParam({ name: 'eventId', description: 'MongoDB ObjectId de l\'événement' })
+  @ApiResponse({ status: 200, description: 'Liste des types de billets' })
+  @ApiResponse({ status: 404, description: 'Événement introuvable' })
   findTypes(@Param('eventId') eventId: string) {
     return this.ticketsService.findTicketTypes(eventId);
   }
 
   @Put(':id')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Mettre à jour un type de billet' })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId du type de billet' })
+  @ApiResponse({ status: 200, description: 'Type de billet mis à jour' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Accès refusé' })
+  @ApiResponse({ status: 404, description: 'Type de billet introuvable' })
   updateType(
     @Param('id') id: string,
     @CurrentUser() user: JwtPayload,
@@ -49,11 +68,20 @@ export class TicketsController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Supprimer un type de billet' })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId du type de billet' })
+  @ApiResponse({ status: 204, description: 'Type de billet supprimé' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Accès refusé' })
+  @ApiResponse({ status: 404, description: 'Type de billet introuvable' })
   removeType(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
     return this.ticketsService.removeTicketType(id, user.sub);
   }
 
   @Get('my')
+  @ApiOperation({ summary: 'Mes billets achetés' })
+  @ApiResponse({ status: 200, description: 'Liste des billets de l\'utilisateur connecté' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
   myTickets(@CurrentUser() user: JwtPayload) {
     return this.ticketsService.findMyTickets(user.sub);
   }
