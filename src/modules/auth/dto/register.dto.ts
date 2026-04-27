@@ -1,4 +1,4 @@
-import { IsEmail, IsEnum, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsEmail, IsEnum, IsString, ArrayMinSize, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '../user.schema';
@@ -21,7 +21,9 @@ export class RegisterDto {
   @MaxLength(72)
   password!: string;
 
-  @ApiProperty({ enum: UserRole, example: UserRole.PARTICIPANT, description: 'Rôle du compte' })
-  @IsEnum(UserRole)
-  role!: UserRole;
+  @ApiProperty({ enum: UserRole, isArray: true, example: [UserRole.ORGANISATEUR], description: 'Rôles du compte' })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsEnum(UserRole, { each: true })
+  roles!: UserRole[];
 }
