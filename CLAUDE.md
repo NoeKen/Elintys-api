@@ -225,4 +225,56 @@ CONTRIBUTING.md             Conventions complètes de développement
 
 ---
 
+---
+
+## Outils & Skills disponibles
+
+> Consulter le skill correspondant **avant** d'exécuter toute tâche dans ces catégories.
+> Invoquer via l'outil `Skill` — ne jamais supposer le contenu d'un skill, toujours le lire.
+
+### `superpowers:systematic-debugging`
+**Quand** : dès qu'un test échoue, qu'une exception inattendue est levée, ou qu'un comportement ne correspond pas aux specs.
+**Sur Elintys-api** : erreurs Mongoose, guards rejetant des requêtes légitimes, tokens JWT mal vérifiés.
+
+### `superpowers:test-driven-development`
+**Quand** : avant d'implémenter tout nouveau service ou méthode de service.
+**Sur Elintys-api** : chaque service doit avoir son `.spec.ts` AAA, coverage cible 80%.
+Format obligatoire : `'devrait [comportement attendu]'`.
+
+### `superpowers:writing-plans`
+**Quand** : avant d'implémenter un module complet (PaymentsModule, AiModule, EmailsModule).
+**Sur Elintys-api** : produire un plan schema → dto → service → controller → module → tests avant tout code.
+
+### `superpowers:verification-before-completion`
+**Quand** : avant toute déclaration de tâche terminée.
+**Sur Elintys-api** : `npm run lint && npx tsc --noEmit && npm test` doivent passer. Jamais de `@ts-ignore`.
+
+### `superpowers:requesting-code-review` + `code-review:code-review`
+**Quand** : après chaque module ou endpoint implémenté, avant livraison.
+**Checklist Elintys-api minimum** :
+- Zéro `any` TypeScript
+- Guards présents sur toutes les routes non-`@Public()`
+- Messages d'erreur en français québécois
+- `.lean()` sur toutes les lectures Mongoose
+- Pagination sur tous les endpoints de liste
+
+### `vibesec:vibesec`
+**Quand** : sur tout endpoint `@Public()`, tout webhook, tout module auth/paiements.
+**Checklist Elintys-api minimale** :
+- Webhook Stripe avec vérification HMAC (jamais sans)
+- Refresh token vérifié par JWT **et** bcrypt hash DB
+- CORS avec `frontendUrl` explicite, jamais `*`
+- Rate limiting sur `/auth/login` et `/auth/forgot-password`
+- Aucun secret `process.env.*` direct — toujours `ConfigService.getOrThrow()`
+
+### `superpowers:brainstorming`
+**Quand** : avant d'implémenter une fonctionnalité dont les specs sont ambiguës.
+**Sur Elintys-api** : architecture Stripe (subscriptions vs one-time), logique de scan QR, logique de rattachement invité→compte.
+
+### `claude-mem:make-plan` + `claude-mem:do`
+**Quand** : pour planifier puis exécuter un module multi-fichiers (ex: PaymentsModule complet).
+Utiliser `make-plan` pour produire le plan, puis `do` pour l'exécuter par phases.
+
+---
+
 *Dernière mise à jour : Avril 2026 — @NoeKen*

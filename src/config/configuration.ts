@@ -14,6 +14,9 @@ export default () => ({
   resend: {
     apiKey: process.env.RESEND_API_KEY,
   },
+  email: {
+    from: process.env.EMAIL_FROM ?? 'Elintys <no-reply@elintys.com>',
+  },
   cloudinary: {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME,
     apiKey: process.env.CLOUDINARY_API_KEY,
