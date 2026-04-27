@@ -1,27 +1,31 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { TicketsController } from './tickets.controller';
+import { TicketTypesController, TicketsController } from './tickets.controller';
 import { TicketsService } from './tickets.service';
 
 const mockTicketsService = {
-  createTicketType: jest.fn(),
-  findTicketTypes: jest.fn(),
-  updateTicketType: jest.fn(),
-  removeTicketType: jest.fn(),
-  findMyTickets: jest.fn(),
+  createTicketType:          jest.fn(),
+  findTicketTypes:           jest.fn(),
+  updateTicketType:          jest.fn(),
+  removeTicketType:          jest.fn(),
+  findMyTickets:             jest.fn(),
+  purchase:                  jest.fn(),
+  scan:                      jest.fn(),
+  linkGuestPurchases:        jest.fn(),
+  createPurchasesFromCheckout: jest.fn(),
 };
 
 const mockUser = { sub: 'user-id-123', email: 'jean@test.com', roles: ['organisateur'] };
 
-describe('TicketsController', () => {
-  let controller: TicketsController;
+describe('TicketTypesController', () => {
+  let controller: TicketTypesController;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      controllers: [TicketsController],
+      controllers: [TicketTypesController],
       providers: [{ provide: TicketsService, useValue: mockTicketsService }],
     }).compile();
 
-    controller = module.get<TicketsController>(TicketsController);
+    controller = module.get<TicketTypesController>(TicketTypesController);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -40,7 +44,7 @@ describe('TicketsController', () => {
 
   // ── GET /ticket-types/events/:eventId ──
   describe('findTypes', () => {
-    it('délègue à ticketsService.findTicketTypes avec l\'eventId', async () => {
+    it("délègue à ticketsService.findTicketTypes avec l'eventId", async () => {
       mockTicketsService.findTicketTypes.mockResolvedValue([]);
 
       await controller.findTypes('event-id');
@@ -71,8 +75,23 @@ describe('TicketsController', () => {
       expect(mockTicketsService.removeTicketType).toHaveBeenCalledWith('tt-id', mockUser.sub);
     });
   });
+});
 
-  // ── GET /ticket-types/my ──
+describe('TicketsController', () => {
+  let controller: TicketsController;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [TicketsController],
+      providers: [{ provide: TicketsService, useValue: mockTicketsService }],
+    }).compile();
+
+    controller = module.get<TicketsController>(TicketsController);
+  });
+
+  afterEach(() => jest.clearAllMocks());
+
+  // ── GET /tickets/my ──
   describe('myTickets', () => {
     it('délègue à ticketsService.findMyTickets avec user.sub', async () => {
       mockTicketsService.findMyTickets.mockResolvedValue([]);
@@ -80,6 +99,34 @@ describe('TicketsController', () => {
       await controller.myTickets(mockUser as never);
 
       expect(mockTicketsService.findMyTickets).toHaveBeenCalledWith(mockUser.sub);
+    });
+  });
+
+  // ── POST /tickets/purchase ──
+  describe('purchase', () => {
+    it('délègue à ticketsService.purchase avec user.sub et le DTO', async () => {
+      const dto = { ticketTypeId: 'tt-id', quantity: 2 };
+      mockTicketsService.purchase.mockResolvedValue([{ _id: 'p1' }, { _id: 'p2' }]);
+
+      const result = await controller.purchase(mockUser as never, dto as never);
+
+      expect(mockTicketsService.purchase).toHaveBeenCalledWith(mockUser.sub, dto);
+      expect(result).toHaveLength(2);
+    });
+  });
+
+  // ── GET /tickets/scan/:qrCode ──
+  describe('scan', () => {
+    it('délègue à ticketsService.scan avec le code QR et user.sub', async () => {
+      mockTicketsService.scan.mockResolvedValue({
+        purchase: { _id: 'p1', status: 'valid' },
+        message: 'Billet scanné avec succès.',
+      });
+
+      const result = await controller.scan('ABCD-EFGH-IJKL', mockUser as never);
+
+      expect(mockTicketsService.scan).toHaveBeenCalledWith('ABCD-EFGH-IJKL', mockUser.sub);
+      expect(result.message).toBe('Billet scanné avec succès.');
     });
   });
 });
