@@ -3,7 +3,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { VenuesService } from './venues.service';
-import { VenueProfile } from './venue.schema';
+import { VenueProfile, VenueBookingSchema } from './venue.schema';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -134,6 +134,19 @@ describe('VenuesService', () => {
       venueModel.findById.mockReturnValue(makeChainable(null));
 
       await expect(service.update('id-inexistant', userId, {})).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('VenueBooking schema — source et externalContact (CDC v3)', () => {
+    it('devrait avoir source à platform par défaut', () => {
+      const path = VenueBookingSchema.path('source');
+      expect(path).toBeDefined();
+      expect((path as unknown as { defaultValue: string }).defaultValue).toBe('platform');
+    });
+
+    it('devrait avoir externalContact défini dans le schéma', () => {
+      const path = VenueBookingSchema.path('externalContact');
+      expect(path).toBeDefined();
     });
   });
 });

@@ -70,3 +70,66 @@ export class VendorProfile {
 export const VendorProfileSchema = SchemaFactory.createForClass(VendorProfile);
 VendorProfileSchema.index({ category: 1, isActive: 1 });
 VendorProfileSchema.index({ rating: -1 });
+
+export type VendorRequestDocument = HydratedDocument<VendorRequest>;
+
+export enum VendorRequestStatus {
+  PENDING = 'pending',
+  ACCEPTED = 'accepted',
+  DECLINED = 'declined',
+}
+
+export enum VendorRequestSource {
+  PLATFORM = 'platform',
+  MANUAL = 'manual',
+}
+
+export class ExternalVendorContact {
+  name!: string;
+  email?: string;
+  phone?: string;
+  category?: string;
+}
+
+@Schema({ timestamps: true })
+export class VendorRequest {
+  @Prop({ type: Types.ObjectId, ref: 'Event', required: true })
+  event!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'VendorProfile' })
+  vendor?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  organizer!: Types.ObjectId;
+
+  @Prop({ type: String, maxlength: 500 })
+  message?: string;
+
+  @Prop({
+    type: String,
+    enum: Object.values(VendorRequestStatus),
+    default: VendorRequestStatus.PENDING,
+  })
+  status!: VendorRequestStatus;
+
+  @Prop({ type: String, maxlength: 500 })
+  responseMessage?: string;
+
+  @Prop()
+  respondedAt?: Date;
+
+  @Prop({
+    type: String,
+    enum: Object.values(VendorRequestSource),
+    default: VendorRequestSource.PLATFORM,
+  })
+  source!: VendorRequestSource;
+
+  @Prop({ type: Object, default: null })
+  externalContact?: ExternalVendorContact | null;
+}
+
+export const VendorRequestSchema = SchemaFactory.createForClass(VendorRequest);
+VendorRequestSchema.index({ event: 1 });
+VendorRequestSchema.index({ vendor: 1, status: 1 });
+VendorRequestSchema.index({ organizer: 1 });
