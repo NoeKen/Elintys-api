@@ -38,7 +38,6 @@ export class User {
   passwordResetExpires?: Date;
 
   @Prop({ select: false })
-  /** @deprecated Use refreshTokenHash instead */
   refreshToken?: string;
 
   @Prop({ select: false })

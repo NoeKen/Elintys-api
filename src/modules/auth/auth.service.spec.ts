@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
-import { User } from './user.schema';
+import { User, UserRole } from './user.schema';
 import { EmailsService } from '../emails/emails.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { Types } from 'mongoose';
@@ -109,7 +109,7 @@ describe('AuthService', () => {
         fullName: 'Jean Tremblay',
         email: 'jean@test.com',
         password: 'motdepasse123',
-        roles: ['organisateur' as never],
+        roles: [UserRole.ORGANISATEUR],
       });
 
       expect(result).toHaveProperty('accessToken');
@@ -129,7 +129,7 @@ describe('AuthService', () => {
           fullName: 'Jean',
           email: 'jean@test.com',
           password: 'motdepasse123',
-          roles: ['organisateur' as never],
+          roles: [UserRole.ORGANISATEUR],
         }),
       ).rejects.toThrow(ConflictException);
       expect(userModel.create).not.toHaveBeenCalled();
