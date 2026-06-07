@@ -103,6 +103,7 @@ export class TicketsService {
           ticketType: new Types.ObjectId(dto.ticketTypeId),
           buyerId: buyerId ? new Types.ObjectId(buyerId) : null,
           guestEmail: dto.guestEmail,
+          guestName: dto.guestName ?? null,
           price: tt.price,
           qrCode: generateQRCode(dto.ticketTypeId),
           status: TicketPurchaseStatus.VALID,

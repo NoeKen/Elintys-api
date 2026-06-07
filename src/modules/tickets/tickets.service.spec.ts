@@ -314,7 +314,7 @@ describe('TicketsService', () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(freeTT));
 
       await expect(
-        service.purchase(null, { ticketTypeId, quantity: 1 } as never),
+        service.purchase(null as unknown as string, { ticketTypeId, quantity: 1 } as PurchaseTicketDto),
       ).rejects.toThrow(BadRequestException);
     });
   });
