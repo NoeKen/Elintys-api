@@ -1,4 +1,4 @@
-import { IsEmail, IsInt, IsMongoId, IsOptional, IsPhoneNumber, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsEmail, IsInt, IsMongoId, IsOptional, IsPhoneNumber, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -20,10 +20,10 @@ export class PurchaseTicketDto {
   guestEmail?: string;
 
   @ApiPropertyOptional({ example: 'Marie Dupuis', description: 'Nom de l\'invité' })
-  @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @ValidateIf(o => !!o.guestEmail)
   @IsString()
   @MaxLength(100)
+  @Transform(({ value }: { value: string }) => value?.trim())
   guestName?: string;
 
   @ApiPropertyOptional({ example: '+15141234567', description: 'Téléphone de l\'invité' })

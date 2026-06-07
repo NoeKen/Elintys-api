@@ -50,6 +50,9 @@ export class TicketPurchase {
   @Prop({ trim: true, lowercase: true })
   guestEmail?: string;
 
+  @Prop({ trim: true, maxlength: 100 })
+  guestName?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'TicketType', required: true })
   ticketType!: Types.ObjectId;
 

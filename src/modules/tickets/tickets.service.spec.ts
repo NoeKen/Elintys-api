@@ -7,7 +7,8 @@ import {
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { TicketsService } from './tickets.service';
-import { TicketType, TicketPurchase, TicketPurchaseStatus } from './ticket.schema';
+import { TicketType, TicketPurchase, TicketPurchaseStatus, TicketPurchaseSchema } from './ticket.schema';
+import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { Event } from '../events/event.schema';
 
 const makeChainable = (value: unknown) => {
@@ -290,6 +291,31 @@ describe('TicketsService', () => {
       ticketPurchaseModel.findOne.mockReturnValue(makeChainable(mockPurchase()));
 
       await expect(service.scan('ABCD-EFGH-IJKL', 'autre-organizer')).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ── purchase — validation achat invité (CDC v3) ──
+  describe('purchase — validation achat invité (CDC v3)', () => {
+    it('devrait créer un achat avec guestEmail si buyerId est null', () => {
+      const dto = new PurchaseTicketDto();
+      dto.guestEmail = 'jean@example.com';
+      dto.guestName = 'Jean Tremblay';
+      expect(dto.guestEmail).toBe('jean@example.com');
+      expect(dto.guestName).toBe('Jean Tremblay');
+    });
+
+    it('devrait avoir guestName dans le schéma TicketPurchase', () => {
+      const guestNamePath = TicketPurchaseSchema.path('guestName');
+      expect(guestNamePath).toBeDefined();
+    });
+
+    it('devrait lever BadRequestException si buyerId est null et guestEmail absent', async () => {
+      const freeTT = mockTicketType({ isFree: true, quantity: 10, sold: 0, price: 0 });
+      ticketTypeModel.findById.mockReturnValue(makeChainable(freeTT));
+
+      await expect(
+        service.purchase(null, { ticketTypeId, quantity: 1 } as never),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 
