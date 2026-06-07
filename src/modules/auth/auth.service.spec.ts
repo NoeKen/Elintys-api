@@ -257,6 +257,23 @@ describe('AuthService', () => {
     });
   });
 
+  // ── User schema — nouveaux champs CDC v3 ──
+  describe('User schema — nouveaux champs CDC v3', () => {
+    it('devrait avoir referralBalance à 0 par défaut selon le schéma Mongoose', () => {
+      // Les defaults Mongoose ne s'appliquent pas via new User() — on vérifie via UserSchema
+      const { UserSchema } = jest.requireActual('./user.schema') as typeof import('./user.schema');
+      const defaultValue = (UserSchema.path('referralBalance') as { defaultValue?: unknown }).defaultValue;
+      expect(defaultValue).toBe(0);
+    });
+
+    it('devrait avoir subscriptions comme tableau vide par défaut selon le schéma Mongoose', () => {
+      const { UserSchema } = jest.requireActual('./user.schema') as typeof import('./user.schema');
+      const defaultFn = (UserSchema.path('subscriptions') as { defaultValue?: unknown }).defaultValue;
+      const defaultVal = typeof defaultFn === 'function' ? defaultFn() : defaultFn;
+      expect(defaultVal).toEqual([]);
+    });
+  });
+
   // ── getMe ──
   describe('getMe', () => {
     it('retourne le profil utilisateur sans les champs sensibles', async () => {

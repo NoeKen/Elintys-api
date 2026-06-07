@@ -38,10 +38,17 @@ export class User {
   passwordResetExpires?: Date;
 
   @Prop({ select: false })
+  /** @deprecated Use refreshTokenHash instead */
   refreshToken?: string;
 
+  @Prop({ select: false })
+  refreshTokenHash?: string;
+
+  @Prop({ type: Number, default: 0, min: 0 })
+  referralBalance!: number;
+
   @Prop({ type: [Object], default: [] })
-  subscriptions!: object[];
+  subscriptions!: Record<string, unknown>[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
