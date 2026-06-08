@@ -14,6 +14,7 @@ import { TicketsService } from './tickets.service';
 import { CreateTicketTypeDto } from './dto/create-ticket-type.dto';
 import { UpdateTicketTypeDto } from './dto/update-ticket-type.dto';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
+import { ScanTicketDto } from './dto/scan-ticket.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
@@ -105,16 +106,15 @@ export class TicketsController {
     return this.ticketsService.purchase(user.sub, dto);
   }
 
-  @Get('scan/:qrCode')
+  @Post('scan')
+  @HttpCode(HttpStatus.OK)
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Scanner un billet à l\'entrée d\'un événement' })
-  @ApiParam({ name: 'qrCode', description: 'Code QR du billet au format XXXX-XXXX-XXXX' })
   @ApiResponse({ status: 200, description: 'Résultat du scan' })
   @ApiResponse({ status: 400, description: 'Billet non valide' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  @ApiResponse({ status: 403, description: 'Accès refusé — non organisateur de cet événement' })
-  @ApiResponse({ status: 404, description: 'Code QR introuvable' })
-  scan(@Param('qrCode') qrCode: string, @CurrentUser() user: JwtPayload) {
-    return this.ticketsService.scan(qrCode, user.sub);
+  @ApiResponse({ status: 403, description: 'Accès refusé — non organisateur' })
+  scan(@Body() dto: ScanTicketDto, @CurrentUser() user: JwtPayload) {
+    return this.ticketsService.scan(dto.qrCode, user.sub);
   }
 }

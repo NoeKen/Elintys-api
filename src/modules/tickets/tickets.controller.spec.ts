@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { TicketTypesController, TicketsController } from './tickets.controller';
 import { TicketsService } from './tickets.service';
+import { ScanTicketDto } from './dto/scan-ticket.dto';
+import { JwtPayload } from '../../shared/decorators/current-user.decorator';
 
 const mockTicketsService = {
   createTicketType:          jest.fn(),
@@ -115,15 +117,16 @@ describe('TicketsController', () => {
     });
   });
 
-  // ── GET /tickets/scan/:qrCode ──
+  // ── POST /tickets/scan ──
   describe('scan', () => {
-    it('délègue à ticketsService.scan avec le code QR et user.sub', async () => {
+    it('délègue à ticketsService.scan avec le code QR du body et user.sub', async () => {
       mockTicketsService.scan.mockResolvedValue({
         purchase: { _id: 'p1', status: 'valid' },
         message: 'Billet scanné avec succès.',
       });
 
-      const result = await controller.scan('ABCD-EFGH-IJKL', mockUser as never);
+      const dto: ScanTicketDto = { qrCode: 'ABCD-EFGH-IJKL' };
+      const result = await controller.scan(dto, mockUser as unknown as JwtPayload);
 
       expect(mockTicketsService.scan).toHaveBeenCalledWith('ABCD-EFGH-IJKL', mockUser.sub);
       expect(result.message).toBe('Billet scanné avec succès.');
