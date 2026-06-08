@@ -3,7 +3,10 @@ import { UnauthorizedException } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { ConfigService } from '@nestjs/config';
-import { Response } from 'express';
+import { Request, Response } from 'express';
+import { RegisterDto } from './dto/register.dto';
+import { LoginDto } from './dto/login.dto';
+import { JwtPayload } from '../../shared/decorators/current-user.decorator';
 
 const mockAuthService = {
   register:            jest.fn(),
@@ -59,7 +62,7 @@ describe('AuthController', () => {
         user: { _id: 'new-id', fullName: 'Jean', email: 'jean@test.com', roles: ['organisateur'], isEmailVerified: false },
       });
 
-      const result = await controller.register(dto as never, res as Response);
+      const result = await controller.register(dto as RegisterDto, res as Response);
 
       expect(mockAuthService.register).toHaveBeenCalledWith(dto);
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'refresh_token', expect.any(Object));
@@ -80,7 +83,7 @@ describe('AuthController', () => {
         user: { _id: 'user-id', fullName: 'Jean', email: 'jean@test.com', roles: ['organisateur'], isEmailVerified: false },
       });
 
-      const result = await controller.login(dto as never, res as Response);
+      const result = await controller.login(dto as LoginDto, res as Response);
 
       expect(mockAuthService.login).toHaveBeenCalledWith(dto);
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'refresh_token', expect.any(Object));
@@ -100,7 +103,7 @@ describe('AuthController', () => {
         newRefreshToken: 'new_refresh_token',
       });
 
-      const result = await controller.refresh(req as never, res as Response);
+      const result = await controller.refresh((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.refreshFromCookie).toHaveBeenCalledWith('old_cookie_token');
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'new_refresh_token', expect.any(Object));
@@ -111,7 +114,7 @@ describe('AuthController', () => {
       const req = { cookies: {} };
       const res = mockResponse();
 
-      await expect(controller.refresh(req as never, res as Response))
+      await expect(controller.refresh((req as unknown) as Request, res as Response))
         .rejects.toThrow(UnauthorizedException);
 
       expect(mockAuthService.refreshFromCookie).not.toHaveBeenCalled();
@@ -131,7 +134,7 @@ describe('AuthController', () => {
       };
       mockAuthService.getMe.mockResolvedValue(mockProfile);
 
-      const result = await controller.getMe(mockUser as never);
+      const result = await controller.getMe(mockUser as JwtPayload);
 
       expect(mockAuthService.getMe).toHaveBeenCalledWith(mockUser.sub);
       expect(result).toEqual(mockProfile);
@@ -145,7 +148,7 @@ describe('AuthController', () => {
       const res = mockResponse();
       mockAuthService.logoutFromCookie.mockResolvedValue(undefined);
 
-      const result = await controller.logout(req as never, res as Response);
+      const result = await controller.logout((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith('old_cookie_token');
       expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', { path: '/' });
@@ -157,7 +160,7 @@ describe('AuthController', () => {
       const res = mockResponse();
       mockAuthService.logoutFromCookie.mockResolvedValue(undefined);
 
-      await controller.logout(req as never, res as Response);
+      await controller.logout((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith(undefined);
       expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', { path: '/' });
