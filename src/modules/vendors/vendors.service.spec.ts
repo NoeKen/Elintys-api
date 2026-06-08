@@ -3,7 +3,7 @@ import { ConflictException, ForbiddenException, NotFoundException } from '@nestj
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { VendorsService } from './vendors.service';
-import { VendorProfile, VendorCategory } from './vendor.schema';
+import { VendorProfile, VendorCategory, VendorRequestSchema } from './vendor.schema';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -162,6 +162,19 @@ describe('VendorsService', () => {
       vendorModel.findById.mockReturnValue(makeChainable(null));
 
       await expect(service.update('id-inexistant', userId, {})).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  describe('VendorRequest schema — source et externalContact (CDC v3)', () => {
+    it('devrait avoir source à platform par défaut', () => {
+      const path = VendorRequestSchema.path('source');
+      expect(path).toBeDefined();
+      expect((path as unknown as { defaultValue: string }).defaultValue).toBe('platform');
+    });
+
+    it('devrait avoir externalContact défini dans le schéma', () => {
+      const path = VendorRequestSchema.path('externalContact');
+      expect(path).toBeDefined();
     });
   });
 });

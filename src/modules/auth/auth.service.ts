@@ -17,6 +17,7 @@ import { User, UserDocument } from './user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EmailsService } from '../emails/emails.service';
 import { TicketsService } from '../tickets/tickets.service';
 
@@ -53,7 +54,7 @@ export class AuthService {
 
   async register(dto: RegisterDto): Promise<{ accessToken: string; refreshToken: string; user: PublicUser }> {
     const exists = await this.userModel.findOne({ email: dto.email }).lean().select('_id');
-    if (exists) throw new ConflictException('Un compte existe déjà avec cet courriel.');
+    if (exists) throw new ConflictException(ErrorCodes.EMAIL_TAKEN);
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
@@ -106,7 +107,7 @@ export class AuthService {
       dto.password,
       (user?.password as string | undefined) ?? DUMMY_BCRYPT_HASH,
     );
-    if (!user || !isMatch) throw new UnauthorizedException('Courriel ou mot de passe invalide.');
+    if (!user || !isMatch) throw new UnauthorizedException(ErrorCodes.INVALID_CREDENTIALS);
 
     const userId = (user._id as Types.ObjectId).toString();
     const tokens = this.generateTokens({ sub: userId, email: user.email, roles: user.roles });
@@ -136,7 +137,7 @@ export class AuthService {
         algorithms: ['HS256'],
       });
     } catch {
-      throw new UnauthorizedException('Refresh token invalide ou expiré.');
+      throw new UnauthorizedException(ErrorCodes.REFRESH_TOKEN_INVALID);
     }
 
     const user = await this.userModel
@@ -144,10 +145,10 @@ export class AuthService {
       .select('+refreshToken')
       .lean();
 
-    if (!user?.refreshToken) throw new UnauthorizedException('Session expirée.');
+    if (!user?.refreshToken) throw new UnauthorizedException(ErrorCodes.REFRESH_TOKEN_INVALID);
 
     const isMatch = await bcrypt.compare(cookieToken, user.refreshToken as string);
-    if (!isMatch) throw new UnauthorizedException('Refresh token invalide.');
+    if (!isMatch) throw new UnauthorizedException(ErrorCodes.REFRESH_TOKEN_INVALID);
 
     const tokens = this.generateTokens({
       sub: (user._id as Types.ObjectId).toString(),
@@ -190,7 +191,7 @@ export class AuthService {
       .lean()
       .select('_id fullName email roles isEmailVerified subscriptions createdAt updatedAt');
 
-    if (!user) throw new NotFoundException('Utilisateur introuvable.');
+    if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
     return user as {
       _id: Types.ObjectId;
       fullName: string;
@@ -248,7 +249,7 @@ export class AuthService {
     }
 
     if (!matchedUser) {
-      throw new BadRequestException('Lien de réinitialisation invalide ou expiré.');
+      throw new BadRequestException(ErrorCodes.INVALID_RESET_TOKEN);
     }
 
     const hashedPassword = await bcrypt.hash(newPassword, 12);
@@ -278,7 +279,7 @@ export class AuthService {
     }
 
     if (!matchedUser) {
-      throw new BadRequestException('Lien de vérification invalide ou déjà utilisé.');
+      throw new BadRequestException(ErrorCodes.INVALID_RESET_TOKEN);
     }
 
     await this.userModel.findByIdAndUpdate(matchedUser._id, {

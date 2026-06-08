@@ -77,6 +77,10 @@ export class TicketsService {
 
   // Achat direct de billets gratuits (les billets payants passent par Stripe)
   async purchase(buyerId: string | null, dto: PurchaseTicketDto): Promise<TicketPurchase[]> {
+    if (!buyerId && !dto.guestEmail) {
+      throw new BadRequestException('BUYER_OR_GUEST_REQUIRED');
+    }
+
     const tt = await this.ticketTypeModel
       .findById(dto.ticketTypeId)
       .lean()
@@ -99,6 +103,7 @@ export class TicketsService {
           ticketType: new Types.ObjectId(dto.ticketTypeId),
           buyerId: buyerId ? new Types.ObjectId(buyerId) : null,
           guestEmail: dto.guestEmail,
+          guestName: dto.guestName ?? null,
           price: tt.price,
           qrCode: generateQRCode(dto.ticketTypeId),
           status: TicketPurchaseStatus.VALID,

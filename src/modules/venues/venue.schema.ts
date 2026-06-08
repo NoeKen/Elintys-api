@@ -63,3 +63,79 @@ export class VenueProfile {
 export const VenueProfileSchema = SchemaFactory.createForClass(VenueProfile);
 VenueProfileSchema.index({ 'address.city': 1, isActive: 1 });
 VenueProfileSchema.index({ capacity: 1 });
+
+export type VenueBookingDocument = HydratedDocument<VenueBooking>;
+
+export enum VenueBookingStatus {
+  PENDING = 'pending',
+  CONFIRMED = 'confirmed',
+  CANCELLED = 'cancelled',
+}
+
+export enum VenueBookingSource {
+  PLATFORM = 'platform',
+  MANUAL = 'manual',
+  EXTERNAL = 'external',
+}
+
+export class ExternalVenueContact {
+  name!: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+}
+
+@Schema({ timestamps: true })
+export class VenueBooking {
+  @Prop({ type: Types.ObjectId, ref: 'Event', required: true })
+  event!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'VenueProfile' })
+  venue?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  organizer!: Types.ObjectId;
+
+  @Prop()
+  bookingStart?: Date;
+
+  @Prop()
+  bookingEnd?: Date;
+
+  @Prop({ type: String, maxlength: 500 })
+  message?: string;
+
+  @Prop({
+    type: String,
+    enum: Object.values(VenueBookingStatus),
+    default: VenueBookingStatus.PENDING,
+  })
+  status!: VenueBookingStatus;
+
+  @Prop({ type: Number, min: 0 })
+  totalPrice?: number;
+
+  @Prop({ type: String, default: 'CAD' })
+  currency!: string;
+
+  @Prop({ type: String, maxlength: 500 })
+  responseMessage?: string;
+
+  @Prop()
+  respondedAt?: Date;
+
+  @Prop({
+    type: String,
+    enum: Object.values(VenueBookingSource),
+    default: VenueBookingSource.PLATFORM,
+  })
+  source!: VenueBookingSource;
+
+  @Prop({ type: Object, default: null })
+  externalContact?: ExternalVenueContact | null;
+}
+
+export const VenueBookingSchema = SchemaFactory.createForClass(VenueBooking);
+VenueBookingSchema.index({ event: 1 });
+VenueBookingSchema.index({ venue: 1, status: 1 });
+VenueBookingSchema.index({ organizer: 1 });

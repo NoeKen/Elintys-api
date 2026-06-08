@@ -5,7 +5,8 @@ import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
-import { User } from './user.schema';
+import { User, UserRole } from './user.schema';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EmailsService } from '../emails/emails.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { Types } from 'mongoose';
@@ -109,7 +110,7 @@ describe('AuthService', () => {
         fullName: 'Jean Tremblay',
         email: 'jean@test.com',
         password: 'motdepasse123',
-        roles: ['organisateur' as never],
+        roles: [UserRole.ORGANISATEUR],
       });
 
       expect(result).toHaveProperty('accessToken');
@@ -129,7 +130,7 @@ describe('AuthService', () => {
           fullName: 'Jean',
           email: 'jean@test.com',
           password: 'motdepasse123',
-          roles: ['organisateur' as never],
+          roles: [UserRole.ORGANISATEUR],
         }),
       ).rejects.toThrow(ConflictException);
       expect(userModel.create).not.toHaveBeenCalled();
@@ -165,6 +166,14 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'jean@test.com', password: 'mauvais_mdp' }),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('retourne le code EN INVALID_CREDENTIALS si les identifiants sont invalides', async () => {
+      userModel.findOne.mockReturnValue(makeChainable(null));
+
+      await expect(
+        service.login({ email: 'inexistant@test.com', password: 'mauvais_mdp' }),
+      ).rejects.toThrow(ErrorCodes.INVALID_CREDENTIALS);
     });
 
     it('met à jour le refreshToken hashé en base après connexion réussie', async () => {
@@ -254,6 +263,23 @@ describe('AuthService', () => {
 
       await expect(service.refreshFromCookie('mismatched_token'))
         .rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  // ── User schema — nouveaux champs CDC v3 ──
+  describe('User schema — nouveaux champs CDC v3', () => {
+    it('devrait avoir referralBalance à 0 par défaut selon le schéma Mongoose', () => {
+      // Les defaults Mongoose ne s'appliquent pas via new User() — on vérifie via UserSchema
+      const { UserSchema } = jest.requireActual('./user.schema') as typeof import('./user.schema');
+      const defaultValue = (UserSchema.path('referralBalance') as { defaultValue?: unknown }).defaultValue;
+      expect(defaultValue).toBe(0);
+    });
+
+    it('devrait avoir subscriptions comme tableau vide par défaut selon le schéma Mongoose', () => {
+      const { UserSchema } = jest.requireActual('./user.schema') as typeof import('./user.schema');
+      const defaultFn = (UserSchema.path('subscriptions') as { defaultValue?: unknown }).defaultValue;
+      const defaultVal = typeof defaultFn === 'function' ? defaultFn() : defaultFn;
+      expect(defaultVal).toEqual([]);
     });
   });
 
