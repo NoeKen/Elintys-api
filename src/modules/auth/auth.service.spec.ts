@@ -6,6 +6,7 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { AuthService } from './auth.service';
 import { User, UserRole } from './user.schema';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EmailsService } from '../emails/emails.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { Types } from 'mongoose';
@@ -165,6 +166,14 @@ describe('AuthService', () => {
       await expect(
         service.login({ email: 'jean@test.com', password: 'mauvais_mdp' }),
       ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('retourne le code EN INVALID_CREDENTIALS si les identifiants sont invalides', async () => {
+      userModel.findOne.mockReturnValue(makeChainable(null));
+
+      await expect(
+        service.login({ email: 'inexistant@test.com', password: 'mauvais_mdp' }),
+      ).rejects.toThrow(ErrorCodes.INVALID_CREDENTIALS);
     });
 
     it('met à jour le refreshToken hashé en base après connexion réussie', async () => {
