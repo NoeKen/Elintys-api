@@ -279,7 +279,7 @@ export class AuthService {
     }
 
     if (!matchedUser) {
-      throw new BadRequestException(ErrorCodes.INVALID_RESET_TOKEN);
+      throw new BadRequestException(ErrorCodes.INVALID_VERIFICATION_TOKEN);
     }
 
     await this.userModel.findByIdAndUpdate(matchedUser._id, {

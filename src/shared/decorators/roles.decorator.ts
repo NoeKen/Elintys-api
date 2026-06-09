@@ -5,6 +5,7 @@ export enum Role {
   ORGANISATEUR = 'organisateur',
   PRESTATAIRE = 'prestataire',
   PARTICIPANT = 'participant',
+  GESTIONNAIRE_SALLE = 'gestionnaire_salle',
 }
 
 export const ROLES_KEY = 'roles';

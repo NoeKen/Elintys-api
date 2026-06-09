@@ -1,4 +1,4 @@
-import { IsEmail, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 
@@ -8,8 +8,9 @@ export class LoginDto {
   @IsEmail()
   email!: string;
 
-  @ApiProperty({ example: 'motdepasse123', description: 'Mot de passe', minLength: 8 })
+  @ApiProperty({ example: 'motdepasse123', description: 'Mot de passe', minLength: 8, maxLength: 72 })
   @IsString()
   @MinLength(8)
+  @MaxLength(72)
   password!: string;
 }
