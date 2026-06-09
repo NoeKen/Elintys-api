@@ -9,6 +9,7 @@ export enum UserRole {
   ORGANISATEUR = 'organisateur',
   PRESTATAIRE = 'prestataire',
   PARTICIPANT = 'participant',
+  GESTIONNAIRE_SALLE = 'gestionnaire_salle',
 }
 
 @Schema({ timestamps: true })
@@ -39,9 +40,6 @@ export class User {
 
   @Prop({ select: false })
   refreshToken?: string;
-
-  @Prop({ select: false })
-  refreshTokenHash?: string;
 
   @Prop({ type: Number, default: 0, min: 0 })
   referralBalance!: number;
