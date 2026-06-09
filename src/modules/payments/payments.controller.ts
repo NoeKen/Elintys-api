@@ -4,16 +4,18 @@ import {
   Controller,
   HttpCode,
   HttpStatus,
+  Param,
   Post,
   Req,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RawBodyRequest } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
+import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
 @ApiTags('Payments')
 @Controller('payments')
@@ -55,5 +57,20 @@ export class PaymentsController {
     await this.paymentsService.processWebhookEvent(event);
 
     return { received: true };
+  }
+
+  @ApiBearerAuth('access-token')
+  @Post('refund/:purchaseId')
+  @HttpCode(HttpStatus.OK)
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Rembourser un billet (organisateur uniquement)' })
+  @ApiParam({ name: 'purchaseId', description: 'MongoDB ObjectId du TicketPurchase' })
+  @ApiResponse({ status: 200, description: 'Billet remboursé' })
+  @ApiResponse({ status: 400, description: 'Billet non valide pour remboursement' })
+  @ApiResponse({ status: 403, description: 'Accès refusé' })
+  @ApiResponse({ status: 404, description: 'Billet introuvable' })
+  @ApiResponse({ status: 503, description: 'Stripe non configuré' })
+  refundTicket(@Param('purchaseId') purchaseId: string, @CurrentUser() user: JwtPayload) {
+    return this.paymentsService.refundTicket(purchaseId, user.sub);
   }
 }
