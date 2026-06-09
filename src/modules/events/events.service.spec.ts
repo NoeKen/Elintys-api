@@ -37,6 +37,7 @@ describe('EventsService', () => {
     eventModel = {
       find: jest.fn(),
       findById: jest.fn(),
+      findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
       countDocuments: jest.fn(),
@@ -45,6 +46,7 @@ describe('EventsService', () => {
 
     eventModel.find.mockReturnValue(makeChainable([mockEvent()]));
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+    eventModel.findOne.mockReturnValue(makeChainable(null));
     eventModel.countDocuments.mockResolvedValue(1);
 
     const module: TestingModule = await Test.createTestingModule({
@@ -189,6 +191,93 @@ describe('EventsService', () => {
       const result = await service.cancel(eventId, organizerId);
 
       expect(result.status).toBe(EventStatus.CANCELLED);
+    });
+  });
+
+  // ── create — génération slug ──
+  describe('create — génération slug', () => {
+    it('devrait générer un slug depuis le titre', async () => {
+      // Arrange
+      const dto = { title: 'Gala de charité', startDate: new Date('2025-09-01') };
+      const created = mockEvent({ ...dto, slug: 'gala-de-charite', toObject: jest.fn().mockReturnThis() });
+      eventModel.findOne = jest.fn().mockReturnValue(makeChainable(null));
+      eventModel.create.mockResolvedValue(created);
+
+      // Act
+      await service.create(organizerId, dto as never);
+
+      // Assert
+      expect(eventModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: expect.stringMatching(/^gala-de-charit/) }),
+      );
+    });
+
+    it('devrait générer un slug unique si collision (ajouter -2)', async () => {
+      // Arrange
+      const dto = { title: 'Gala de charité', startDate: new Date('2025-09-01') };
+      const existingDoc = { _id: new Types.ObjectId() };
+      const created = mockEvent({ ...dto, slug: 'gala-de-charite-2', toObject: jest.fn().mockReturnThis() });
+      eventModel.findOne = jest.fn()
+        .mockReturnValueOnce(makeChainable(existingDoc))
+        .mockReturnValueOnce(makeChainable(null));
+      eventModel.create.mockResolvedValue(created);
+
+      // Act
+      await service.create(organizerId, dto as never);
+
+      // Assert
+      expect(eventModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ slug: expect.stringMatching(/-2$/) }),
+      );
+    });
+  });
+
+  // ── findBySlug ──
+  describe('findBySlug', () => {
+    it('devrait retourner un événement par slug', async () => {
+      // Arrange
+      const slug = 'gala-de-printemps';
+      const event = mockEvent({ slug });
+      eventModel.findOne = jest.fn().mockReturnValue(makeChainable(event));
+
+      // Act
+      const result = await service.findBySlug(slug);
+
+      // Assert
+      expect(eventModel.findOne).toHaveBeenCalledWith({ slug });
+      expect((result as unknown as Record<string, unknown>).slug).toBe(slug);
+    });
+
+    it('devrait lever NotFoundException si slug inexistant', async () => {
+      // Arrange
+      eventModel.findOne = jest.fn().mockReturnValue(makeChainable(null));
+
+      // Act & Assert
+      await expect(service.findBySlug('slug-inexistant')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── findByOrganizer ──
+  describe('findByOrganizer', () => {
+    it('devrait retourner les événements paginés de l\'organisateur', async () => {
+      // Arrange
+      const events = [mockEvent(), mockEvent({ _id: new Types.ObjectId().toString() })];
+      eventModel.find.mockReturnValue(makeChainable(events));
+      eventModel.countDocuments.mockResolvedValue(2);
+
+      // Act
+      const result = await service.findByOrganizer(organizerId, { page: 1, limit: 10 });
+
+      // Assert
+      expect(eventModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({ organizer: expect.any(Types.ObjectId) }),
+      );
+      expect(eventModel.countDocuments).toHaveBeenCalledWith(
+        expect.objectContaining({ organizer: expect.any(Types.ObjectId) }),
+      );
+      expect(result.data).toHaveLength(2);
+      expect(result.total).toBe(2);
+      expect(result.page).toBe(1);
     });
   });
 });
