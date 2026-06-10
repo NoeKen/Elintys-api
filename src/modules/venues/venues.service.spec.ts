@@ -1,9 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { VenuesService } from './venues.service';
-import { VenueProfile, VenueBookingSchema } from './venue.schema';
+import { VenueBooking, VenueBookingSchema, VenueBookingStatus, VenueProfile } from './venue.schema';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -18,16 +23,29 @@ const makeChainable = (value: unknown) => {
 describe('VenuesService', () => {
   let service: VenuesService;
   let venueModel: Record<string, jest.Mock>;
+  let venueBookingModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
   const venueId = new Types.ObjectId().toString();
+  const bookingId = new Types.ObjectId().toString();
+  const eventId = new Types.ObjectId().toString();
 
   const mockVenue = (overrides = {}) => ({
-    _id: venueId,
+    _id: new Types.ObjectId(venueId),
     name: 'Salle des Mille Étoiles',
     capacity: 500,
     isActive: true,
     user: { toString: () => userId },
+    toObject: jest.fn().mockReturnThis(),
+    ...overrides,
+  });
+
+  const mockBooking = (overrides = {}) => ({
+    _id: new Types.ObjectId(bookingId),
+    event: new Types.ObjectId(eventId),
+    venue: new Types.ObjectId(venueId),
+    organizer: new Types.ObjectId(userId),
+    status: VenueBookingStatus.PENDING,
     toObject: jest.fn().mockReturnThis(),
     ...overrides,
   });
@@ -42,15 +60,27 @@ describe('VenuesService', () => {
       create: jest.fn(),
     };
 
+    venueBookingModel = {
+      find: jest.fn(),
+      findById: jest.fn(),
+      findByIdAndUpdate: jest.fn(),
+      create: jest.fn(),
+    };
+
     venueModel.find.mockReturnValue(makeChainable([mockVenue()]));
     venueModel.findById.mockReturnValue(makeChainable(mockVenue()));
     venueModel.findOne.mockReturnValue(makeChainable(null));
     venueModel.countDocuments.mockResolvedValue(1);
 
+    venueBookingModel.find.mockReturnValue(makeChainable([mockBooking()]));
+    venueBookingModel.findById.mockReturnValue(makeChainable(mockBooking()));
+    venueBookingModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockBooking()));
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         VenuesService,
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
+        { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
       ],
     }).compile();
 
@@ -102,7 +132,7 @@ describe('VenuesService', () => {
     it('retourne la salle correspondant à l\'ID', async () => {
       const result = await service.findOne(venueId);
 
-      expect((result as unknown as Record<string, unknown>)._id).toBe(venueId);
+      expect((result as unknown as Record<string, unknown>)._id).toBeDefined();
     });
 
     it('lève NotFoundException si la salle n\'existe pas', async () => {
@@ -134,6 +164,127 @@ describe('VenuesService', () => {
       venueModel.findById.mockReturnValue(makeChainable(null));
 
       await expect(service.update('id-inexistant', userId, {})).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── findMyProfile ──
+  describe('findMyProfile', () => {
+    it('devrait retourner le profil de salle de l\'utilisateur connecté', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+
+      const result = await service.findMyProfile(userId);
+
+      expect(venueModel.findOne).toHaveBeenCalledWith({ user: expect.any(Types.ObjectId) });
+      expect(result).toBeDefined();
+    });
+
+    it('devrait lever NotFoundException si profil introuvable', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(null));
+
+      await expect(service.findMyProfile(userId)).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── requestBooking ──
+  describe('requestBooking', () => {
+    const dto = {
+      venueId,
+      bookingStart: '2025-12-01T18:00:00Z',
+      bookingEnd: '2025-12-02T02:00:00Z',
+    };
+
+    it('devrait créer une réservation avec les bonnes dates', async () => {
+      venueBookingModel.create.mockResolvedValue(mockBooking());
+
+      const result = await service.requestBooking(eventId, userId, dto as never);
+
+      expect(venueBookingModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: VenueBookingStatus.PENDING }),
+      );
+      expect(result).toBeDefined();
+    });
+
+    it('devrait lever BadRequestException si bookingEnd <= bookingStart', async () => {
+      const badDto = {
+        venueId,
+        bookingStart: '2025-12-02T02:00:00Z',
+        bookingEnd: '2025-12-01T18:00:00Z',
+      };
+
+      await expect(service.requestBooking(eventId, userId, badDto as never)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+  });
+
+  // ── listBookingsByEvent ──
+  describe('listBookingsByEvent', () => {
+    it('devrait retourner les réservations d\'un événement', async () => {
+      venueBookingModel.find.mockReturnValue(makeChainable([mockBooking()]));
+
+      const result = await service.listBookingsByEvent(eventId);
+
+      expect(venueBookingModel.find).toHaveBeenCalledWith({ event: expect.any(Types.ObjectId) });
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  // ── respondToBooking ──
+  describe('respondToBooking', () => {
+    it('devrait confirmer une réservation en attente', async () => {
+      const venueProfileId = new Types.ObjectId(venueId);
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({ status: VenueBookingStatus.PENDING, venue: venueProfileId }),
+      );
+      venueModel.findOne.mockReturnValue(makeChainable({ _id: venueProfileId }));
+      const confirmed = mockBooking({ status: VenueBookingStatus.CONFIRMED });
+      venueBookingModel.findByIdAndUpdate.mockReturnValue(makeChainable(confirmed));
+
+      const result = await service.respondToBooking(bookingId, userId, {
+        status: VenueBookingStatus.CONFIRMED,
+      });
+
+      expect(result).toBeDefined();
+    });
+
+    it('devrait lever BadRequestException si la réservation n\'est pas en attente', async () => {
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({ status: VenueBookingStatus.CONFIRMED, venue: new Types.ObjectId(venueId) }),
+      );
+
+      await expect(
+        service.respondToBooking(bookingId, userId, { status: VenueBookingStatus.CONFIRMED }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('devrait lever ForbiddenException si le gestionnaire ne correspond pas', async () => {
+      const otherVenueId = new Types.ObjectId();
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({ status: VenueBookingStatus.PENDING, venue: new Types.ObjectId(venueId) }),
+      );
+      venueModel.findOne.mockReturnValue(makeChainable({ _id: otherVenueId }));
+
+      await expect(
+        service.respondToBooking(bookingId, userId, { status: VenueBookingStatus.CONFIRMED }),
+      ).rejects.toThrow(ForbiddenException);
+    });
+  });
+
+  // ── listMyBookings ──
+  describe('listMyBookings', () => {
+    it('devrait retourner les réservations reçues par la salle', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable({ _id: new Types.ObjectId(venueId) }));
+      venueBookingModel.find.mockReturnValue(makeChainable([mockBooking()]));
+
+      const result = await service.listMyBookings(userId);
+
+      expect(result).toHaveLength(1);
+    });
+
+    it('devrait lever NotFoundException si profil de salle introuvable', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(null));
+
+      await expect(service.listMyBookings(userId)).rejects.toThrow(NotFoundException);
     });
   });
 

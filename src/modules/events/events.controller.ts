@@ -50,6 +50,29 @@ export class EventsController {
     return this.eventsService.findAll(query);
   }
 
+  @Get('my')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Mes événements (organisateur connecté)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'status', required: false, enum: ['draft', 'published', 'cancelled', 'completed'] })
+  @ApiResponse({ status: 200, description: 'Liste paginée des événements de l\'organisateur' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
+  findMyEvents(@CurrentUser() user: JwtPayload, @Query() query: QueryEventDto) {
+    return this.eventsService.findByOrganizer(user.sub, query);
+  }
+
+  @Public()
+  @Get('slug/:slug')
+  @ApiOperation({ summary: 'Récupérer un événement par slug' })
+  @ApiParam({ name: 'slug', description: 'Slug de l\'événement, ex: gala-de-charite-2025' })
+  @ApiResponse({ status: 200, description: 'Événement trouvé' })
+  @ApiResponse({ status: 404, description: 'Événement introuvable' })
+  findBySlug(@Param('slug') slug: string) {
+    return this.eventsService.findBySlug(slug);
+  }
+
   @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer un événement par ID' })

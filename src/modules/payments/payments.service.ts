@@ -1,17 +1,21 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
-import { TicketType, TicketTypeDocument, TicketPurchase, TicketPurchaseDocument } from '../tickets/ticket.schema';
+import { TicketType, TicketTypeDocument, TicketPurchase, TicketPurchaseDocument, TicketPurchaseStatus } from '../tickets/ticket.schema';
 import { TicketsService } from '../tickets/tickets.service';
 import { EmailsService } from '../emails/emails.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
+import { Event, EventDocument } from '../events/event.schema';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
@@ -29,8 +33,8 @@ interface StripeCheckoutSession {
 @Injectable()
 export class PaymentsService {
   private readonly logger = new Logger(PaymentsService.name);
-  private readonly stripe: StripeClient;
-  private readonly webhookSecret: string;
+  private readonly stripe: StripeClient | null;
+  private readonly webhookSecret: string | null;
 
   constructor(
     private readonly configService: ConfigService,
@@ -38,11 +42,22 @@ export class PaymentsService {
     private readonly emailsService: EmailsService,
     @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
     @InjectModel(TicketPurchase.name) private readonly ticketPurchaseModel: Model<TicketPurchaseDocument>,
+    @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
   ) {
-    this.stripe = new Stripe(this.configService.getOrThrow<string>('stripe.secretKey'), {
-      apiVersion: '2026-04-22.dahlia',
-    });
-    this.webhookSecret = this.configService.getOrThrow<string>('stripe.webhookSecret');
+    const stripeKey = this.configService.get<string>('stripe.secretKey');
+    const webhookSec = this.configService.get<string>('stripe.webhookSecret');
+
+    this.stripe = stripeKey
+      ? new Stripe(stripeKey, { apiVersion: '2026-04-22.dahlia' })
+      : null;
+    this.webhookSecret = webhookSec ?? null;
+  }
+
+  private get stripeClient(): StripeClient {
+    if (!this.stripe) {
+      throw new ServiceUnavailableException(ErrorCodes.STRIPE_NOT_CONFIGURED);
+    }
+    return this.stripe;
   }
 
   async createCheckoutSession(
@@ -66,7 +81,7 @@ export class PaymentsService {
 
     const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
 
-    const session = await this.stripe.checkout.sessions.create({
+    const session = await this.stripeClient.checkout.sessions.create({
       mode: 'payment',
       payment_method_types: ['card'],
       line_items: [
@@ -99,6 +114,9 @@ export class PaymentsService {
   }
 
   handleWebhook(rawBody: Buffer, signature: string): StripeEvent {
+    if (!this.webhookSecret || !this.stripe) {
+      throw new ServiceUnavailableException(ErrorCodes.STRIPE_NOT_CONFIGURED);
+    }
     try {
       return this.stripe.webhooks.constructEvent(
         rawBody,
@@ -114,6 +132,43 @@ export class PaymentsService {
     if (event.type === 'checkout.session.completed') {
       await this.handleCheckoutCompleted(event.data.object as unknown as StripeCheckoutSession);
     }
+  }
+
+  async refundTicket(purchaseId: string, organizerId: string): Promise<TicketPurchase> {
+    const purchase = await this.ticketPurchaseModel
+      .findById(purchaseId)
+      .lean()
+      .select('event status stripePaymentIntentId price');
+    if (!purchase) throw new NotFoundException(ErrorCodes.TICKET_NOT_FOUND);
+
+    const event = await this.eventModel.findById(purchase.event).lean().select('organizer');
+    if (!event || event.organizer.toString() !== organizerId) {
+      throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
+    }
+
+    if (purchase.status === TicketPurchaseStatus.REFUNDED) {
+      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+    if (purchase.status !== TicketPurchaseStatus.VALID) {
+      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+
+    if (purchase.stripePaymentIntentId) {
+      if (!this.stripe) {
+        throw new ServiceUnavailableException(ErrorCodes.STRIPE_NOT_CONFIGURED);
+      }
+      await this.stripeClient.refunds.create({
+        payment_intent: purchase.stripePaymentIntentId,
+        amount: purchase.price,
+      });
+    }
+
+    const updated = await this.ticketPurchaseModel
+      .findByIdAndUpdate(purchaseId, { status: TicketPurchaseStatus.REFUNDED }, { new: true })
+      .lean()
+      .select('-__v');
+    if (!updated) throw new NotFoundException(ErrorCodes.TICKET_NOT_FOUND);
+    return updated;
   }
 
   private async handleCheckoutCompleted(session: StripeCheckoutSession): Promise<void> {

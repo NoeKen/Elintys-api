@@ -69,7 +69,7 @@ export class Event {
   @Prop({ type: [{ type: Types.ObjectId, ref: 'VendorProfile' }], default: [] })
   vendors!: Types.ObjectId[];
 
-  @Prop({ unique: true, sparse: true, trim: true, lowercase: true })
+  @Prop({ trim: true, lowercase: true })
   slug?: string;
 
   @Prop({ default: 0 })
@@ -78,6 +78,7 @@ export class Event {
 
 export const EventSchema = SchemaFactory.createForClass(Event);
 
+EventSchema.index({ slug: 1 }, { unique: true, sparse: true });
 EventSchema.index({ organizer: 1, status: 1 });
 EventSchema.index({ startDate: 1 });
 EventSchema.index({ 'location.city': 1, status: 1 });
