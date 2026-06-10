@@ -153,7 +153,10 @@ export class PaymentsService {
       throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
     }
 
-    if (purchase.stripePaymentIntentId && this.stripe) {
+    if (purchase.stripePaymentIntentId) {
+      if (!this.stripe) {
+        throw new ServiceUnavailableException(ErrorCodes.STRIPE_NOT_CONFIGURED);
+      }
       await this.stripeClient.refunds.create({
         payment_intent: purchase.stripePaymentIntentId,
         amount: purchase.price,
@@ -164,7 +167,8 @@ export class PaymentsService {
       .findByIdAndUpdate(purchaseId, { status: TicketPurchaseStatus.REFUNDED }, { new: true })
       .lean()
       .select('-__v');
-    return updated!;
+    if (!updated) throw new NotFoundException(ErrorCodes.TICKET_NOT_FOUND);
+    return updated;
   }
 
   private async handleCheckoutCompleted(session: StripeCheckoutSession): Promise<void> {

@@ -324,6 +324,33 @@ describe('PaymentsService', () => {
       await expect(service.refundTicket(purchaseId, organizerId))
         .rejects.toThrow(NotFoundException);
     });
+
+    it('devrait lever ServiceUnavailableException si billet payant et Stripe non configuré', async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          PaymentsService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn().mockReturnValue(undefined),
+              getOrThrow: jest.fn().mockReturnValue('http://localhost:3000'),
+            },
+          },
+          { provide: getModelToken(TicketType.name),     useValue: ticketTypeModel },
+          { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
+          { provide: getModelToken(Event.name),          useValue: eventModel },
+          { provide: TicketsService,  useValue: ticketsService },
+          { provide: EmailsService,   useValue: emailsService },
+        ],
+      }).compile();
+
+      const serviceNoStripe = module.get<PaymentsService>(PaymentsService);
+      ticketPurchaseModel.findById.mockReturnValue(makeChainable(mockPurchase()));
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+
+      await expect(serviceNoStripe.refundTicket(purchaseId, organizerId))
+        .rejects.toThrow(ServiceUnavailableException);
+    });
   });
 
   // ── handleWebhook — Stripe guard ──
