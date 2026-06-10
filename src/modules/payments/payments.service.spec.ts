@@ -1,9 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { PaymentsService } from './payments.service';
-import { TicketType, TicketPurchase } from '../tickets/ticket.schema';
+import { TicketType, TicketPurchase, TicketPurchaseStatus } from '../tickets/ticket.schema';
+import { Event } from '../events/event.schema';
 import { TicketsService } from '../tickets/tickets.service';
 import { EmailsService } from '../emails/emails.service';
 
@@ -20,6 +21,7 @@ const makeChainable = (value: unknown) => {
 // Mock Stripe SDK avant tout import
 const mockStripeCheckoutSessionsCreate = jest.fn();
 const mockStripeWebhooksConstructEvent = jest.fn();
+const mockStripeRefundsCreate = jest.fn();
 
 jest.mock('stripe', () => {
   return jest.fn().mockImplementation(() => ({
@@ -27,6 +29,7 @@ jest.mock('stripe', () => {
       sessions: { create: mockStripeCheckoutSessionsCreate },
     },
     webhooks: { constructEvent: mockStripeWebhooksConstructEvent },
+    refunds: { create: mockStripeRefundsCreate },
   }));
 });
 
@@ -34,11 +37,15 @@ describe('PaymentsService', () => {
   let service: PaymentsService;
   let ticketTypeModel: Record<string, jest.Mock>;
   let ticketPurchaseModel: Record<string, jest.Mock>;
+  let eventModel: Record<string, jest.Mock>;
   let ticketsService: { createPurchasesFromCheckout: jest.Mock };
   let emailsService: { sendTicketConfirmation: jest.Mock };
 
   const ticketTypeId = '664f1a2b3c4d5e6f7a8b9c0d';
   const buyerId      = '664f1a2b3c4d5e6f7a8b9c0e';
+  const organizerId  = '664f1a2b3c4d5e6f7a8b9c0f';
+  const purchaseId   = '664f1a2b3c4d5e6f7a8b9c10';
+  const eventId      = '664f1a2b3c4d5e6f7a8b9c11';
 
   const mockTicketType = (overrides = {}) => ({
     _id:      ticketTypeId,
@@ -51,6 +58,21 @@ describe('PaymentsService', () => {
     ...overrides,
   });
 
+  const mockPurchase = (overrides = {}) => ({
+    _id:                   purchaseId,
+    event:                 { toString: () => eventId },
+    status:                TicketPurchaseStatus.VALID,
+    stripePaymentIntentId: 'pi_test_xxx',
+    price:                 5000,
+    ...overrides,
+  });
+
+  const mockEvent = (overrides = {}) => ({
+    _id:       eventId,
+    organizer: { toString: () => organizerId },
+    ...overrides,
+  });
+
   beforeEach(async () => {
     ticketTypeModel = {
       findById: jest.fn(),
@@ -58,7 +80,13 @@ describe('PaymentsService', () => {
     };
 
     ticketPurchaseModel = {
-      findOne: jest.fn(),
+      findOne:           jest.fn(),
+      findById:          jest.fn(),
+      findByIdAndUpdate: jest.fn(),
+    };
+
+    eventModel = {
+      findById: jest.fn(),
     };
 
     ticketsService = { createPurchasesFromCheckout: jest.fn() };
@@ -66,6 +94,7 @@ describe('PaymentsService', () => {
 
     mockStripeCheckoutSessionsCreate.mockReset();
     mockStripeWebhooksConstructEvent.mockReset();
+    mockStripeRefundsCreate.mockReset();
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -73,11 +102,16 @@ describe('PaymentsService', () => {
         {
           provide: ConfigService,
           useValue: {
-            getOrThrow: jest.fn().mockImplementation((key: string) => {
+            get: jest.fn().mockImplementation((key: string) => {
               const map: Record<string, string> = {
                 'stripe.secretKey':    'sk_test_xxx',
                 'stripe.webhookSecret': 'whsec_xxx',
-                'frontendUrl':          'http://localhost:3000',
+              };
+              return map[key] ?? undefined;
+            }),
+            getOrThrow: jest.fn().mockImplementation((key: string) => {
+              const map: Record<string, string> = {
+                'frontendUrl': 'http://localhost:3000',
               };
               return map[key] ?? 'value';
             }),
@@ -85,6 +119,7 @@ describe('PaymentsService', () => {
         },
         { provide: getModelToken(TicketType.name),     useValue: ticketTypeModel },
         { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
+        { provide: getModelToken(Event.name),          useValue: eventModel },
         { provide: TicketsService,  useValue: ticketsService },
         { provide: EmailsService,   useValue: emailsService },
       ],
@@ -216,6 +251,133 @@ describe('PaymentsService', () => {
       });
 
       expect(ticketsService.createPurchasesFromCheckout).not.toHaveBeenCalled();
+    });
+  });
+
+  // ── refundTicket ──
+  describe('refundTicket', () => {
+    it('devrait rembourser un billet valide avec Stripe', async () => {
+      ticketPurchaseModel.findById.mockReturnValue(makeChainable(mockPurchase()));
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+      mockStripeRefundsCreate.mockResolvedValue({ id: 're_test_xxx' });
+      ticketPurchaseModel.findByIdAndUpdate.mockReturnValue(
+        makeChainable({ ...mockPurchase(), status: TicketPurchaseStatus.REFUNDED }),
+      );
+
+      const result = await service.refundTicket(purchaseId, organizerId);
+
+      expect(mockStripeRefundsCreate).toHaveBeenCalledWith({
+        payment_intent: 'pi_test_xxx',
+        amount: 5000,
+      });
+      expect(result.status).toBe(TicketPurchaseStatus.REFUNDED);
+    });
+
+    it('devrait rembourser un billet gratuit sans appeler Stripe', async () => {
+      ticketPurchaseModel.findById.mockReturnValue(
+        makeChainable(mockPurchase({ stripePaymentIntentId: undefined })),
+      );
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+      ticketPurchaseModel.findByIdAndUpdate.mockReturnValue(
+        makeChainable({ ...mockPurchase(), status: TicketPurchaseStatus.REFUNDED }),
+      );
+
+      const result = await service.refundTicket(purchaseId, organizerId);
+
+      expect(mockStripeRefundsCreate).not.toHaveBeenCalled();
+      expect(result.status).toBe(TicketPurchaseStatus.REFUNDED);
+    });
+
+    it("devrait lever ForbiddenException si l'organisateur ne correspond pas", async () => {
+      ticketPurchaseModel.findById.mockReturnValue(makeChainable(mockPurchase()));
+      eventModel.findById.mockReturnValue(
+        makeChainable({ ...mockEvent(), organizer: { toString: () => 'other-organizer-id' } }),
+      );
+
+      await expect(service.refundTicket(purchaseId, organizerId))
+        .rejects.toThrow(ForbiddenException);
+    });
+
+    it('devrait lever BadRequestException si le billet est déjà remboursé', async () => {
+      ticketPurchaseModel.findById.mockReturnValue(
+        makeChainable(mockPurchase({ status: TicketPurchaseStatus.REFUNDED })),
+      );
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+
+      await expect(service.refundTicket(purchaseId, organizerId))
+        .rejects.toThrow(BadRequestException);
+    });
+
+    it("devrait lever BadRequestException si le billet n'est pas valide (statut: used)", async () => {
+      ticketPurchaseModel.findById.mockReturnValue(
+        makeChainable(mockPurchase({ status: TicketPurchaseStatus.USED })),
+      );
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+
+      await expect(service.refundTicket(purchaseId, organizerId))
+        .rejects.toThrow(BadRequestException);
+    });
+
+    it('devrait lever NotFoundException si le billet est introuvable', async () => {
+      ticketPurchaseModel.findById.mockReturnValue(makeChainable(null));
+
+      await expect(service.refundTicket(purchaseId, organizerId))
+        .rejects.toThrow(NotFoundException);
+    });
+
+    it('devrait lever ServiceUnavailableException si billet payant et Stripe non configuré', async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          PaymentsService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn().mockReturnValue(undefined),
+              getOrThrow: jest.fn().mockReturnValue('http://localhost:3000'),
+            },
+          },
+          { provide: getModelToken(TicketType.name),     useValue: ticketTypeModel },
+          { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
+          { provide: getModelToken(Event.name),          useValue: eventModel },
+          { provide: TicketsService,  useValue: ticketsService },
+          { provide: EmailsService,   useValue: emailsService },
+        ],
+      }).compile();
+
+      const serviceNoStripe = module.get<PaymentsService>(PaymentsService);
+      ticketPurchaseModel.findById.mockReturnValue(makeChainable(mockPurchase()));
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+
+      await expect(serviceNoStripe.refundTicket(purchaseId, organizerId))
+        .rejects.toThrow(ServiceUnavailableException);
+    });
+  });
+
+  // ── handleWebhook — Stripe guard ──
+  describe('handleWebhook — Stripe guard', () => {
+    it('devrait lever ServiceUnavailableException si Stripe non configuré', async () => {
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          PaymentsService,
+          {
+            provide: ConfigService,
+            useValue: {
+              get: jest.fn().mockReturnValue(undefined),
+              getOrThrow: jest.fn().mockReturnValue('http://localhost:3000'),
+            },
+          },
+          { provide: getModelToken(TicketType.name),     useValue: ticketTypeModel },
+          { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
+          { provide: getModelToken(Event.name),          useValue: eventModel },
+          { provide: TicketsService,  useValue: ticketsService },
+          { provide: EmailsService,   useValue: emailsService },
+        ],
+      }).compile();
+
+      const serviceNoStripe = module.get<PaymentsService>(PaymentsService);
+
+      expect(() => serviceNoStripe.handleWebhook(Buffer.from('body'), 'sig'))
+        .toThrow(ServiceUnavailableException);
     });
   });
 });

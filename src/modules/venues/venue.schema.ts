@@ -69,6 +69,7 @@ export type VenueBookingDocument = HydratedDocument<VenueBooking>;
 export enum VenueBookingStatus {
   PENDING = 'pending',
   CONFIRMED = 'confirmed',
+  REFUSED = 'refused',
   CANCELLED = 'cancelled',
 }
 
@@ -96,11 +97,11 @@ export class VenueBooking {
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   organizer!: Types.ObjectId;
 
-  @Prop()
-  bookingStart?: Date;
+  @Prop({ required: true })
+  bookingStart!: Date;
 
-  @Prop()
-  bookingEnd?: Date;
+  @Prop({ required: true })
+  bookingEnd!: Date;
 
   @Prop({ type: String, maxlength: 500 })
   message?: string;

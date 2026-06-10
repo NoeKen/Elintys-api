@@ -1,16 +1,20 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { VendorProfile, VendorProfileDocument } from './vendor.schema';
+import { VendorProfile, VendorProfileDocument, VendorRequest, VendorRequestDocument, VendorRequestSource, VendorRequestStatus } from './vendor.schema';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
 import { QueryVendorDto } from './dto/query-vendor.dto';
+import { CreateVendorRequestDto } from './dto/create-request.dto';
+import { RespondVendorRequestDto } from './dto/respond-request.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 
 @Injectable()
 export class VendorsService {
   constructor(
     @InjectModel(VendorProfile.name) private readonly vendorModel: Model<VendorProfileDocument>,
+    @InjectModel(VendorRequest.name) private readonly vendorRequestModel: Model<VendorRequestDocument>,
   ) {}
 
   async create(userId: string, dto: CreateVendorDto): Promise<VendorProfile> {
@@ -55,5 +59,75 @@ export class VendorsService {
 
     const updated = await this.vendorModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
     return updated!;
+  }
+
+  // ── VendorRequest methods ──
+
+  async createRequest(eventId: string, organizerId: string, dto: CreateVendorRequestDto): Promise<VendorRequest> {
+    const req = await this.vendorRequestModel.create({
+      event: new Types.ObjectId(eventId),
+      organizer: new Types.ObjectId(organizerId),
+      vendor: dto.vendorId ? new Types.ObjectId(dto.vendorId) : undefined,
+      source: dto.source ?? VendorRequestSource.PLATFORM,
+      message: dto.message,
+      externalContact: dto.externalContact ?? null,
+      status: VendorRequestStatus.PENDING,
+    });
+    return req.toObject();
+  }
+
+  async listRequestsByEvent(eventId: string): Promise<VendorRequest[]> {
+    return this.vendorRequestModel
+      .find({ event: new Types.ObjectId(eventId) })
+      .populate('vendor', 'businessName category')
+      .lean()
+      .select('-__v');
+  }
+
+  async respondToRequest(requestId: string, userId: string, dto: RespondVendorRequestDto): Promise<VendorRequest> {
+    const request = await this.vendorRequestModel.findById(requestId).lean().select('vendor status');
+    if (!request) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
+
+    // State check FIRST — cannot respond to non-pending requests regardless of who you are
+    if (request.status !== VendorRequestStatus.PENDING) {
+      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+
+    // Manual requests (no platform vendor) cannot be responded to via this endpoint
+    if (!request.vendor) {
+      throw new BadRequestException(ErrorCodes.MANUAL_REQUEST_NO_PLATFORM_VENDOR);
+    }
+
+    // Ownership check
+    const vendorProfile = await this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
+    if (!vendorProfile || request.vendor.toString() !== (vendorProfile._id as Types.ObjectId).toString()) {
+      throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
+    }
+
+    const updated = await this.vendorRequestModel
+      .findByIdAndUpdate(requestId, { status: dto.status, responseMessage: dto.responseMessage, respondedAt: new Date() }, { new: true })
+      .lean().select('-__v');
+    return updated!;
+  }
+
+  async listMyRequests(userId: string): Promise<VendorRequest[]> {
+    const vendorProfile = await this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
+    if (!vendorProfile) throw new NotFoundException(ErrorCodes.VENDOR_PROFILE_NOT_FOUND);
+
+    return this.vendorRequestModel
+      .find({ vendor: vendorProfile._id })
+      .populate('event', 'title startDate')
+      .lean()
+      .select('-__v');
+  }
+
+  async cancelRequest(requestId: string, organizerId: string): Promise<void> {
+    const request = await this.vendorRequestModel.findById(requestId).lean().select('organizer status');
+    if (!request) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
+    if (request.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
+    if (request.status !== VendorRequestStatus.PENDING) {
+      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+    await this.vendorRequestModel.findByIdAndDelete(requestId);
   }
 }
