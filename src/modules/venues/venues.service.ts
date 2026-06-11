@@ -20,12 +20,15 @@ import { CreateVenueBookingDto } from './dto/create-booking.dto';
 import { RespondVenueBookingDto } from './dto/respond-booking.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/notification.schema';
 
 @Injectable()
 export class VenuesService {
   constructor(
     @InjectModel(VenueProfile.name) private readonly venueModel: Model<VenueProfileDocument>,
     @InjectModel(VenueBooking.name) private readonly venueBookingModel: Model<VenueBookingDocument>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async create(userId: string, dto: CreateVenueDto): Promise<VenueProfile> {
@@ -93,7 +96,7 @@ export class VenuesService {
   }
 
   async respondToBooking(bookingId: string, userId: string, dto: RespondVenueBookingDto): Promise<VenueBooking> {
-    const booking = await this.venueBookingModel.findById(bookingId).lean().select('venue status');
+    const booking = await this.venueBookingModel.findById(bookingId).lean().select('venue status organizer');
     if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
 
     if (booking.status !== VenueBookingStatus.PENDING) {
@@ -113,6 +116,12 @@ export class VenuesService {
       )
       .lean()
       .select('-__v');
+
+    const organizerId = (booking.organizer as Types.ObjectId).toString();
+    this.notificationsService
+      .create(organizerId, NotificationType.VENUE_CONFIRMED, { bookingId, status: dto.status })
+      .catch(() => undefined);
+
     return updated!;
   }
 

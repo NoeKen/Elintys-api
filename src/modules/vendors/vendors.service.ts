@@ -9,12 +9,15 @@ import { CreateVendorRequestDto } from './dto/create-request.dto';
 import { RespondVendorRequestDto } from './dto/respond-request.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/notification.schema';
 
 @Injectable()
 export class VendorsService {
   constructor(
     @InjectModel(VendorProfile.name) private readonly vendorModel: Model<VendorProfileDocument>,
     @InjectModel(VendorRequest.name) private readonly vendorRequestModel: Model<VendorRequestDocument>,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async create(userId: string, dto: CreateVendorDto): Promise<VendorProfile> {
@@ -85,7 +88,7 @@ export class VendorsService {
   }
 
   async respondToRequest(requestId: string, userId: string, dto: RespondVendorRequestDto): Promise<VendorRequest> {
-    const request = await this.vendorRequestModel.findById(requestId).lean().select('vendor status');
+    const request = await this.vendorRequestModel.findById(requestId).lean().select('vendor status organizer');
     if (!request) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
 
     // State check FIRST — cannot respond to non-pending requests regardless of who you are
@@ -107,6 +110,12 @@ export class VendorsService {
     const updated = await this.vendorRequestModel
       .findByIdAndUpdate(requestId, { status: dto.status, responseMessage: dto.responseMessage, respondedAt: new Date() }, { new: true })
       .lean().select('-__v');
+
+    const organizerId = (request.organizer as Types.ObjectId).toString();
+    this.notificationsService
+      .create(organizerId, NotificationType.VENDOR_RESPONDED, { requestId, status: dto.status })
+      .catch(() => undefined);
+
     return updated!;
   }
 

@@ -9,6 +9,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { VenuesService } from './venues.service';
 import { VenueBooking, VenueBookingSchema, VenueBookingStatus, VenueProfile } from './venue.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -81,6 +82,7 @@ describe('VenuesService', () => {
         VenuesService,
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
         { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
+        { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
@@ -234,7 +236,7 @@ describe('VenuesService', () => {
     it('devrait confirmer une réservation en attente', async () => {
       const venueProfileId = new Types.ObjectId(venueId);
       venueBookingModel.findById.mockReturnValue(
-        makeChainable({ status: VenueBookingStatus.PENDING, venue: venueProfileId }),
+        makeChainable({ status: VenueBookingStatus.PENDING, venue: venueProfileId, organizer: new Types.ObjectId(userId) }),
       );
       venueModel.findOne.mockReturnValue(makeChainable({ _id: venueProfileId }));
       const confirmed = mockBooking({ status: VenueBookingStatus.CONFIRMED });

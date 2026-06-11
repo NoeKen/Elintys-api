@@ -4,6 +4,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { VendorsService } from './vendors.service';
 import { VendorProfile, VendorCategory, VendorRequest, VendorRequestSchema, VendorRequestStatus, VendorRequestSource } from './vendor.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -81,6 +82,7 @@ describe('VendorsService', () => {
         VendorsService,
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
         { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
+        { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
       ],
     }).compile();
 
