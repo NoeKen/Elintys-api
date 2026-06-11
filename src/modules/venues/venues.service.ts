@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import {
   VenueBooking,
@@ -22,13 +23,20 @@ import { PaginatedResult } from '../../shared/interfaces/paginated-result.interf
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/notification.schema';
+import { EmailsService } from '../emails/emails.service';
+import { User, UserDocument } from '../auth/user.schema';
+import { Event, EventDocument } from '../events/event.schema';
 
 @Injectable()
 export class VenuesService {
   constructor(
     @InjectModel(VenueProfile.name) private readonly venueModel: Model<VenueProfileDocument>,
     @InjectModel(VenueBooking.name) private readonly venueBookingModel: Model<VenueBookingDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
     private readonly notificationsService: NotificationsService,
+    private readonly emailsService: EmailsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(userId: string, dto: CreateVenueDto): Promise<VenueProfile> {
@@ -96,7 +104,7 @@ export class VenuesService {
   }
 
   async respondToBooking(bookingId: string, userId: string, dto: RespondVenueBookingDto): Promise<VenueBooking> {
-    const booking = await this.venueBookingModel.findById(bookingId).lean().select('venue status organizer');
+    const booking = await this.venueBookingModel.findById(bookingId).lean().select('venue status organizer event');
     if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
 
     if (booking.status !== VenueBookingStatus.PENDING) {
@@ -121,6 +129,22 @@ export class VenuesService {
     this.notificationsService
       .create(organizerId, NotificationType.VENUE_CONFIRMED, { bookingId, status: dto.status })
       .catch(() => undefined);
+
+    const emailStatus = dto.status === VenueBookingStatus.CONFIRMED ? 'confirmed' : 'refused';
+    Promise.all([
+      this.userModel.findById(organizerId).lean().select('email fullName'),
+      this.eventModel.findById((booking.event as Types.ObjectId).toString()).lean().select('title'),
+      this.venueModel.findById((booking.venue as Types.ObjectId).toString()).lean().select('name'),
+    ]).then(([organizer, event, venue]) => {
+      if (!organizer || !event || !venue) return;
+      return this.emailsService.sendVenueBookingUpdate(organizer.email, {
+        fullName: organizer.fullName,
+        venueName: venue.name,
+        eventTitle: event.title,
+        status: emailStatus,
+        message: dto.responseMessage,
+      });
+    }).catch(() => undefined);
 
     return updated!;
   }

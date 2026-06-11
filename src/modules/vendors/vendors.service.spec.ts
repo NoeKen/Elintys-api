@@ -1,10 +1,14 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { BadRequestException, ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { VendorsService } from './vendors.service';
 import { VendorProfile, VendorCategory, VendorRequest, VendorRequestSchema, VendorRequestStatus, VendorRequestSource } from './vendor.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailsService } from '../emails/emails.service';
+import { User } from '../auth/user.schema';
+import { Event } from '../events/event.schema';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -82,7 +86,11 @@ describe('VendorsService', () => {
         VendorsService,
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
         { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
+        { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
+        { provide: getModelToken(Event.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ title: 'Test Event' })) } },
         { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
+        { provide: EmailsService, useValue: { sendRequestAccepted: jest.fn().mockResolvedValue(undefined) } },
+        { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
 

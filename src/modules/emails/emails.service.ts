@@ -149,6 +149,56 @@ export class EmailsService {
     await this.sendEmail(to, `Donnez votre avis — ${opts.eventTitle}`, html);
   }
 
+  // ── E-10 : Mise à jour réservation de lieu ──
+  async sendVenueBookingUpdate(
+    to: string,
+    opts: {
+      fullName: string;
+      venueName: string;
+      eventTitle: string;
+      status: 'confirmed' | 'refused';
+      message?: string;
+    },
+  ): Promise<void> {
+    const isConfirmed = opts.status === 'confirmed';
+    const subject = isConfirmed
+      ? `Lieu confirmé — ${opts.eventTitle}`
+      : `Lieu refusé — ${opts.eventTitle}`;
+
+    const html = this.baseTemplate(`
+      <h2 style="color:#0D1E35;margin:0 0 16px;">${isConfirmed ? 'Votre lieu a été confirmé !' : 'Votre demande de lieu a été refusée'}</h2>
+      <p style="color:#444;">Bonjour ${opts.fullName},</p>
+      <p style="color:#444;">Le lieu <strong>${opts.venueName}</strong> a <strong>${isConfirmed ? 'confirmé' : 'refusé'}</strong> votre demande pour l'événement <strong>${opts.eventTitle}</strong>.</p>
+      ${opts.message ? `<p style="color:#444;border-left:3px solid #1A7A5E;padding-left:12px;font-style:italic;">${opts.message}</p>` : ''}
+      ${this.ctaButton(`${this.frontendUrl}/tableau-de-bord`, 'Gérer mon événement')}
+    `);
+
+    await this.sendEmail(to, subject, html);
+  }
+
+  // ── E-12 : Email d'invitation ──
+  async sendInvitationEmail(
+    to: string,
+    opts: {
+      inviterName: string;
+      type: 'vendor' | 'venue';
+      eventTitle?: string;
+      invitationLink: string;
+    },
+  ): Promise<void> {
+    const typeLabel = opts.type === 'vendor' ? 'prestataire' : 'gestionnaire de salle';
+    const html = this.baseTemplate(`
+      <h2 style="color:#0D1E35;margin:0 0 16px;">Vous avez été invité sur Elintys !</h2>
+      <p style="color:#444;">Bonjour,</p>
+      <p style="color:#444;"><strong>${opts.inviterName}</strong> vous invite à rejoindre Elintys en tant que <strong>${typeLabel}</strong>${opts.eventTitle ? ` pour l'événement <strong>${opts.eventTitle}</strong>` : ''}.</p>
+      <p style="color:#444;">Elintys est la plateforme événementielle de référence au Québec. Créez votre profil et commencez à collaborer dès aujourd'hui.</p>
+      ${this.ctaButton(opts.invitationLink, 'Accepter l\'invitation')}
+      <p style="color:#888;font-size:12px;margin-top:24px;">Ce lien expire dans 7 jours. Si vous ne souhaitez pas rejoindre Elintys, ignorez ce message.</p>
+    `);
+
+    await this.sendEmail(to, `${opts.inviterName} vous invite sur Elintys`, html);
+  }
+
   // ── E-11 : Réinitialisation du mot de passe ──
   async sendPasswordReset(to: string, opts: { fullName: string; token: string }): Promise<void> {
     const link = `${this.frontendUrl}/reinitialiser-mot-de-passe?token=${opts.token}`;

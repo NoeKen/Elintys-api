@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import { VendorProfile, VendorProfileDocument, VendorRequest, VendorRequestDocument, VendorRequestSource, VendorRequestStatus } from './vendor.schema';
 import { CreateVendorDto } from './dto/create-vendor.dto';
@@ -11,13 +12,20 @@ import { PaginatedResult } from '../../shared/interfaces/paginated-result.interf
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationType } from '../notifications/notification.schema';
+import { EmailsService } from '../emails/emails.service';
+import { User, UserDocument } from '../auth/user.schema';
+import { Event, EventDocument } from '../events/event.schema';
 
 @Injectable()
 export class VendorsService {
   constructor(
     @InjectModel(VendorProfile.name) private readonly vendorModel: Model<VendorProfileDocument>,
     @InjectModel(VendorRequest.name) private readonly vendorRequestModel: Model<VendorRequestDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
     private readonly notificationsService: NotificationsService,
+    private readonly emailsService: EmailsService,
+    private readonly configService: ConfigService,
   ) {}
 
   async create(userId: string, dto: CreateVendorDto): Promise<VendorProfile> {
@@ -88,7 +96,7 @@ export class VendorsService {
   }
 
   async respondToRequest(requestId: string, userId: string, dto: RespondVendorRequestDto): Promise<VendorRequest> {
-    const request = await this.vendorRequestModel.findById(requestId).lean().select('vendor status organizer');
+    const request = await this.vendorRequestModel.findById(requestId).lean().select('vendor status organizer event');
     if (!request) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
 
     // State check FIRST — cannot respond to non-pending requests regardless of who you are
@@ -115,6 +123,23 @@ export class VendorsService {
     this.notificationsService
       .create(organizerId, NotificationType.VENDOR_RESPONDED, { requestId, status: dto.status })
       .catch(() => undefined);
+
+    if (dto.status === VendorRequestStatus.ACCEPTED) {
+      const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
+      Promise.all([
+        this.userModel.findById(organizerId).lean().select('email fullName'),
+        this.eventModel.findById((request.event as Types.ObjectId).toString()).lean().select('title'),
+        this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('businessName'),
+      ]).then(([organizer, event, vendorProfile]) => {
+        if (!organizer || !event || !vendorProfile) return;
+        return this.emailsService.sendRequestAccepted(organizer.email, {
+          vendorName: vendorProfile.businessName,
+          organizerName: organizer.fullName,
+          eventTitle: event.title,
+          eventUrl: `${frontendUrl}/tableau-de-bord/evenements`,
+        });
+      }).catch(() => undefined);
+    }
 
     return updated!;
   }

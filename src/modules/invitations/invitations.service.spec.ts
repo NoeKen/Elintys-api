@@ -1,10 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { InvitationsService } from './invitations.service';
 import { Invitation, InvitationType } from './invitation.schema';
 import { ErrorCodes } from '../../shared/constants/error-codes';
+import { EmailsService } from '../emails/emails.service';
+import { User } from '../auth/user.schema';
 
 const mockInvitationModel = {
   create: jest.fn(),
@@ -23,6 +26,9 @@ describe('InvitationsService', () => {
       providers: [
         InvitationsService,
         { provide: getModelToken(Invitation.name), useValue: mockInvitationModel },
+        { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnThis(), select: jest.fn().mockResolvedValue({ fullName: 'Test User' }) }) } },
+        { provide: EmailsService, useValue: { sendInvitationEmail: jest.fn().mockResolvedValue(undefined) } },
+        { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
     service = module.get<InvitationsService>(InvitationsService);
