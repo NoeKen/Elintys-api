@@ -34,4 +34,52 @@ export class DiscoveryController {
   featured(@Query('limit') limit?: string) {
     return this.discoveryService.featuredEvents(limit ? parseInt(limit, 10) : 6);
   }
+
+  @Get('events')
+  @ApiOperation({ summary: 'Lister les événements publics paginés' })
+  @ApiQuery({ name: 'q', required: false, type: String })
+  @ApiQuery({ name: 'city', required: false, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
+  @ApiResponse({ status: 200, description: 'Liste paginée d\'événements' })
+  findEvents(
+    @Query('q') q?: string,
+    @Query('city') city?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.discoveryService.findEvents(q, city, page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 12);
+  }
+
+  @Get('vendors')
+  @ApiOperation({ summary: 'Lister les prestataires actifs paginés' })
+  @ApiQuery({ name: 'q', required: false, type: String })
+  @ApiQuery({ name: 'category', required: false, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
+  @ApiResponse({ status: 200, description: 'Liste paginée de prestataires' })
+  findVendors(
+    @Query('q') q?: string,
+    @Query('category') category?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.discoveryService.findVendors(q, category, page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 12);
+  }
+
+  @Get('venues')
+  @ApiOperation({ summary: 'Lister les salles actives paginées' })
+  @ApiQuery({ name: 'q', required: false, type: String })
+  @ApiQuery({ name: 'city', required: false, type: String })
+  @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
+  @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
+  @ApiResponse({ status: 200, description: 'Liste paginée de salles' })
+  findVenues(
+    @Query('q') q?: string,
+    @Query('city') city?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.discoveryService.findVenues(q, city, page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 12);
+  }
 }

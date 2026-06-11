@@ -3,6 +3,7 @@ import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam, ApiQuery }
 import { GuestsService } from './guests.service';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateGuestDto } from './dto/update-guest.dto';
+import { BulkCreateGuestDto } from './dto/bulk-create-guest.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
@@ -26,6 +27,18 @@ export class GuestsController {
     @Body() dto: CreateGuestDto,
   ) {
     return this.guestsService.create(eventId, user.sub, dto);
+  }
+
+  @Post('bulk')
+  @ApiOperation({ summary: 'Ajouter plusieurs invités en une seule requête (max 100)' })
+  @ApiParam({ name: 'eventId', description: 'MongoDB ObjectId de l\'événement' })
+  @ApiResponse({ status: 201, description: 'Invités ajoutés' })
+  bulkCreate(
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: BulkCreateGuestDto,
+  ) {
+    return this.guestsService.bulkCreate(eventId, user.sub, dto);
   }
 
   @Get()

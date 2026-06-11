@@ -59,4 +59,40 @@ export class DiscoveryService {
       .lean()
       .select('title startDate location coverImage slug');
   }
+
+  async findEvents(q?: string, city?: string, page = 1, limit = 12): Promise<{ data: Event[]; total: number }> {
+    const filter: Record<string, unknown> = {
+      status: EventStatus.PUBLISHED,
+      visibility: EventVisibility.PUBLIC,
+    };
+    if (q) filter['$or'] = [{ title: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }];
+    if (city) filter['location.city'] = { $regex: city, $options: 'i' };
+    const [data, total] = await Promise.all([
+      this.eventModel.find(filter).sort({ startDate: 1 }).skip((page - 1) * limit).limit(limit).lean().select('title startDate location status slug coverImage'),
+      this.eventModel.countDocuments(filter),
+    ]);
+    return { data, total };
+  }
+
+  async findVendors(q?: string, category?: string, page = 1, limit = 12): Promise<{ data: VendorProfile[]; total: number }> {
+    const filter: Record<string, unknown> = { isActive: true };
+    if (q) filter['$or'] = [{ businessName: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }];
+    if (category) filter['category'] = category;
+    const [data, total] = await Promise.all([
+      this.vendorModel.find(filter).skip((page - 1) * limit).limit(limit).lean().select('businessName category serviceArea rating reviewCount'),
+      this.vendorModel.countDocuments(filter),
+    ]);
+    return { data, total };
+  }
+
+  async findVenues(q?: string, city?: string, page = 1, limit = 12): Promise<{ data: VenueProfile[]; total: number }> {
+    const filter: Record<string, unknown> = { isActive: true };
+    if (q) filter['$or'] = [{ name: { $regex: q, $options: 'i' } }, { 'address.city': { $regex: q, $options: 'i' } }];
+    if (city) filter['address.city'] = { $regex: city, $options: 'i' };
+    const [data, total] = await Promise.all([
+      this.venueModel.find(filter).skip((page - 1) * limit).limit(limit).lean().select('name address capacity rating reviewCount pricePerDay'),
+      this.venueModel.countDocuments(filter),
+    ]);
+    return { data, total };
+  }
 }
