@@ -141,4 +141,26 @@ describe('EmailsService', () => {
       expect(callArg.html).toContain('Jean Tremblay');
     });
   });
+
+  // ── sendWaitlistConfirmation ──
+  describe('sendWaitlistConfirmation', () => {
+    it("devrait envoyer un courriel de confirmation avec les points forts du rôle choisi", async () => {
+      mockResendSend.mockResolvedValue({ data: { id: 'email-id-ghi' }, error: null });
+
+      await service.sendWaitlistConfirmation('user@exemple.ca', {
+        firstName: 'Marie',
+        role: 'prestataire',
+      });
+
+      expect(mockResendSend).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: 'user@exemple.ca',
+          subject: 'Vous êtes sur la liste Elintys !',
+          html: expect.stringContaining('Marie'),
+        }),
+      );
+      const callArg: { html: string } = mockResendSend.mock.calls[0][0] as { html: string };
+      expect(callArg.html).toContain('bouche-à-oreille');
+    });
+  });
 });
