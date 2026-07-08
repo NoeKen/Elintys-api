@@ -71,9 +71,10 @@ export class EmailsService {
   // ── E-03 : Vérification de courriel ──
   async sendEmailVerification(to: string, opts: { fullName: string; token: string }): Promise<void> {
     const link = `${this.frontendUrl}/verification-email?token=${opts.token}`;
+    const fullName = this.escapeHtml(opts.fullName);
     const html = this.baseTemplate(`
       <h2 style="color:#0D1E35;margin:0 0 16px;">Vérifiez votre adresse courriel</h2>
-      <p style="color:#444;">Bonjour ${opts.fullName},</p>
+      <p style="color:#444;">Bonjour ${fullName},</p>
       <p style="color:#444;">Cliquez sur le bouton ci-dessous pour vérifier votre adresse courriel et activer votre compte.</p>
       ${this.ctaButton(link, 'Vérifier mon courriel')}
       <p style="color:#888;font-size:12px;margin-top:24px;">Ce lien expire dans 24 heures. Si vous n'avez pas créé de compte, ignorez ce message.</p>
@@ -202,9 +203,10 @@ export class EmailsService {
   // ── E-11 : Réinitialisation du mot de passe ──
   async sendPasswordReset(to: string, opts: { fullName: string; token: string }): Promise<void> {
     const link = `${this.frontendUrl}/reinitialiser-mot-de-passe?token=${opts.token}`;
+    const fullName = this.escapeHtml(opts.fullName);
     const html = this.baseTemplate(`
       <h2 style="color:#0D1E35;margin:0 0 16px;">Réinitialisation de votre mot de passe</h2>
-      <p style="color:#444;">Bonjour ${opts.fullName},</p>
+      <p style="color:#444;">Bonjour ${fullName},</p>
       <p style="color:#444;">Vous avez demandé la réinitialisation de votre mot de passe. Cliquez sur le bouton ci-dessous pour choisir un nouveau mot de passe.</p>
       ${this.ctaButton(link, 'Réinitialiser mon mot de passe')}
       <p style="color:#888;font-size:12px;margin-top:24px;">Ce lien expire dans 1 heure. Si vous n'avez pas fait cette demande, ignorez ce message.</p>
@@ -289,8 +291,23 @@ export class EmailsService {
   }
 
   private ctaButton(url: string, label: string): string {
+    const safeUrl = this.escapeAttribute(url);
+    const safeLabel = this.escapeHtml(label);
     return `<div style="text-align:center;margin:28px 0;">
-      <a href="${url}" style="background-color:#1A7A5E;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-size:15px;font-weight:600;display:inline-block;">${label}</a>
+      <a href="${safeUrl}" style="background-color:#1A7A5E;color:#fff;text-decoration:none;padding:14px 28px;border-radius:6px;font-size:15px;font-weight:600;display:inline-block;">${safeLabel}</a>
     </div>`;
+  }
+
+  private escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  private escapeAttribute(value: string): string {
+    return this.escapeHtml(value).replace(/`/g, '&#96;');
   }
 }

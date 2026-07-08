@@ -33,6 +33,9 @@ export class User {
   emailVerificationToken?: string;
 
   @Prop({ select: false })
+  emailVerificationExpiresAt?: Date;
+
+  @Prop({ select: false })
   passwordResetToken?: string;
 
   @Prop({ select: false })
@@ -46,6 +49,15 @@ export class User {
 
   @Prop({ type: [Object], default: [] })
   subscriptions!: Record<string, unknown>[];
+
+  @Prop({ default: false })
+  onboardingCompleted!: boolean;
+
+  @Prop({ type: Object, default: {} })
+  onboardingByRole!: Record<string, boolean>;
+
+  @Prop({ type: Object, default: {} })
+  onboardingData!: Record<string, Record<string, unknown>>;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

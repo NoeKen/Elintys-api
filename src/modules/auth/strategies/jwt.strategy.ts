@@ -4,8 +4,14 @@ import { InjectModel } from '@nestjs/mongoose';
 import { PassportStrategy } from '@nestjs/passport';
 import { Model } from 'mongoose';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import type { Request } from 'express';
 import { JwtPayload } from '../../../shared/decorators/current-user.decorator';
 import { User, UserDocument } from '../user.schema';
+
+function extractJwtFromAccessCookie(request: Request): string | null {
+  const cookies = request.cookies as Record<string, string> | undefined;
+  return cookies?.access_token ?? null;
+}
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
@@ -14,8 +20,12 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        extractJwtFromAccessCookie,
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ]),
       secretOrKey: configService.getOrThrow<string>('jwt.secret'),
+      algorithms: ['HS256'],
     });
   }
 
