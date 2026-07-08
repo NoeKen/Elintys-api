@@ -1,5 +1,5 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -39,6 +39,9 @@ describe('AuthService', () => {
     roles: ['organisateur'],
     isEmailVerified: false,
     refreshToken: 'hashed_refresh_token',
+    onboardingCompleted: false,
+    onboardingByRole: {},
+    onboardingData: {},
   };
 
   beforeEach(async () => {
@@ -298,7 +301,12 @@ describe('AuthService', () => {
 
       const result = await service.getMe(userId.toString());
 
-      expect(result).toEqual(profile);
+      expect(result).toEqual(expect.objectContaining(profile));
+      expect(result).toEqual(expect.objectContaining({
+        onboardingCompleted: false,
+        onboardingByRole: {},
+        onboardingData: {},
+      }));
       expect(result).not.toHaveProperty('password');
       expect(result).not.toHaveProperty('refreshToken');
     });
@@ -307,6 +315,65 @@ describe('AuthService', () => {
       userModel.findById.mockReturnValue(makeChainable(null));
 
       await expect(service.getMe('id-inexistant')).rejects.toThrow(NotFoundException);
+    });
+  });
+
+  // ── saveOnboarding ──
+  describe('saveOnboarding', () => {
+    it("sauvegarde les informations d'onboarding du rôle actif", async () => {
+      const updatedUser = {
+        ...mockUser,
+        onboardingCompleted: true,
+        onboardingByRole: { organisateur: true },
+        onboardingData: {
+          organisateur: {
+            eventTypes: ['Mariage', 'Conférence'],
+            frequency: 'mensuel',
+            displayName: 'Jean Events',
+            city: 'Montréal',
+          },
+        },
+      };
+      userModel.findById.mockReturnValue(makeChainable(mockUser));
+      userModel.findByIdAndUpdate.mockReturnValue(makeChainable(updatedUser));
+
+      const result = await service.saveOnboarding(userId.toString(), 'organisateur', {
+        eventTypes: ['Mariage', 'Conférence'],
+        frequency: 'mensuel',
+        displayName: 'Jean Events',
+        city: 'Montréal',
+        category: 'Traiteur',
+      });
+
+      expect(userModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        userId,
+        {
+          $set: {
+            'onboardingByRole.organisateur': true,
+            'onboardingData.organisateur': {
+              eventTypes: ['Mariage', 'Conférence'],
+              frequency: 'mensuel',
+              displayName: 'Jean Events',
+              city: 'Montréal',
+            },
+            onboardingCompleted: true,
+          },
+        },
+        { new: true },
+      );
+      expect(result.onboardingCompleted).toBe(true);
+      expect(result.onboardingData.organisateur).toEqual(updatedUser.onboardingData.organisateur);
+      expect(result.onboardingData.organisateur).not.toHaveProperty('category');
+    });
+
+    it("refuse de sauvegarder l'onboarding d'un rôle absent du compte", async () => {
+      userModel.findById.mockReturnValue(makeChainable(mockUser));
+
+      await expect(
+        service.saveOnboarding(userId.toString(), 'prestataire', { category: 'Traiteur' }),
+      ).rejects.toThrow(ForbiddenException);
+
+      expect(userModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
   });
 });

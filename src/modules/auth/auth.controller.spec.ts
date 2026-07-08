@@ -53,7 +53,7 @@ describe('AuthController', () => {
 
   // ── POST /auth/register ──
   describe('register', () => {
-    it('délègue à authService.register, définit le cookie et retourne accessToken + user', async () => {
+    it('délègue à authService.register, définit les cookies httpOnly et retourne user', async () => {
       const dto = { fullName: 'Jean', email: 'jean@test.com', password: 'mdp123', roles: ['organisateur'] };
       const res = mockResponse();
       mockAuthService.register.mockResolvedValue({
@@ -65,16 +65,17 @@ describe('AuthController', () => {
       const result = await controller.register(dto as RegisterDto, res as Response);
 
       expect(mockAuthService.register).toHaveBeenCalledWith(dto);
+      expect(res.cookie).toHaveBeenCalledWith('access_token', 'access_token', expect.any(Object));
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'refresh_token', expect.any(Object));
-      expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('user');
+      expect(result).not.toHaveProperty('accessToken');
       expect(result).not.toHaveProperty('refreshToken');
     });
   });
 
   // ── POST /auth/login ──
   describe('login', () => {
-    it("délègue à authService.login, définit le cookie et retourne l'accessToken + user", async () => {
+    it('délègue à authService.login, définit les cookies httpOnly et retourne user', async () => {
       const dto = { email: 'jean@test.com', password: 'mdp123' };
       const res = mockResponse();
       mockAuthService.login.mockResolvedValue({
@@ -86,16 +87,17 @@ describe('AuthController', () => {
       const result = await controller.login(dto as LoginDto, res as Response);
 
       expect(mockAuthService.login).toHaveBeenCalledWith(dto);
+      expect(res.cookie).toHaveBeenCalledWith('access_token', 'access_token', expect.any(Object));
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'refresh_token', expect.any(Object));
-      expect(result).toHaveProperty('accessToken', 'access_token');
       expect(result).toHaveProperty('user');
+      expect(result).not.toHaveProperty('accessToken');
       expect(result).not.toHaveProperty('refreshToken');
     });
   });
 
   // ── POST /auth/refresh ──
   describe('refresh', () => {
-    it('lit le cookie, appelle refreshFromCookie, repose le cookie et retourne le nouvel accessToken', async () => {
+    it('lit le cookie, appelle refreshFromCookie, repose les cookies et retourne un message', async () => {
       const req = { cookies: { refresh_token: 'old_cookie_token' } };
       const res = mockResponse();
       mockAuthService.refreshFromCookie.mockResolvedValue({
@@ -106,8 +108,9 @@ describe('AuthController', () => {
       const result = await controller.refresh((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.refreshFromCookie).toHaveBeenCalledWith('old_cookie_token');
+      expect(res.cookie).toHaveBeenCalledWith('access_token', 'new_access_token', expect.any(Object));
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'new_refresh_token', expect.any(Object));
-      expect(result).toEqual({ accessToken: 'new_access_token' });
+      expect(result).toEqual({ message: 'Session renouvelée.' });
     });
 
     it('lève UnauthorizedException si le cookie refresh_token est absent', async () => {
@@ -151,6 +154,7 @@ describe('AuthController', () => {
       const result = await controller.logout((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith('old_cookie_token');
+      expect(res.clearCookie).toHaveBeenCalledWith('access_token', { path: '/' });
       expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', { path: '/' });
       expect(result).toEqual({ message: 'Déconnecté avec succès' });
     });
@@ -163,6 +167,7 @@ describe('AuthController', () => {
       await controller.logout((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith(undefined);
+      expect(res.clearCookie).toHaveBeenCalledWith('access_token', { path: '/' });
       expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', { path: '/' });
     });
   });

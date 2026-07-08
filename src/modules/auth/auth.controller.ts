@@ -4,6 +4,8 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  Param,
+  Patch,
   Post,
   Req,
   Res,
@@ -19,6 +21,7 @@ import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { SaveOnboardingDto } from './dto/save-onboarding.dto';
 import { Public } from '../../shared/decorators/public.decorator';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 
@@ -34,10 +37,29 @@ export class AuthController {
     return {
       httpOnly: true,
       secure: this.configService.getOrThrow<string>('nodeEnv') === 'production',
-      sameSite: 'lax' as const,
+      sameSite: this.configService.getOrThrow<string>('nodeEnv') === 'production'
+        ? 'none' as const
+        : 'lax' as const,
       maxAge: 7 * 24 * 60 * 60 * 1000,
       path: '/',
     };
+  }
+
+  private get accessCookieOptions() {
+    return {
+      httpOnly: true,
+      secure: this.configService.getOrThrow<string>('nodeEnv') === 'production',
+      sameSite: this.configService.getOrThrow<string>('nodeEnv') === 'production'
+        ? 'none' as const
+        : 'lax' as const,
+      maxAge: 15 * 60 * 1000,
+      path: '/',
+    };
+  }
+
+  private setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {
+    res.cookie('access_token', accessToken, this.accessCookieOptions);
+    res.cookie('refresh_token', refreshToken, this.refreshCookieOptions);
   }
 
   @Public()
@@ -51,10 +73,10 @@ export class AuthController {
   async register(
     @Body() dto: RegisterDto,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<{ accessToken: string; user: object }> {
+  ): Promise<{ user: object }> {
     const { accessToken, refreshToken, user } = await this.authService.register(dto);
-    res.cookie('refresh_token', refreshToken, this.refreshCookieOptions);
-    return { accessToken, user };
+    this.setAuthCookies(res, accessToken, refreshToken);
+    return { user };
   }
 
   @Public()
@@ -62,27 +84,27 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Se connecter et obtenir un access token' })
   @ApiBody({ type: LoginDto })
-  @ApiResponse({ status: 200, description: 'Connexion réussie — cookie refresh_token défini' })
+  @ApiResponse({ status: 200, description: 'Connexion réussie — cookies access_token et refresh_token définis' })
   @ApiResponse({ status: 401, description: 'Identifiants invalides' })
   async login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<{ accessToken: string; user: object }> {
+  ): Promise<{ user: object }> {
     const { accessToken, refreshToken, user } = await this.authService.login(dto);
-    res.cookie('refresh_token', refreshToken, this.refreshCookieOptions);
-    return { accessToken, user };
+    this.setAuthCookies(res, accessToken, refreshToken);
+    return { user };
   }
 
   @Public()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: "Renouveler l'access token via le cookie refresh_token httpOnly" })
-  @ApiResponse({ status: 200, description: 'Nouveau access token émis' })
+  @ApiOperation({ summary: "Renouveler la session via le cookie refresh_token httpOnly" })
+  @ApiResponse({ status: 200, description: 'Nouveaux cookies access_token et refresh_token émis' })
   @ApiResponse({ status: 401, description: 'Cookie absent ou refresh token invalide' })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-  ): Promise<{ accessToken: string }> {
+  ): Promise<{ message: string }> {
     const cookieToken = (req.cookies as Record<string, string>)?.refresh_token;
 
     if (!cookieToken) {
@@ -91,8 +113,8 @@ export class AuthController {
 
     const { accessToken, newRefreshToken } = await this.authService.refreshFromCookie(cookieToken);
 
-    res.cookie('refresh_token', newRefreshToken, this.refreshCookieOptions);
-    return { accessToken };
+    this.setAuthCookies(res, accessToken, newRefreshToken);
+    return { message: 'Session renouvelée.' };
   }
 
   @ApiBearerAuth('access-token')
@@ -103,6 +125,24 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   async getMe(@CurrentUser() user: JwtPayload) {
     return this.authService.getMe(user.sub);
+  }
+
+  @Patch('onboarding/:role')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('access-token')
+  @ApiOperation({ summary: "Sauvegarder l'onboarding du rôle connecté" })
+  @ApiBody({ type: SaveOnboardingDto })
+  @ApiResponse({ status: 200, description: 'Onboarding sauvegardé' })
+  @ApiResponse({ status: 400, description: 'Rôle ou données invalides' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: "Le compte ne possède pas ce rôle" })
+  async saveOnboarding(
+    @CurrentUser() user: JwtPayload,
+    @Param('role') role: string,
+    @Body() dto: SaveOnboardingDto,
+  ): Promise<{ user: object }> {
+    const updatedUser = await this.authService.saveOnboarding(user.sub, role, dto);
+    return { user: updatedUser };
   }
 
   @Public()
@@ -116,6 +156,7 @@ export class AuthController {
   ): Promise<{ message: string }> {
     const cookieToken = (req.cookies as Record<string, string>)?.refresh_token;
     await this.authService.logoutFromCookie(cookieToken);
+    res.clearCookie('access_token', { path: '/' });
     res.clearCookie('refresh_token', { path: '/' });
     return { message: 'Déconnecté avec succès' };
   }

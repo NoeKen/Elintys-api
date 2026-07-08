@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -13,9 +14,10 @@ import { SignOptions } from 'jsonwebtoken';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { User, UserDocument } from './user.schema';
+import { User, UserDocument, UserRole } from './user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { SaveOnboardingDto } from './dto/save-onboarding.dto';
 import { JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EmailsService } from '../emails/emails.service';
@@ -34,6 +36,33 @@ type PublicUser = {
   email: string;
   roles: string[];
   isEmailVerified: boolean;
+  onboardingCompleted: boolean;
+  onboardingByRole: Record<string, boolean>;
+  onboardingData: Record<string, SavedOnboardingData>;
+};
+
+type OnboardingRole = UserRole.ORGANISATEUR | UserRole.PRESTATAIRE | UserRole.GESTIONNAIRE_SALLE;
+type OnboardingValue = string | string[] | number;
+type SavedOnboardingData = Record<string, OnboardingValue>;
+type SaveOnboardingField = keyof SaveOnboardingDto;
+type UserProfile = {
+  _id: Types.ObjectId;
+  fullName: string;
+  email: string;
+  roles: string[];
+  isEmailVerified: boolean;
+  subscriptions: object[];
+  createdAt?: Date;
+  updatedAt?: Date;
+  onboardingCompleted?: boolean;
+  onboardingByRole?: Record<string, boolean>;
+  onboardingData?: unknown;
+};
+
+const ONBOARDING_FIELDS_BY_ROLE: Record<OnboardingRole, SaveOnboardingField[]> = {
+  [UserRole.ORGANISATEUR]: ['eventTypes', 'frequency', 'avatar', 'displayName', 'city'],
+  [UserRole.PRESTATAIRE]: ['category', 'logo', 'description', 'serviceArea', 'rate'],
+  [UserRole.GESTIONNAIRE_SALLE]: ['venueName', 'venueType', 'capacity', 'address', 'photo', 'availability'],
 };
 
 // Hash bcrypt pré-calculé utilisé comme leurre pour égaliser le temps de réponse
@@ -54,7 +83,12 @@ export class AuthService {
 
   async register(dto: RegisterDto): Promise<{ accessToken: string; refreshToken: string; user: PublicUser }> {
     const exists = await this.userModel.findOne({ email: dto.email }).lean().select('_id');
-    if (exists) throw new ConflictException(ErrorCodes.EMAIL_TAKEN);
+    if (exists) {
+      throw new ConflictException({
+        code: ErrorCodes.EMAIL_TAKEN,
+        message: 'Un compte existe déjà avec cette adresse courriel. Connectez-vous ou utilisez une autre adresse.',
+      });
+    }
 
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
@@ -63,7 +97,8 @@ export class AuthService {
       email: dto.email,
       password: dto.password,
       roles: dto.roles,
-      emailVerificationToken: await bcrypt.hash(verificationToken, 10),
+      emailVerificationToken: await bcrypt.hash(verificationToken, 12),
+      emailVerificationExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
     const userId = (user._id as Types.ObjectId).toString();
@@ -92,6 +127,9 @@ export class AuthService {
         email:           user.email,
         roles:           user.roles,
         isEmailVerified: user.isEmailVerified,
+        onboardingCompleted: user.onboardingCompleted,
+        onboardingByRole: user.onboardingByRole,
+        onboardingData: this.normalizeSavedOnboardingData(user.onboardingData),
       },
     };
   }
@@ -125,6 +163,9 @@ export class AuthService {
         email:           user.email,
         roles:           user.roles,
         isEmailVerified: user.isEmailVerified,
+        onboardingCompleted: user.onboardingCompleted ?? false,
+        onboardingByRole: user.onboardingByRole ?? {},
+        onboardingData: this.normalizeSavedOnboardingData(user.onboardingData),
       },
     };
   }
@@ -185,22 +226,73 @@ export class AuthService {
     subscriptions: object[];
     createdAt?: Date;
     updatedAt?: Date;
+    onboardingCompleted: boolean;
+    onboardingByRole: Record<string, boolean>;
+    onboardingData: Record<string, SavedOnboardingData>;
   }> {
     const user = await this.userModel
       .findById(userId)
       .lean()
-      .select('_id fullName email roles isEmailVerified subscriptions createdAt updatedAt');
+      .select('_id fullName email roles isEmailVerified subscriptions createdAt updatedAt onboardingCompleted onboardingByRole onboardingData');
 
     if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
-    return user as {
-      _id: Types.ObjectId;
-      fullName: string;
-      email: string;
-      roles: string[];
-      isEmailVerified: boolean;
-      subscriptions: object[];
-      createdAt?: Date;
-      updatedAt?: Date;
+    const profile = user as unknown as UserProfile;
+
+    return {
+      _id: profile._id,
+      fullName: profile.fullName,
+      email: profile.email,
+      roles: profile.roles,
+      isEmailVerified: profile.isEmailVerified,
+      subscriptions: profile.subscriptions,
+      createdAt: profile.createdAt,
+      updatedAt: profile.updatedAt,
+      onboardingCompleted: profile.onboardingCompleted ?? false,
+      onboardingByRole: profile.onboardingByRole ?? {},
+      onboardingData: this.normalizeSavedOnboardingData(profile.onboardingData),
+    };
+  }
+
+  async saveOnboarding(userId: string, roleParam: string, dto: SaveOnboardingDto): Promise<PublicUser> {
+    const role = this.normalizeOnboardingRole(roleParam);
+    const user = await this.userModel
+      .findById(userId)
+      .lean()
+      .select('_id fullName email roles isEmailVerified onboardingByRole onboardingData');
+
+    if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
+    if (!user.roles.includes(role)) {
+      throw new ForbiddenException('Ce rôle n’est pas actif sur votre compte.');
+    }
+
+    const onboardingData = this.pickOnboardingData(role, dto);
+
+    const updatedUser = await this.userModel
+      .findByIdAndUpdate(
+        user._id,
+        {
+          $set: {
+            [`onboardingByRole.${role}`]: true,
+            [`onboardingData.${role}`]: onboardingData,
+            onboardingCompleted: true,
+          },
+        },
+        { new: true },
+      )
+      .lean()
+      .select('_id fullName email roles isEmailVerified onboardingCompleted onboardingByRole onboardingData');
+
+    if (!updatedUser) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
+
+    return {
+      _id: (updatedUser._id as Types.ObjectId).toString(),
+      fullName: updatedUser.fullName,
+      email: updatedUser.email,
+      roles: updatedUser.roles,
+      isEmailVerified: updatedUser.isEmailVerified,
+      onboardingCompleted: updatedUser.onboardingCompleted ?? false,
+      onboardingByRole: updatedUser.onboardingByRole ?? {},
+      onboardingData: this.normalizeSavedOnboardingData(updatedUser.onboardingData),
     };
   }
 
@@ -264,8 +356,11 @@ export class AuthService {
 
   async verifyEmail(token: string): Promise<void> {
     const users = await this.userModel
-      .find({ isEmailVerified: false })
-      .select('+emailVerificationToken')
+      .find({
+        isEmailVerified: false,
+        emailVerificationExpiresAt: { $gt: new Date() },
+      })
+      .select('+emailVerificationToken +emailVerificationExpiresAt')
       .lean();
 
     let matchedUser: (typeof users)[number] | null = null;
@@ -285,6 +380,7 @@ export class AuthService {
     await this.userModel.findByIdAndUpdate(matchedUser._id, {
       isEmailVerified: true,
       emailVerificationToken: null,
+      emailVerificationExpiresAt: null,
     });
   }
 
@@ -300,7 +396,8 @@ export class AuthService {
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
     await this.userModel.findByIdAndUpdate(user._id, {
-      emailVerificationToken: await bcrypt.hash(verificationToken, 10),
+      emailVerificationToken: await bcrypt.hash(verificationToken, 12),
+      emailVerificationExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
 
     try {
@@ -320,13 +417,84 @@ export class AuthService {
     const accessToken = this.jwtService.sign(payload, {
       secret: this.configService.getOrThrow<string>('jwt.secret'),
       expiresIn: accessTokenExpiresIn,
+      algorithm: 'HS256',
     });
 
     const refreshToken = this.jwtService.sign(payload, {
       secret: this.configService.getOrThrow<string>('jwt.refreshSecret'),
       expiresIn: refreshTokenExpiresIn,
+      algorithm: 'HS256',
     });
 
     return { accessToken, refreshToken };
+  }
+
+  private normalizeOnboardingRole(role: string): OnboardingRole {
+    if (role === 'gestionnaire') return UserRole.GESTIONNAIRE_SALLE;
+    if (
+      role === UserRole.ORGANISATEUR ||
+      role === UserRole.PRESTATAIRE ||
+      role === UserRole.GESTIONNAIRE_SALLE
+    ) {
+      return role;
+    }
+
+    throw new BadRequestException('Rôle d’onboarding invalide.');
+  }
+
+  private pickOnboardingData(role: OnboardingRole, dto: SaveOnboardingDto): SavedOnboardingData {
+    const candidates: Record<SaveOnboardingField, OnboardingValue | undefined> = {
+      eventTypes: dto.eventTypes,
+      frequency: dto.frequency,
+      avatar: dto.avatar,
+      displayName: dto.displayName,
+      city: dto.city,
+      category: dto.category,
+      logo: dto.logo,
+      description: dto.description,
+      serviceArea: dto.serviceArea,
+      rate: dto.rate,
+      venueName: dto.venueName,
+      venueType: dto.venueType,
+      capacity: dto.capacity,
+      address: dto.address,
+      photo: dto.photo,
+      availability: dto.availability,
+    };
+
+    return ONBOARDING_FIELDS_BY_ROLE[role].reduce<SavedOnboardingData>((acc, field) => {
+      const value = candidates[field];
+      if (value === undefined) return acc;
+      if (typeof value === 'string' && value.length === 0) return acc;
+      if (Array.isArray(value) && value.length === 0) return acc;
+      acc[field] = value;
+      return acc;
+    }, {});
+  }
+
+  private normalizeSavedOnboardingData(input: unknown): Record<string, SavedOnboardingData> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+
+    return Object.entries(input as Record<string, unknown>).reduce<Record<string, SavedOnboardingData>>(
+      (roles, [role, data]) => {
+        if (!data || typeof data !== 'object' || Array.isArray(data)) return roles;
+
+        const safeData = Object.entries(data as Record<string, unknown>).reduce<SavedOnboardingData>(
+          (fields, [field, value]) => {
+            if (typeof value === 'string' || typeof value === 'number') {
+              fields[field] = value;
+            } else if (Array.isArray(value) && value.every((item) => typeof item === 'string')) {
+              fields[field] = value;
+            }
+            return fields;
+          },
+          {},
+        );
+
+        roles[role] = safeData;
+        return roles;
+      },
+      {},
+    );
   }
 }
