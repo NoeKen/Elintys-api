@@ -63,4 +63,12 @@ export class NotificationsService {
       )
       .exec();
   }
+
+  async countUnread(userId: string): Promise<{ count: number }> {
+    const count = await this.notificationModel.countDocuments({
+      userId: new Types.ObjectId(userId),
+      read: false,
+    });
+    return { count };
+  }
 }

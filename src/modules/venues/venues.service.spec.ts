@@ -6,9 +6,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { VenuesService } from './venues.service';
 import { VenueBooking, VenueBookingSchema, VenueBookingStatus, VenueProfile } from './venue.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailsService } from '../emails/emails.service';
+import { User } from '../auth/user.schema';
+import { Event } from '../events/event.schema';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -81,6 +86,11 @@ describe('VenuesService', () => {
         VenuesService,
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
         { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
+        { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
+        { provide: getModelToken(Event.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ title: 'Test Event' })) } },
+        { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
+        { provide: EmailsService, useValue: { sendVenueBookingUpdate: jest.fn().mockResolvedValue(undefined) } },
+        { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
 
@@ -234,7 +244,7 @@ describe('VenuesService', () => {
     it('devrait confirmer une réservation en attente', async () => {
       const venueProfileId = new Types.ObjectId(venueId);
       venueBookingModel.findById.mockReturnValue(
-        makeChainable({ status: VenueBookingStatus.PENDING, venue: venueProfileId }),
+        makeChainable({ status: VenueBookingStatus.PENDING, venue: venueProfileId, organizer: new Types.ObjectId(userId), event: new Types.ObjectId(eventId) }),
       );
       venueModel.findOne.mockReturnValue(makeChainable({ _id: venueProfileId }));
       const confirmed = mockBooking({ status: VenueBookingStatus.CONFIRMED });

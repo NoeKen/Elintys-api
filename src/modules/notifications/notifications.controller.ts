@@ -7,12 +7,20 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
+import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 
+@ApiTags('Notifications')
 @Controller('notifications')
 export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
+
+  @Get('me/unread-count')
+  @ApiOperation({ summary: 'Nombre de notifications non lues' })
+  getUnreadCount(@CurrentUser() user: JwtPayload) {
+    return this.notificationsService.countUnread(user.sub);
+  }
 
   @Get('me')
   findMine(

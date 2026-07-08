@@ -19,6 +19,7 @@ import { AiModule } from './modules/ai/ai.module';
 import { EmailsModule } from './modules/emails/emails.module';
 import { InvitationsModule } from './modules/invitations/invitations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
+import { WaitlistModule } from './modules/waitlist/waitlist.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
     AiModule,
     InvitationsModule,
     NotificationsModule,
+    WaitlistModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

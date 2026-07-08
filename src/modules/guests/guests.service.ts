@@ -5,6 +5,7 @@ import { Guest, GuestDocument } from './guest.schema';
 import { Event, EventDocument } from '../events/event.schema';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateGuestDto } from './dto/update-guest.dto';
+import { BulkCreateGuestDto } from './dto/bulk-create-guest.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 
 @Injectable()
@@ -53,5 +54,16 @@ export class GuestsService {
     await this.assertEventOwner(eventId, userId);
     const result = await this.guestModel.findByIdAndDelete(id);
     if (!result) throw new NotFoundException('Invité introuvable.');
+  }
+
+  async bulkCreate(eventId: string, userId: string, dto: BulkCreateGuestDto): Promise<{ created: number }> {
+    await this.assertEventOwner(eventId, userId);
+    const docs = dto.guests.map((g) => ({
+      ...g,
+      event: new Types.ObjectId(eventId),
+      addedBy: new Types.ObjectId(userId),
+    }));
+    await this.guestModel.insertMany(docs, { ordered: false });
+    return { created: docs.length };
   }
 }
