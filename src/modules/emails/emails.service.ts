@@ -213,6 +213,50 @@ export class EmailsService {
     await this.sendEmail(to, 'Réinitialisation de votre mot de passe — Elintys', html);
   }
 
+  // ── E-13 : Confirmation d'inscription à la liste d'attente ──
+  async sendWaitlistConfirmation(to: string, opts: {
+    firstName: string;
+    role: 'organisateur' | 'prestataire' | 'gestionnaire' | 'visiteur';
+  }): Promise<void> {
+    const highlightsByRole: Record<typeof opts.role, string[]> = {
+      organisateur: [
+        'Créez vos événements sans jongler entre plusieurs outils',
+        'Retrouvez lieux, prestataires, billets et invités dans un seul tableau de bord',
+        'Passez moins de temps à synchroniser, plus de temps à organiser',
+      ],
+      prestataire: [
+        'Soyez visible au bon moment, sans dépendre seulement du bouche-à-oreille',
+        'Recevez des demandes liées à de vrais événements',
+        "Rejoignez un écosystème pensé pour connecter les talents à la demande réelle",
+      ],
+      gestionnaire: [
+        'Recevez des demandes structurées : date, capacité, contexte',
+        'Présentez votre espace aux organisateurs qui le cherchent activement',
+        'Gagnez du temps dès le premier échange',
+      ],
+      visiteur: [
+        "Découvrez les événements locaux autrement",
+        "Recevez les premières nouvelles sur l'ouverture de la plateforme",
+        'Faites partie des tout premiers inscrits',
+      ],
+    };
+
+    const highlights = highlightsByRole[opts.role]
+      .map((item) => `<li style="color:#444;line-height:1.7;">${item}</li>`)
+      .join('');
+
+    const html = this.baseTemplate(`
+      <h2 style="color:#0D1E35;margin:0 0 16px;">Vous êtes sur la liste !</h2>
+      <p style="color:#444;">Bonjour ${opts.firstName},</p>
+      <p style="color:#444;">Merci de rejoindre la liste d'attente Elintys. On vous contactera dès que les portes s'ouvrent.</p>
+      <p style="color:#0D1E35;font-weight:600;margin-top:24px;">Ce qui vous attend :</p>
+      <ul style="padding-left:20px;">${highlights}</ul>
+      ${this.ctaButton(this.frontendUrl, 'Découvrir Elintys')}
+    `);
+
+    await this.sendEmail(to, "Vous êtes sur la liste Elintys !", html);
+  }
+
   private baseTemplate(content: string): string {
     return `
 <!DOCTYPE html>
