@@ -9,6 +9,8 @@ import { RolesGuard } from './shared/guards/roles.guard';
 import { AllExceptionsFilter } from './shared/filters/http-exception.filter';
 import { ConfigService } from '@nestjs/config';
 
+type CorsOriginCallback = (error: Error | null, allow?: boolean) => void;
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create(AppModule, {
     rawBody: true,
@@ -17,14 +19,38 @@ async function bootstrap(): Promise<void> {
   const configService = app.get(ConfigService);
   const frontendUrl = configService.getOrThrow<string>('frontendUrl');
   const port = configService.getOrThrow<number>('port');
+  const apiHost = process.env.API_HOST ?? '0.0.0.0';
   const nodeEnv = configService.get<string>('nodeEnv');
   const enableSwagger = process.env.ENABLE_SWAGGER === 'true' || nodeEnv !== 'production';
 
   app.use(helmet());
   app.use(cookieParser());
 
+  const corsOrigins = [
+    frontendUrl,
+    ...(process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((origin) => origin.trim())
+      .filter(Boolean),
+  ];
+
   app.enableCors({
-    origin: frontendUrl,
+    origin: (origin: string | undefined, callback: CorsOriginCallback) => {
+      if (!origin) return callback(null, true);
+
+      const isConfiguredOrigin = corsOrigins.includes(origin);
+      const isLocalNetworkOrigin =
+        nodeEnv !== 'production' &&
+        /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
+          origin,
+        );
+
+      if (isConfiguredOrigin || isLocalNetworkOrigin) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`CORS origin not allowed: ${origin}`), false);
+    },
     credentials: true,
   });
 
@@ -85,7 +111,7 @@ async function bootstrap(): Promise<void> {
     console.log(`📖 Swagger disponible sur : http://localhost:${port}/api/docs`);
   }
 
-  await app.listen(port);
+  await app.listen(port, apiHost);
   console.log(`🚀 Elintys API démarrée sur le port ${port} [${nodeEnv}]`);
 }
 
