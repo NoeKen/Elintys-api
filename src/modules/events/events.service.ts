@@ -7,17 +7,24 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import slugify from 'slugify';
-import { Event, EventDocument, EventStatus } from './event.schema';
+import {
+  Event,
+  EventDocument,
+  EventStatus,
+  EventVisibility,
+} from './event.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { QueryEventDto } from './dto/query-event.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
+import { EventMediaService } from './event-media.service';
 
 @Injectable()
 export class EventsService {
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
+    private readonly eventMediaService: EventMediaService,
   ) {}
 
   async create(organizerId: string, dto: CreateEventDto): Promise<Event> {
@@ -27,6 +34,12 @@ export class EventsService {
       ...dto,
       organizer: new Types.ObjectId(organizerId),
       slug,
+      creationProgress: {
+        currentStep: dto.creationProgress?.currentStep ?? 1,
+        completedSteps: dto.creationProgress?.completedSteps ?? [],
+        skippedSteps: dto.creationProgress?.skippedSteps ?? [],
+        lastSavedAt: new Date(),
+      },
     });
     return event.toObject();
   }
@@ -44,12 +57,13 @@ export class EventsService {
   }
 
   async findAll(query: QueryEventDto): Promise<PaginatedResult<Event>> {
-    const { page = 1, limit = 20, status, visibility, city } = query;
+    const { page = 1, limit = 20, city } = query;
     const skip = (page - 1) * limit;
 
-    const filter: Record<string, unknown> = {};
-    if (status) filter['status'] = status;
-    if (visibility) filter['visibility'] = visibility;
+    const filter: Record<string, unknown> = {
+      status: EventStatus.PUBLISHED,
+      visibility: EventVisibility.PUBLIC,
+    };
     if (city) filter['location.city'] = { $regex: city, $options: 'i' };
 
     const [data, total] = await Promise.all([
@@ -60,9 +74,12 @@ export class EventsService {
     return { data, total, page, limit };
   }
 
-  async findOne(id: string): Promise<Event> {
+  async findOne(id: string, organizerId: string): Promise<Event> {
     const event = await this.eventModel.findById(id).lean().select('-__v');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (event.organizer.toString() !== organizerId) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
     return event;
   }
 
@@ -73,20 +90,34 @@ export class EventsService {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
+    const updatePayload = dto.creationProgress
+      ? {
+          ...dto,
+          creationProgress: {
+            ...dto.creationProgress,
+            lastSavedAt: new Date(),
+          },
+        }
+      : dto;
+
     const updated = await this.eventModel
-      .findByIdAndUpdate(id, dto, { new: true })
+      .findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })
       .lean()
       .select('-__v');
     return updated!;
   }
 
   async remove(id: string, organizerId: string): Promise<void> {
-    const event = await this.eventModel.findById(id).lean().select('organizer');
+    const event = await this.eventModel
+      .findById(id)
+      .lean()
+      .select('organizer coverImage gallery');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (event.organizer.toString() !== organizerId) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
     await this.eventModel.findByIdAndDelete(id);
+    await this.eventMediaService.cleanupAfterEventDeletion(id, event);
   }
 
   async publish(id: string, organizerId: string): Promise<Event> {
@@ -98,7 +129,10 @@ export class EventsService {
   }
 
   async findBySlug(slug: string): Promise<Event> {
-    const event = await this.eventModel.findOne({ slug }).lean().select('-__v');
+    const event = await this.eventModel
+      .findOne({ slug, status: EventStatus.PUBLISHED })
+      .lean()
+      .select('-__v');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     return event;
   }

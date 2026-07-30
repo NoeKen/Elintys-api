@@ -77,6 +77,7 @@ describe('VendorsService', () => {
     vendorModel.countDocuments.mockResolvedValue(1);
 
     vendorRequestModel.find.mockReturnValue(makeChainable([mockRequest()]));
+    vendorRequestModel.findOne.mockReturnValue(makeChainable(null));
     vendorRequestModel.findById.mockReturnValue(makeChainable(mockRequest()));
     vendorRequestModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockRequest()));
     vendorRequestModel.findByIdAndDelete.mockResolvedValue(null);
@@ -87,7 +88,17 @@ describe('VendorsService', () => {
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
         { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
         { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
-        { provide: getModelToken(Event.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ title: 'Test Event' })) } },
+        {
+          provide: getModelToken(Event.name),
+          useValue: {
+            findById: jest.fn().mockReturnValue(
+              makeChainable({
+                title: 'Test Event',
+                organizer: { toString: () => userId },
+              }),
+            ),
+          },
+        },
         { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
         { provide: EmailsService, useValue: { sendRequestAccepted: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
@@ -235,7 +246,7 @@ describe('VendorsService', () => {
   // ── listRequestsByEvent ──
   describe('listRequestsByEvent', () => {
     it('devrait retourner les demandes pour un événement', async () => {
-      const result = await service.listRequestsByEvent(eventId);
+      const result = await service.listRequestsByEvent(eventId, userId);
 
       expect(vendorRequestModel.find).toHaveBeenCalledWith(
         expect.objectContaining({ event: expect.any(Types.ObjectId) }),
