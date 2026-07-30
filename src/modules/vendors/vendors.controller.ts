@@ -111,11 +111,12 @@ export class VendorsController {
   }
 
   @Get(':eventId/requests')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Lister les demandes prestataires d\'un événement (authentifié)' })
   @ApiParam({ name: 'eventId' })
   @ApiResponse({ status: 200, description: 'Liste des demandes' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  listRequestsByEvent(@Param('eventId') eventId: string) {
-    return this.vendorsService.listRequestsByEvent(eventId);
+  listRequestsByEvent(@Param('eventId') eventId: string, @CurrentUser() user: JwtPayload) {
+    return this.vendorsService.listRequestsByEvent(eventId, user.sub);
   }
 }

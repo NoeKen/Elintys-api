@@ -75,6 +75,34 @@ export class VendorsService {
   // ── VendorRequest methods ──
 
   async createRequest(eventId: string, organizerId: string, dto: CreateVendorRequestDto): Promise<VendorRequest> {
+    const event = await this.eventModel
+      .findById(eventId)
+      .lean()
+      .select('organizer');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (event.organizer.toString() !== organizerId) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+
+    const duplicateFilter = dto.vendorId
+      ? {
+          event: new Types.ObjectId(eventId),
+          vendor: new Types.ObjectId(dto.vendorId),
+          status: VendorRequestStatus.PENDING,
+        }
+      : {
+          event: new Types.ObjectId(eventId),
+          source: VendorRequestSource.MANUAL,
+          'externalContact.name': dto.externalContact?.name,
+          'externalContact.category': dto.externalContact?.category,
+          status: VendorRequestStatus.PENDING,
+        };
+    const existingRequest = await this.vendorRequestModel
+      .findOne(duplicateFilter)
+      .lean()
+      .select('-__v');
+    if (existingRequest) return existingRequest;
+
     const req = await this.vendorRequestModel.create({
       event: new Types.ObjectId(eventId),
       organizer: new Types.ObjectId(organizerId),
@@ -87,7 +115,16 @@ export class VendorsService {
     return req.toObject();
   }
 
-  async listRequestsByEvent(eventId: string): Promise<VendorRequest[]> {
+  async listRequestsByEvent(eventId: string, organizerId: string): Promise<VendorRequest[]> {
+    const event = await this.eventModel
+      .findById(eventId)
+      .lean()
+      .select('organizer');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (event.organizer.toString() !== organizerId) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+
     return this.vendorRequestModel
       .find({ event: new Types.ObjectId(eventId) })
       .populate('vendor', 'businessName category')

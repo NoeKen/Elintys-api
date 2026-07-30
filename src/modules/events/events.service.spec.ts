@@ -4,6 +4,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventsService } from './events.service';
 import { Event, EventStatus } from './event.schema';
+import { EventMediaService } from './event-media.service';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -18,6 +19,9 @@ const makeChainable = (value: unknown) => {
 describe('EventsService', () => {
   let service: EventsService;
   let eventModel: Record<string, jest.Mock>;
+  const eventMediaService = {
+    cleanupAfterEventDeletion: jest.fn().mockResolvedValue(undefined),
+  };
 
   const organizerId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
@@ -53,6 +57,7 @@ describe('EventsService', () => {
       providers: [
         EventsService,
         { provide: getModelToken(Event.name), useValue: eventModel },
+        { provide: EventMediaService, useValue: eventMediaService },
       ],
     }).compile();
 
@@ -87,14 +92,17 @@ describe('EventsService', () => {
       expect(result.page).toBe(1);
     });
 
-    it('filtre par statut si fourni', async () => {
+    it('force uniquement les événements publics publiés', async () => {
       eventModel.find.mockReturnValue(makeChainable([]));
       eventModel.countDocuments.mockResolvedValue(0);
 
       await service.findAll({ page: 1, limit: 10, status: EventStatus.PUBLISHED });
 
       expect(eventModel.find).toHaveBeenCalledWith(
-        expect.objectContaining({ status: EventStatus.PUBLISHED }),
+        expect.objectContaining({
+          status: EventStatus.PUBLISHED,
+          visibility: 'public',
+        }),
       );
     });
 
@@ -113,7 +121,7 @@ describe('EventsService', () => {
   // ── findOne ──
   describe('findOne', () => {
     it('retourne l\'événement correspondant à l\'ID', async () => {
-      const result = await service.findOne(eventId);
+      const result = await service.findOne(eventId, organizerId);
 
       expect((result as unknown as Record<string, unknown>)._id).toBe(eventId);
     });
@@ -121,7 +129,11 @@ describe('EventsService', () => {
     it('lève NotFoundException si l\'événement n\'existe pas', async () => {
       eventModel.findById.mockReturnValue(makeChainable(null));
 
-      await expect(service.findOne('id-inexistant')).rejects.toThrow(NotFoundException);
+      await expect(service.findOne('id-inexistant', organizerId)).rejects.toThrow(NotFoundException);
+    });
+
+    it('lève ForbiddenException si le brouillon appartient à un autre organisateur', async () => {
+      await expect(service.findOne(eventId, 'autre-user-id')).rejects.toThrow(ForbiddenException);
     });
   });
 
@@ -157,6 +169,10 @@ describe('EventsService', () => {
 
       await expect(service.remove(eventId, organizerId)).resolves.toBeUndefined();
       expect(eventModel.findByIdAndDelete).toHaveBeenCalledWith(eventId);
+      expect(eventMediaService.cleanupAfterEventDeletion).toHaveBeenCalledWith(
+        eventId,
+        expect.objectContaining({ organizer: expect.anything() }),
+      );
     });
 
     it('lève ForbiddenException si l\'utilisateur n\'est pas l\'organisateur', async () => {
@@ -244,7 +260,10 @@ describe('EventsService', () => {
       const result = await service.findBySlug(slug);
 
       // Assert
-      expect(eventModel.findOne).toHaveBeenCalledWith({ slug });
+      expect(eventModel.findOne).toHaveBeenCalledWith({
+        slug,
+        status: EventStatus.PUBLISHED,
+      });
       expect((result as unknown as Record<string, unknown>).slug).toBe(slug);
     });
 

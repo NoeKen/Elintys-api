@@ -10,21 +10,48 @@ import {
   Post,
   Put,
   Query,
+  UploadedFile,
+  UploadedFiles,
+  UseInterceptors,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiParam,
+  ApiQuery,
+  ApiBody,
+  ApiConsumes,
+} from '@nestjs/swagger';
+import {
+  FileInterceptor,
+  FilesInterceptor,
+} from '@nestjs/platform-express';
+import { Throttle } from '@nestjs/throttler';
+import { memoryStorage } from 'multer';
 import { EventsService } from './events.service';
+import { EventMediaService } from './event-media.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { QueryEventDto } from './dto/query-event.dto';
+import { DeleteEventGalleryImageDto } from './dto/delete-event-gallery-image.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
+import {
+  MEDIA_MAX_FILE_SIZE,
+  MEDIA_MAX_GALLERY_IMAGES,
+} from '../media/media.constants';
 
 @ApiTags('Events')
 @ApiBearerAuth('access-token')
 @Controller('events')
 export class EventsController {
-  constructor(private readonly eventsService: EventsService) {}
+  constructor(
+    private readonly eventsService: EventsService,
+    private readonly eventMediaService: EventMediaService,
+  ) {}
 
   @Post()
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
@@ -42,8 +69,6 @@ export class EventsController {
   @ApiOperation({ summary: 'Lister les événements' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
-  @ApiQuery({ name: 'status', required: false, enum: ['draft', 'published', 'cancelled', 'completed'] })
-  @ApiQuery({ name: 'visibility', required: false, enum: ['public', 'private', 'invite_only'] })
   @ApiQuery({ name: 'city', required: false, type: String, example: 'Montréal' })
   @ApiResponse({ status: 200, description: 'Liste paginée d\'événements' })
   findAll(@Query() query: QueryEventDto) {
@@ -73,14 +98,14 @@ export class EventsController {
     return this.eventsService.findBySlug(slug);
   }
 
-  @Public()
   @Get(':id')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Récupérer un événement par ID' })
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId de l\'événement' })
   @ApiResponse({ status: 200, description: 'Événement trouvé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
-  findOne(@Param('id') id: string) {
-    return this.eventsService.findOne(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.eventsService.findOne(id, user.sub);
   }
 
   @Put(':id')
@@ -97,6 +122,108 @@ export class EventsController {
     @Body() dto: UpdateEventDto,
   ) {
     return this.eventsService.update(id, user.sub, dto);
+  }
+
+  @Patch(':id')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Mettre à jour partiellement un événement' })
+  @ApiParam({ name: 'id', description: 'MongoDB ObjectId de l’événement' })
+  @ApiResponse({ status: 200, description: 'Événement mis à jour' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Accès refusé' })
+  @ApiResponse({ status: 404, description: 'Événement introuvable' })
+  patch(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventDto,
+  ) {
+    return this.eventsService.update(id, user.sub, dto);
+  }
+
+  @Post(':eventId/cover')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: MEDIA_MAX_FILE_SIZE, files: 1 },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['file'],
+      properties: { file: { type: 'string', format: 'binary' } },
+    },
+  })
+  @ApiOperation({ summary: 'Téléverser ou remplacer la couverture' })
+  uploadCover(
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.eventMediaService.uploadCover(eventId, user.sub, file);
+  }
+
+  @Delete(':eventId/cover')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Supprimer la couverture de l’événement' })
+  deleteCover(
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.eventMediaService.deleteCover(eventId, user.sub);
+  }
+
+  @Post(':eventId/gallery')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @UseInterceptors(
+    FilesInterceptor('files', MEDIA_MAX_GALLERY_IMAGES, {
+      storage: memoryStorage(),
+      limits: {
+        fileSize: MEDIA_MAX_FILE_SIZE,
+        files: MEDIA_MAX_GALLERY_IMAGES,
+      },
+    }),
+  )
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['files'],
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+          maxItems: MEDIA_MAX_GALLERY_IMAGES,
+        },
+      },
+    },
+  })
+  @ApiOperation({ summary: 'Ajouter des images à la galerie' })
+  uploadGallery(
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @UploadedFiles() files?: Express.Multer.File[],
+  ) {
+    return this.eventMediaService.uploadGallery(eventId, user.sub, files);
+  }
+
+  @Delete(':eventId/gallery')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Supprimer une image de la galerie' })
+  deleteGalleryImage(
+    @Param('eventId') eventId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: DeleteEventGalleryImageDto,
+  ) {
+    return this.eventMediaService.deleteGalleryImage(
+      eventId,
+      user.sub,
+      dto.publicId,
+    );
   }
 
   @Delete(':id')
