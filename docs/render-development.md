@@ -4,7 +4,8 @@ Le fichier `render.yaml` décrit le service `elintys-api-dev` :
 
 - dépôt `NoeKen/Elintys-api`, branche `dev`;
 - déploiement automatique à chaque commit;
-- build reproductible avec `npm ci && npm run build`;
+- build reproductible sous Node.js 22 avec installation des outils de
+  compilation, puis suppression des dépendances de développement;
 - démarrage avec `npm run start:prod`;
 - contrôle de santé sur `/api/v1/health`.
 

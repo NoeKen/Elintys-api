@@ -6,7 +6,7 @@ services:
     branch: dev
     plan: free
     region: ohio
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build && npm prune --omit=dev
     startCommand: npm run start:prod
     healthCheckPath: /api/v1/health
     autoDeployTrigger: commit
