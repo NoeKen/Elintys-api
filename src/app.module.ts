@@ -20,6 +20,7 @@ import { EmailsModule } from './modules/emails/emails.module';
 import { InvitationsModule } from './modules/invitations/invitations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { WaitlistModule } from './modules/waitlist/waitlist.module';
     InvitationsModule,
     NotificationsModule,
     WaitlistModule,
+    HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

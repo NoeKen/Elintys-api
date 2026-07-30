@@ -1,4 +1,4 @@
-import { IsEnum, IsMongoId, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { IsEmail, IsEnum, IsMongoId, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorRequestSource } from '../vendor.schema';
@@ -10,17 +10,26 @@ export class ExternalContactDto {
   @Transform(({ value }: { value: string }) => value?.trim())
   name!: string;
 
-  @ApiProperty({ example: 'jean@example.com' })
+  @ApiPropertyOptional({ example: 'jean@example.com' })
+  @IsOptional()
+  @IsEmail()
   @IsString()
   @MaxLength(200)
   @Transform(({ value }: { value: string }) => value?.trim())
-  email!: string;
+  email?: string;
 
   @ApiPropertyOptional({ example: '514-555-0000' })
   @IsOptional()
   @IsString()
   @MaxLength(50)
   phone?: string;
+
+  @ApiPropertyOptional({ example: 'photographe' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(50)
+  @Transform(({ value }: { value: string }) => value?.trim())
+  category?: string;
 }
 
 export class CreateVendorRequestDto {

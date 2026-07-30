@@ -4,6 +4,7 @@
 /build
 /tmp
 /coverage
+.DS_Store
 
 # Logs
 logs

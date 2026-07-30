@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { EventsController } from './events.controller';
 import { EventsService } from './events.service';
+import { EventMediaService } from './event-media.service';
 
 const mockEventsService = {
   create: jest.fn(),
@@ -11,6 +12,12 @@ const mockEventsService = {
   publish: jest.fn(),
   cancel: jest.fn(),
 };
+const mockEventMediaService = {
+  uploadCover: jest.fn(),
+  deleteCover: jest.fn(),
+  uploadGallery: jest.fn(),
+  deleteGalleryImage: jest.fn(),
+};
 
 const mockUser = { sub: 'user-id-123', email: 'jean@test.com', roles: ['organisateur'] };
 
@@ -20,7 +27,10 @@ describe('EventsController', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       controllers: [EventsController],
-      providers: [{ provide: EventsService, useValue: mockEventsService }],
+      providers: [
+        { provide: EventsService, useValue: mockEventsService },
+        { provide: EventMediaService, useValue: mockEventMediaService },
+      ],
     }).compile();
 
     controller = module.get<EventsController>(EventsController);
@@ -57,9 +67,21 @@ describe('EventsController', () => {
     it('délègue à eventsService.findOne avec l\'ID', async () => {
       mockEventsService.findOne.mockResolvedValue({ _id: 'event-id' });
 
-      await controller.findOne('event-id');
+      await controller.findOne('event-id', mockUser as never);
 
-      expect(mockEventsService.findOne).toHaveBeenCalledWith('event-id');
+      expect(mockEventsService.findOne).toHaveBeenCalledWith('event-id', mockUser.sub);
+    });
+  });
+
+  // ── PATCH /events/:id ──
+  describe('patch', () => {
+    it('délègue à eventsService.update avec l’ID, user.sub et le DTO', async () => {
+      const dto = { shortDescription: 'Une soirée mémorable' };
+      mockEventsService.update.mockResolvedValue({ _id: 'event-id', ...dto });
+
+      await controller.patch('event-id', mockUser as never, dto as never);
+
+      expect(mockEventsService.update).toHaveBeenCalledWith('event-id', mockUser.sub, dto);
     });
   });
 
@@ -72,6 +94,47 @@ describe('EventsController', () => {
       await controller.update('event-id', mockUser as never, dto as never);
 
       expect(mockEventsService.update).toHaveBeenCalledWith('event-id', mockUser.sub, dto);
+    });
+  });
+
+  describe('event media', () => {
+    it('délègue le téléversement de couverture au service média', async () => {
+      const file = { buffer: Buffer.from('image') };
+      mockEventMediaService.uploadCover.mockResolvedValue({
+        coverImage: { publicId: 'cover' },
+        gallery: [],
+      });
+
+      await controller.uploadCover(
+        'event-id',
+        mockUser as never,
+        file as never,
+      );
+
+      expect(mockEventMediaService.uploadCover).toHaveBeenCalledWith(
+        'event-id',
+        mockUser.sub,
+        file,
+      );
+    });
+
+    it('délègue la suppression d’une image de galerie avec son publicId', async () => {
+      mockEventMediaService.deleteGalleryImage.mockResolvedValue({
+        coverImage: null,
+        gallery: [],
+      });
+
+      await controller.deleteGalleryImage(
+        'event-id',
+        mockUser as never,
+        { publicId: 'elintys/events/event-id/gallery/image' },
+      );
+
+      expect(mockEventMediaService.deleteGalleryImage).toHaveBeenCalledWith(
+        'event-id',
+        mockUser.sub,
+        'elintys/events/event-id/gallery/image',
+      );
     });
   });
 
