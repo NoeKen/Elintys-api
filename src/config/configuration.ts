@@ -1,29 +1,52 @@
-export default () => ({
-  port: parseInt(process.env.PORT ?? '3001', 10),
-  nodeEnv: process.env.NODE_ENV ?? 'development',
-  jwt: {
-    secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
-    refreshSecret: process.env.JWT_REFRESH_SECRET,
-    refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
-  },
-  stripe: {
-    secretKey: process.env.STRIPE_SECRET_KEY,
-    webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-  },
-  resend: {
-    apiKey: process.env.RESEND_API_KEY,
-  },
-  email: {
-    from: process.env.EMAIL_FROM ?? 'Elintys <no-reply@elintys.com>',
-  },
-  cloudinary: {
-    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
-    apiKey: process.env.CLOUDINARY_API_KEY,
-    apiSecret: process.env.CLOUDINARY_API_SECRET,
-  },
-  anthropic: {
-    apiKey: process.env.ANTHROPIC_API_KEY,
-  },
-  frontendUrl: process.env.FRONTEND_URL ?? 'http://localhost:3000',
-});
+import { resolveCookieDomain } from './cookie-domain';
+import { resolveElintysEnvironment } from './elintys-environment';
+
+export default () => {
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const elintysEnv = resolveElintysEnvironment(
+    process.env.ELINTYS_ENV,
+    nodeEnv,
+  );
+  const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+  const cookieDomain = resolveCookieDomain(
+    process.env.COOKIE_DOMAIN,
+    frontendUrl,
+    elintysEnv,
+    nodeEnv === 'production',
+  );
+
+  return {
+    port: parseInt(process.env.PORT ?? '3001', 10),
+    nodeEnv,
+    elintysEnv,
+    jwt: {
+      secret: process.env.JWT_SECRET,
+      expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
+      refreshSecret: process.env.JWT_REFRESH_SECRET,
+      refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN ?? '7d',
+    },
+    stripe: {
+      secretKey: process.env.STRIPE_SECRET_KEY,
+      webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    },
+    resend: {
+      apiKey: process.env.RESEND_API_KEY,
+    },
+    email: {
+      from: process.env.EMAIL_FROM ?? 'Elintys <no-reply@elintys.com>',
+    },
+    cloudinary: {
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      apiSecret: process.env.CLOUDINARY_API_SECRET,
+    },
+    anthropic: {
+      apiKey: process.env.ANTHROPIC_API_KEY,
+    },
+    frontendUrl,
+    authCookie: {
+      domain: cookieDomain,
+      secure: nodeEnv === 'production' || cookieDomain !== undefined,
+    },
+  };
+};

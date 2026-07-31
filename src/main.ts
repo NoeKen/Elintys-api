@@ -8,6 +8,11 @@ import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
 import { RolesGuard } from './shared/guards/roles.guard';
 import { AllExceptionsFilter } from './shared/filters/http-exception.filter';
 import { ConfigService } from '@nestjs/config';
+import { createRequestObservabilityMiddleware } from './shared/middleware/request-observability.middleware';
+import {
+  createTrustedOriginMiddleware,
+  normalizeAllowedOrigins,
+} from './shared/middleware/trusted-origin.middleware';
 
 type CorsOriginCallback = (error: Error | null, allow?: boolean) => void;
 
@@ -21,18 +26,21 @@ async function bootstrap(): Promise<void> {
   const port = configService.getOrThrow<number>('port');
   const apiHost = process.env.API_HOST ?? '0.0.0.0';
   const nodeEnv = configService.get<string>('nodeEnv');
+  const elintysEnv = configService.getOrThrow<string>('elintysEnv');
   const enableSwagger = process.env.ENABLE_SWAGGER === 'true' || nodeEnv !== 'production';
 
   app.use(helmet());
-  app.use(cookieParser());
-
-  const corsOrigins = [
+  app.use(createRequestObservabilityMiddleware(elintysEnv));
+  const corsOrigins = normalizeAllowedOrigins([
     frontendUrl,
     ...(process.env.CORS_ORIGINS ?? '')
       .split(',')
       .map((origin) => origin.trim())
       .filter(Boolean),
-  ];
+  ]);
+
+  app.use(cookieParser());
+  app.use(createTrustedOriginMiddleware(corsOrigins));
 
   app.enableCors({
     origin: (origin: string | undefined, callback: CorsOriginCallback) => {
@@ -52,6 +60,7 @@ async function bootstrap(): Promise<void> {
       return callback(new Error(`CORS origin not allowed: ${origin}`), false);
     },
     credentials: true,
+    exposedHeaders: ['x-request-id'],
   });
 
   app.setGlobalPrefix('api/v1');

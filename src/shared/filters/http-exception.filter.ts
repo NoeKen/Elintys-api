@@ -6,7 +6,8 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
-import { Request, Response } from 'express';
+import { Response } from 'express';
+import { RequestWithId } from '../middleware/request-observability.middleware';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -15,7 +16,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const request = ctx.getRequest<Request>();
+    const request = ctx.getRequest<RequestWithId>();
 
     const status =
       exception instanceof HttpException
@@ -29,12 +30,26 @@ export class AllExceptionsFilter implements ExceptionFilter {
         : 'Une erreur interne est survenue.';
 
     if (status >= 500) {
-      this.logger.error(exception);
+      this.logger.error(
+        JSON.stringify({
+          event: 'http_exception',
+          service: 'elintys-api',
+          requestId: request.requestId,
+          method: request.method,
+          route: request.route?.path ?? request.path,
+          status,
+          errorType:
+            exception instanceof Error
+              ? exception.constructor.name
+              : 'UnknownException',
+        }),
+      );
     }
 
     response.status(status).json({
       statusCode: status,
       message,
+      requestId: request.requestId,
       timestamp: new Date().toISOString(),
       path: request.url,
     });

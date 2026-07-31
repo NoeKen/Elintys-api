@@ -9,6 +9,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
+import { VendorPriceTier } from './dto/query-vendor.dto';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -153,6 +154,20 @@ describe('VendorsService', () => {
 
       expect(vendorModel.find).toHaveBeenCalledWith(
         expect.objectContaining({ category: VendorCategory.TRAITEUR }),
+      );
+    });
+
+    it('filtre par ville et gamme de prix si fournies', async () => {
+      await service.findAll({
+        city: 'Montréal',
+        price: VendorPriceTier.STANDARD,
+      });
+
+      expect(vendorModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          serviceArea: { $regex: 'Montréal', $options: 'i' },
+          'priceRange.min': { $gt: 1000, $lte: 2500 },
+        }),
       );
     });
   });

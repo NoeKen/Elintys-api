@@ -56,11 +56,11 @@ Les six anciennes couvertures pointent vers Unsplash. Elles ne possèdent donc n
 
 Pour garantir un remplacement sans perte, la couverture est versionnée sous :
 
-`elintys/events/{eventId}/cover/{uuid}`
+`Elintys/{dev|prod}/events/{eventId}/cover/{uuid}`
 
 La galerie utilise :
 
-`elintys/events/{eventId}/gallery/{uuid}`
+`Elintys/{dev|prod}/events/{eventId}/gallery/{uuid}`
 
 Le segment logique `cover` reste stable, mais l’actif final reçoit une version unique. Cette variante est nécessaire pour respecter l’ordre sûr « upload → base → suppression de l’ancien » : un écrasement du même `publicId` modifierait l’ancien actif avant la confirmation MongoDB.
 

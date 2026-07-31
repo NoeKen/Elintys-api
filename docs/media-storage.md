@@ -49,9 +49,12 @@ Le backend peut démarrer sans Cloudinary afin de ne pas bloquer les fonctions n
 ## Organisation Cloudinary
 
 ```text
-elintys/events/{eventId}/cover/{uuid}
-elintys/events/{eventId}/gallery/{uuid}
+Elintys/{dev|prod}/events/{eventId}/cover/{uuid}
+Elintys/{dev|prod}/events/{eventId}/gallery/{uuid}
 ```
+
+`ELINTYS_ENV` détermine strictement le segment `dev` ou `prod`. Le service
+refuse l’upload si l’environnement applicatif est absent ou invalide.
 
 La couverture est versionnée pour respecter l’ordre :
 
@@ -89,7 +92,7 @@ files: <binary[]>
 DELETE /api/v1/events/:eventId/gallery
 Content-Type: application/json
 
-{ "publicId": "elintys/events/..." }
+{ "publicId": "Elintys/dev/events/..." }
 ```
 
 La réponse commune est :
@@ -98,7 +101,7 @@ La réponse commune est :
 {
   "coverImage": {
     "url": "https://res.cloudinary.com/...",
-    "publicId": "elintys/events/.../cover/...",
+    "publicId": "Elintys/dev/events/.../cover/...",
     "width": 1920,
     "height": 1080
   },

@@ -206,3 +206,4 @@ EventSchema.index({ slug: 1 }, { unique: true, sparse: true });
 EventSchema.index({ organizer: 1, status: 1 });
 EventSchema.index({ startDate: 1 });
 EventSchema.index({ 'location.city': 1, status: 1 });
+EventSchema.index({ eventType: 1, status: 1, visibility: 1 });

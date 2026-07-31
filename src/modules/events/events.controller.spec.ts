@@ -6,6 +6,7 @@ import { EventMediaService } from './event-media.service';
 const mockEventsService = {
   create: jest.fn(),
   findAll: jest.fn(),
+  getPublicCategoryCounts: jest.fn(),
   findOne: jest.fn(),
   update: jest.fn(),
   remove: jest.fn(),
@@ -59,6 +60,19 @@ describe('EventsController', () => {
       await controller.findAll(query as never);
 
       expect(mockEventsService.findAll).toHaveBeenCalledWith(query);
+    });
+  });
+
+  describe('getCategoryCounts', () => {
+    it('délègue l’agrégation à eventsService', async () => {
+      mockEventsService.getPublicCategoryCounts.mockResolvedValue({
+        data: [],
+        total: 0,
+      });
+
+      await controller.getCategoryCounts();
+
+      expect(mockEventsService.getPublicCategoryCounts).toHaveBeenCalled();
     });
   });
 
@@ -127,13 +141,13 @@ describe('EventsController', () => {
       await controller.deleteGalleryImage(
         'event-id',
         mockUser as never,
-        { publicId: 'elintys/events/event-id/gallery/image' },
+        { publicId: 'Elintys/dev/events/event-id/gallery/image' },
       );
 
       expect(mockEventMediaService.deleteGalleryImage).toHaveBeenCalledWith(
         'event-id',
         mockUser.sub,
-        'elintys/events/event-id/gallery/image',
+        'Elintys/dev/events/event-id/gallery/image',
       );
     });
   });

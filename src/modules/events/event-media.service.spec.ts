@@ -15,6 +15,7 @@ import {
 } from '../media/media-storage.interface';
 import type { MediaImage } from '../media/media-image.schema';
 import { MediaCleanupService } from '../media/media-cleanup.service';
+import { ConfigService } from '@nestjs/config';
 
 function chain<T>(value: T) {
   const result = {
@@ -53,13 +54,13 @@ describe('EventMediaService', () => {
   } as Express.Multer.File;
   const uploadedCover: MediaImage = {
     url: 'https://res.cloudinary.com/demo/image/upload/cover.jpg',
-    publicId: `elintys/events/${eventId}/cover/new-cover`,
+    publicId: `Elintys/dev/events/${eventId}/cover/new-cover`,
     width: 1920,
     height: 1080,
   };
   const existingCover: MediaImage = {
     url: 'https://res.cloudinary.com/demo/image/upload/old.jpg',
-    publicId: `elintys/events/${eventId}/cover/old-cover`,
+    publicId: `Elintys/dev/events/${eventId}/cover/old-cover`,
     width: 1920,
     height: 1080,
   };
@@ -90,6 +91,10 @@ describe('EventMediaService', () => {
         { provide: MEDIA_STORAGE, useValue: storage },
         { provide: ImageFileValidationService, useValue: validator },
         { provide: MediaCleanupService, useValue: mediaCleanup },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue('dev') },
+        },
       ],
     }).compile();
     service = module.get(EventMediaService);
@@ -119,10 +124,40 @@ describe('EventMediaService', () => {
     expect(storage.uploadImage).toHaveBeenCalledWith({
       buffer: Buffer.from('normalized'),
       publicId: expect.stringMatching(
-        new RegExp(`^elintys/events/${eventId}/cover/`),
+        new RegExp(`^Elintys/dev/events/${eventId}/cover/`),
       ),
     });
     expect(result.coverImage).toEqual(uploadedCover);
+  });
+
+  it('isole les uploads de production sous Elintys/prod', async () => {
+    const productionService = new EventMediaService(
+      eventModel as never,
+      storage,
+      validator as never,
+      mediaCleanup as never,
+      { get: jest.fn().mockReturnValue('prod') } as unknown as ConfigService,
+    );
+    eventModel.findById.mockReturnValue(chain(ownedEvent()));
+    storage.uploadImage.mockResolvedValue({
+      ...uploadedCover,
+      publicId: `Elintys/prod/events/${eventId}/cover/new-cover`,
+    });
+    eventModel.findOneAndUpdate.mockReturnValue(
+      chain({
+        coverImage: uploadedCover,
+        gallery: [],
+      }),
+    );
+
+    await productionService.uploadCover(eventId, organizerId, file);
+
+    expect(storage.uploadImage).toHaveBeenCalledWith({
+      buffer: Buffer.from('normalized'),
+      publicId: expect.stringMatching(
+        new RegExp(`^Elintys/prod/events/${eventId}/cover/`),
+      ),
+    });
   });
 
   it('supprime l’ancienne couverture seulement après la persistance', async () => {
@@ -176,7 +211,7 @@ describe('EventMediaService', () => {
         ownedEvent({
           gallery: Array.from({ length: 10 }, (_, index) => ({
             ...uploadedCover,
-            publicId: `elintys/events/${eventId}/gallery/${index}`,
+            publicId: `Elintys/dev/events/${eventId}/gallery/${index}`,
           })),
         }),
       ),
@@ -192,11 +227,11 @@ describe('EventMediaService', () => {
     eventModel.findById.mockReturnValue(chain(ownedEvent()));
     const first = {
       ...uploadedCover,
-      publicId: `elintys/events/${eventId}/gallery/first`,
+      publicId: `Elintys/dev/events/${eventId}/gallery/first`,
     };
     const second = {
       ...uploadedCover,
-      publicId: `elintys/events/${eventId}/gallery/second`,
+      publicId: `Elintys/dev/events/${eventId}/gallery/second`,
     };
     storage.uploadImage
       .mockResolvedValueOnce(first)
@@ -223,7 +258,7 @@ describe('EventMediaService', () => {
     eventModel.findById.mockReturnValue(chain(ownedEvent()));
     const galleryImage = {
       ...uploadedCover,
-      publicId: `elintys/events/${eventId}/gallery/first`,
+      publicId: `Elintys/dev/events/${eventId}/gallery/first`,
     };
     storage.uploadImage
       .mockResolvedValueOnce(galleryImage)
@@ -244,7 +279,7 @@ describe('EventMediaService', () => {
     const result = await service.deleteGalleryImage(
       eventId,
       organizerId,
-      `elintys/events/${eventId}/gallery/absent`,
+      `Elintys/dev/events/${eventId}/gallery/absent`,
     );
 
     expect(result.gallery).toEqual([]);
@@ -255,7 +290,7 @@ describe('EventMediaService', () => {
   it('retire la référence MongoDB avant de supprimer l’actif distant', async () => {
     const image = {
       ...uploadedCover,
-      publicId: `elintys/events/${eventId}/gallery/image`,
+      publicId: `Elintys/dev/events/${eventId}/gallery/image`,
     };
     eventModel.findById.mockReturnValue(
       chain(ownedEvent({ gallery: [image] })),
@@ -274,7 +309,7 @@ describe('EventMediaService', () => {
   it('conserve le nouvel état si le nettoyage Cloudinary échoue après suppression', async () => {
     const image = {
       ...uploadedCover,
-      publicId: `elintys/events/${eventId}/gallery/image`,
+      publicId: `Elintys/dev/events/${eventId}/gallery/image`,
     };
     eventModel.findById.mockReturnValue(
       chain(ownedEvent({ gallery: [image] })),

@@ -22,8 +22,12 @@ const mockAuthService = {
 
 const mockConfigService = {
   getOrThrow: jest.fn().mockImplementation((key: string) => {
-    if (key === 'nodeEnv') return 'test';
+    if (key === 'authCookie.secure') return true;
     return 'value';
+  }),
+  get: jest.fn().mockImplementation((key: string) => {
+    if (key === 'authCookie.domain') return '.dev.elintys.com';
+    return undefined;
   }),
 };
 
@@ -67,6 +71,17 @@ describe('AuthController', () => {
       expect(mockAuthService.register).toHaveBeenCalledWith(dto);
       expect(res.cookie).toHaveBeenCalledWith('access_token', 'access_token', expect.any(Object));
       expect(res.cookie).toHaveBeenCalledWith('refresh_token', 'refresh_token', expect.any(Object));
+      expect(res.cookie).toHaveBeenCalledWith(
+        'access_token',
+        'access_token',
+        expect.objectContaining({
+          domain: '.dev.elintys.com',
+          httpOnly: true,
+          path: '/',
+          sameSite: 'lax',
+          secure: true,
+        }),
+      );
       expect(result).toHaveProperty('user');
       expect(result).not.toHaveProperty('accessToken');
       expect(result).not.toHaveProperty('refreshToken');
@@ -154,8 +169,15 @@ describe('AuthController', () => {
       const result = await controller.logout((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith('old_cookie_token');
-      expect(res.clearCookie).toHaveBeenCalledWith('access_token', { path: '/' });
-      expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', { path: '/' });
+      const expectedOptions = {
+        domain: '.dev.elintys.com',
+        httpOnly: true,
+        path: '/',
+        sameSite: 'lax',
+        secure: true,
+      };
+      expect(res.clearCookie).toHaveBeenCalledWith('access_token', expectedOptions);
+      expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', expectedOptions);
       expect(result).toEqual({ message: 'Déconnecté avec succès' });
     });
 
@@ -167,8 +189,14 @@ describe('AuthController', () => {
       await controller.logout((req as unknown) as Request, res as Response);
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith(undefined);
-      expect(res.clearCookie).toHaveBeenCalledWith('access_token', { path: '/' });
-      expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', { path: '/' });
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        'access_token',
+        expect.objectContaining({ domain: '.dev.elintys.com', path: '/' }),
+      );
+      expect(res.clearCookie).toHaveBeenCalledWith(
+        'refresh_token',
+        expect.objectContaining({ domain: '.dev.elintys.com', path: '/' }),
+      );
     });
   });
 

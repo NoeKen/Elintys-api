@@ -5,7 +5,7 @@ import { Model, Types } from 'mongoose';
 import { VendorProfile, VendorProfileDocument, VendorRequest, VendorRequestDocument, VendorRequestSource, VendorRequestStatus } from './vendor.schema';
 import { CreateVendorDto } from './dto/create-vendor.dto';
 import { UpdateVendorDto } from './dto/update-vendor.dto';
-import { QueryVendorDto } from './dto/query-vendor.dto';
+import { QueryVendorDto, VendorPriceTier } from './dto/query-vendor.dto';
 import { CreateVendorRequestDto } from './dto/create-request.dto';
 import { RespondVendorRequestDto } from './dto/respond-request.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
@@ -15,6 +15,7 @@ import { NotificationType } from '../notifications/notification.schema';
 import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
+import { escapeRegExp } from '../../shared/utils/escape-regexp';
 
 @Injectable()
 export class VendorsService {
@@ -37,11 +38,18 @@ export class VendorsService {
   }
 
   async findAll(query: QueryVendorDto): Promise<PaginatedResult<VendorProfile>> {
-    const { page = 1, limit = 20, category } = query;
+    const { page = 1, limit = 20, category, city, price } = query;
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = { isActive: true };
     if (category) filter['category'] = category;
+    if (city) {
+      filter.serviceArea = {
+        $regex: escapeRegExp(city),
+        $options: 'i',
+      };
+    }
+    if (price) filter['priceRange.min'] = this.getPriceTierFilter(price);
 
     const [data, total] = await Promise.all([
       this.vendorModel.find(filter).skip(skip).limit(limit).sort({ rating: -1 }).lean().select('-__v'),
@@ -49,6 +57,19 @@ export class VendorsService {
     ]);
 
     return { data, total, page, limit };
+  }
+
+  private getPriceTierFilter(price: VendorPriceTier): Record<string, number> {
+    switch (price) {
+      case VendorPriceTier.BUDGET:
+        return { $gte: 0, $lte: 1000 };
+      case VendorPriceTier.STANDARD:
+        return { $gt: 1000, $lte: 2500 };
+      case VendorPriceTier.PREMIUM:
+        return { $gt: 2500, $lte: 5000 };
+      case VendorPriceTier.LUXURY:
+        return { $gt: 5000 };
+    }
   }
 
   async findOne(id: string): Promise<VendorProfile> {

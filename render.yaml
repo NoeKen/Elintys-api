@@ -13,6 +13,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ELINTYS_ENV
+        value: dev
       - key: API_HOST
         value: 0.0.0.0
       - key: ENABLE_SWAGGER
@@ -43,5 +45,7 @@ services:
         sync: false
       - key: FRONTEND_URL
         sync: false
+      - key: COOKIE_DOMAIN
+        value: .dev.elintys.app
       - key: CORS_ORIGINS
         sync: false
