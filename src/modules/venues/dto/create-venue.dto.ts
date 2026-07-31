@@ -1,5 +1,6 @@
 import {
   IsEmail,
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
@@ -9,6 +10,7 @@ import {
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { VenueType } from '../venue.schema';
 
 export class AddressDto {
   @ApiProperty({ example: '1234 Rue Sainte-Catherine Ouest', maxLength: 300 })
@@ -44,6 +46,11 @@ export class CreateVenueDto {
   @IsString()
   @MaxLength(200)
   name!: string;
+
+  @ApiPropertyOptional({ enum: VenueType, default: VenueType.OTHER })
+  @IsOptional()
+  @IsEnum(VenueType)
+  type?: VenueType;
 
   @ApiPropertyOptional({ example: 'Salle de réception historique au cœur du centre-ville.', maxLength: 3000 })
   @IsOptional()

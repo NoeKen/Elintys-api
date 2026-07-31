@@ -19,6 +19,7 @@ import { QueryEventDto } from './dto/query-event.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EventMediaService } from './event-media.service';
+import { escapeRegExp } from '../../shared/utils/escape-regexp';
 
 @Injectable()
 export class EventsService {
@@ -57,14 +58,20 @@ export class EventsService {
   }
 
   async findAll(query: QueryEventDto): Promise<PaginatedResult<Event>> {
-    const { page = 1, limit = 20, city } = query;
+    const { page = 1, limit = 20, city, category } = query;
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = {
       status: EventStatus.PUBLISHED,
       visibility: EventVisibility.PUBLIC,
     };
-    if (city) filter['location.city'] = { $regex: city, $options: 'i' };
+    if (city) {
+      filter['location.city'] = {
+        $regex: escapeRegExp(city),
+        $options: 'i',
+      };
+    }
+    if (category) filter.eventType = category;
 
     const [data, total] = await Promise.all([
       this.eventModel.find(filter).skip(skip).limit(limit).lean().select('-__v'),
@@ -72,6 +79,33 @@ export class EventsService {
     ]);
 
     return { data, total, page, limit };
+  }
+
+  async getPublicCategoryCounts(): Promise<{
+    data: Array<{ category: string; count: number }>;
+    total: number;
+  }> {
+    const filter = {
+      status: EventStatus.PUBLISHED,
+      visibility: EventVisibility.PUBLIC,
+      eventType: { $exists: true, $ne: null },
+    };
+    const [groups, total] = await Promise.all([
+      this.eventModel.aggregate<{ _id: string; count: number }>([
+        { $match: filter },
+        { $group: { _id: '$eventType', count: { $sum: 1 } } },
+        { $sort: { count: -1, _id: 1 } },
+      ]),
+      this.eventModel.countDocuments({
+        status: EventStatus.PUBLISHED,
+        visibility: EventVisibility.PUBLIC,
+      }),
+    ]);
+
+    return {
+      data: groups.map(({ _id, count }) => ({ category: _id, count })),
+      total,
+    };
   }
 
   async findOne(id: string, organizerId: string): Promise<Event> {

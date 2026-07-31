@@ -17,7 +17,8 @@
     "test:cov": "jest --coverage",
     "test:verbose": "jest --verbose",
     "test:e2e": "jest --config ./test/jest-e2e.json",
-    "media:migrate": "ts-node src/scripts/migrate-event-media.ts"
+    "media:migrate": "ts-node src/scripts/migrate-event-media.ts",
+    "seed:dev": "ts-node src/scripts/seed-development.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",

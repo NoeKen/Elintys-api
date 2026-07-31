@@ -75,6 +75,14 @@ export class EventsController {
     return this.eventsService.findAll(query);
   }
 
+  @Public()
+  @Get('categories')
+  @ApiOperation({ summary: 'Compter les événements publics par catégorie' })
+  @ApiResponse({ status: 200, description: 'Agrégation des catégories publiques' })
+  getCategoryCounts() {
+    return this.eventsService.getPublicCategoryCounts();
+  }
+
   @Get('my')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Mes événements (organisateur connecté)' })

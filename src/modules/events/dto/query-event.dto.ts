@@ -1,7 +1,7 @@
-import { IsEnum, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { EventStatus, EventVisibility } from '../event.schema';
+import { EventStatus, EventType, EventVisibility } from '../event.schema';
 
 export class QueryEventDto {
   @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Numéro de page' })
@@ -33,5 +33,14 @@ export class QueryEventDto {
   @IsOptional()
   @Transform(({ value }: { value: string }) => value?.trim())
   @IsString()
+  @MaxLength(100)
   city?: string;
+
+  @ApiPropertyOptional({
+    enum: EventType,
+    description: 'Filtrer par catégorie publique',
+  })
+  @IsOptional()
+  @IsEnum(EventType)
+  category?: EventType;
 }

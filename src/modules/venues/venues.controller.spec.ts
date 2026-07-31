@@ -39,20 +39,22 @@ describe('VenuesController', () => {
 
   // ── GET /venues ──
   describe('findAll', () => {
-    it('délègue à venuesService.findAll avec page et limit par défaut', async () => {
+    it('délègue à venuesService.findAll avec le DTO de requête', async () => {
       mockVenuesService.findAll.mockResolvedValue({ data: [], total: 0 });
+      const query = {};
 
-      await controller.findAll(undefined, undefined);
+      await controller.findAll(query);
 
-      expect(mockVenuesService.findAll).toHaveBeenCalledWith(1, 20);
+      expect(mockVenuesService.findAll).toHaveBeenCalledWith(query);
     });
 
-    it('passe les valeurs de page et limit parsées', async () => {
+    it('transmet les filtres validés', async () => {
       mockVenuesService.findAll.mockResolvedValue({ data: [], total: 0 });
+      const query = { page: 2, limit: 5, city: 'Montréal', capacity: 200 };
 
-      await controller.findAll('2', '5');
+      await controller.findAll(query);
 
-      expect(mockVenuesService.findAll).toHaveBeenCalledWith(2, 5);
+      expect(mockVenuesService.findAll).toHaveBeenCalledWith(query);
     });
   });
 

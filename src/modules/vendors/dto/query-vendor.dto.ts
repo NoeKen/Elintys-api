@@ -1,7 +1,14 @@
-import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
-import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorCategory } from '../vendor.schema';
+
+export enum VendorPriceTier {
+  BUDGET = '$',
+  STANDARD = '$$',
+  PREMIUM = '$$$',
+  LUXURY = '$$$$',
+}
 
 export class QueryVendorDto {
   @ApiPropertyOptional({ default: 1, minimum: 1, description: 'Numéro de page' })
@@ -23,4 +30,19 @@ export class QueryVendorDto {
   @IsOptional()
   @IsEnum(VendorCategory)
   category?: VendorCategory;
+
+  @ApiPropertyOptional({ example: 'Montréal', description: 'Filtrer par zone de service' })
+  @IsOptional()
+  @Transform(({ value }: { value: string }) => value?.trim())
+  @IsString()
+  @MaxLength(100)
+  city?: string;
+
+  @ApiPropertyOptional({
+    enum: VendorPriceTier,
+    description: 'Filtrer par prix de départ ($ ≤ 1000, $$ ≤ 2500, $$$ ≤ 5000, $$$$ > 5000 CAD)',
+  })
+  @IsOptional()
+  @IsEnum(VendorPriceTier)
+  price?: VendorPriceTier;
 }

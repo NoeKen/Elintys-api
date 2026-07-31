@@ -9,7 +9,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Types } from 'mongoose';
 import { VenuesService } from './venues.service';
-import { VenueBooking, VenueBookingSchema, VenueBookingStatus, VenueProfile } from './venue.schema';
+import { VenueBooking, VenueBookingSchema, VenueBookingStatus, VenueProfile, VenueType } from './venue.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
@@ -129,11 +129,26 @@ describe('VenuesService', () => {
   // ── findAll ──
   describe('findAll', () => {
     it('retourne une liste paginée de salles actives', async () => {
-      const result = await service.findAll(1, 20);
+      const result = await service.findAll({ page: 1, limit: 20 });
 
       expect(result.data).toHaveLength(1);
       expect(result.total).toBe(1);
       expect(venueModel.find).toHaveBeenCalledWith({ isActive: true });
+    });
+
+    it('filtre par type, ville et capacité minimale', async () => {
+      await service.findAll({
+        type: VenueType.ROOFTOP,
+        city: 'Montréal',
+        capacity: 200,
+      });
+
+      expect(venueModel.find).toHaveBeenCalledWith({
+        isActive: true,
+        type: VenueType.ROOFTOP,
+        'address.city': { $regex: 'Montréal', $options: 'i' },
+        capacity: { $gte: 200 },
+      });
     });
   });
 

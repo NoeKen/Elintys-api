@@ -69,6 +69,8 @@ export class VendorProfile {
 
 export const VendorProfileSchema = SchemaFactory.createForClass(VendorProfile);
 VendorProfileSchema.index({ category: 1, isActive: 1 });
+VendorProfileSchema.index({ serviceArea: 1, isActive: 1 });
+VendorProfileSchema.index({ 'priceRange.min': 1, isActive: 1 });
 VendorProfileSchema.index({ rating: -1 });
 
 export type VendorRequestDocument = HydratedDocument<VendorRequest>;

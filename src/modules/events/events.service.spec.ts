@@ -3,7 +3,7 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventsService } from './events.service';
-import { Event, EventStatus } from './event.schema';
+import { Event, EventStatus, EventType } from './event.schema';
 import { EventMediaService } from './event-media.service';
 
 const makeChainable = (value: unknown) => {
@@ -45,6 +45,7 @@ describe('EventsService', () => {
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
       countDocuments: jest.fn(),
+      aggregate: jest.fn(),
       create: jest.fn(),
     };
 
@@ -52,6 +53,7 @@ describe('EventsService', () => {
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
     eventModel.findOne.mockReturnValue(makeChainable(null));
     eventModel.countDocuments.mockResolvedValue(1);
+    eventModel.aggregate.mockResolvedValue([]);
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -114,6 +116,42 @@ describe('EventsService', () => {
 
       expect(eventModel.find).toHaveBeenCalledWith(
         expect.objectContaining({ 'location.city': expect.any(Object) }),
+      );
+    });
+
+    it('filtre par catégorie publique si fournie', async () => {
+      await service.findAll({
+        page: 1,
+        limit: 10,
+        category: EventType.CONFERENCE,
+      });
+
+      expect(eventModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({ eventType: EventType.CONFERENCE }),
+      );
+    });
+  });
+
+  describe('getPublicCategoryCounts', () => {
+    it('agrège uniquement les événements publics publiés', async () => {
+      eventModel.aggregate.mockResolvedValue([
+        { _id: EventType.CONFERENCE, count: 3 },
+      ]);
+      eventModel.countDocuments.mockResolvedValue(3);
+
+      await expect(service.getPublicCategoryCounts()).resolves.toEqual({
+        data: [{ category: EventType.CONFERENCE, count: 3 }],
+        total: 3,
+      });
+      expect(eventModel.aggregate).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          {
+            $match: expect.objectContaining({
+              status: EventStatus.PUBLISHED,
+              visibility: 'public',
+            }),
+          },
+        ]),
       );
     });
   });

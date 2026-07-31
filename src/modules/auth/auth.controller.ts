@@ -12,7 +12,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Request, Response } from 'express';
+import { CookieOptions, Request, Response } from 'express';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -33,27 +33,29 @@ export class AuthController {
     private readonly configService: ConfigService,
   ) {}
 
-  private get refreshCookieOptions() {
+  private get sharedCookieOptions(): CookieOptions {
+    const domain = this.configService.get<string>('authCookie.domain');
+
     return {
       httpOnly: true,
-      secure: this.configService.getOrThrow<string>('nodeEnv') === 'production',
-      sameSite: this.configService.getOrThrow<string>('nodeEnv') === 'production'
-        ? 'none' as const
-        : 'lax' as const,
-      maxAge: 7 * 24 * 60 * 60 * 1000,
+      secure: this.configService.getOrThrow<boolean>('authCookie.secure'),
+      sameSite: 'lax',
+      ...(domain ? { domain } : {}),
       path: '/',
     };
   }
 
-  private get accessCookieOptions() {
+  private get refreshCookieOptions(): CookieOptions {
     return {
-      httpOnly: true,
-      secure: this.configService.getOrThrow<string>('nodeEnv') === 'production',
-      sameSite: this.configService.getOrThrow<string>('nodeEnv') === 'production'
-        ? 'none' as const
-        : 'lax' as const,
+      ...this.sharedCookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    };
+  }
+
+  private get accessCookieOptions(): CookieOptions {
+    return {
+      ...this.sharedCookieOptions,
       maxAge: 15 * 60 * 1000,
-      path: '/',
     };
   }
 
@@ -156,8 +158,8 @@ export class AuthController {
   ): Promise<{ message: string }> {
     const cookieToken = (req.cookies as Record<string, string>)?.refresh_token;
     await this.authService.logoutFromCookie(cookieToken);
-    res.clearCookie('access_token', { path: '/' });
-    res.clearCookie('refresh_token', { path: '/' });
+    res.clearCookie('access_token', this.sharedCookieOptions);
+    res.clearCookie('refresh_token', this.sharedCookieOptions);
     return { message: 'Déconnecté avec succès' };
   }
 

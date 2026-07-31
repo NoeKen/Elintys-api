@@ -12,6 +12,7 @@ import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-booking.dto';
 import { RespondVenueBookingDto } from './dto/respond-booking.dto';
+import { QueryVenueDto } from './dto/query-venue.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
@@ -36,9 +37,12 @@ export class VenuesController {
   @ApiOperation({ summary: 'Lister les salles' })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'type', required: false, enum: ['conference', 'reception', 'studio', 'restaurant', 'rooftop', 'spectacle', 'other'] })
+  @ApiQuery({ name: 'city', required: false, type: String, example: 'Montréal' })
+  @ApiQuery({ name: 'capacity', required: false, type: Number, description: 'Capacité minimale' })
   @ApiResponse({ status: 200, description: 'Liste paginée de salles' })
-  findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
-    return this.venuesService.findAll(page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 20);
+  findAll(@Query() query: QueryVenueDto) {
+    return this.venuesService.findAll(query);
   }
 
   @Get('me')

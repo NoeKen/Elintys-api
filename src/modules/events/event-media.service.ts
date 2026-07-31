@@ -9,6 +9,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { randomUUID } from 'node:crypto';
 import { Model, Types } from 'mongoose';
+import { ConfigService } from '@nestjs/config';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { MEDIA_MAX_GALLERY_IMAGES } from '../media/media.constants';
 import {
@@ -22,6 +23,7 @@ import {
   MediaStorage,
 } from '../media/media-storage.interface';
 import { Event, EventDocument } from './event.schema';
+import { getMediaRootPrefix } from '../media/media-environment';
 
 export interface EventMediaState {
   coverImage: MediaImage | string | null;
@@ -35,6 +37,7 @@ type EventMediaSnapshot = Pick<Event, 'coverImage' | 'gallery' | 'organizer'> & 
 @Injectable()
 export class EventMediaService {
   private readonly logger = new Logger(EventMediaService.name);
+  private readonly mediaRootPrefix: string;
 
   constructor(
     @InjectModel(Event.name)
@@ -43,7 +46,12 @@ export class EventMediaService {
     private readonly mediaStorage: MediaStorage,
     private readonly imageValidation: ImageFileValidationService,
     private readonly mediaCleanup: MediaCleanupService,
-  ) {}
+    configService: ConfigService,
+  ) {
+    this.mediaRootPrefix = getMediaRootPrefix(
+      configService.get<'dev' | 'prod'>('elintysEnv'),
+    );
+  }
 
   async uploadCover(
     eventId: string,
@@ -272,7 +280,7 @@ export class EventMediaService {
     eventId: string,
     kind: 'cover' | 'gallery',
   ): string {
-    return `elintys/events/${eventId}/${kind}/${randomUUID()}`;
+    return `${this.mediaRootPrefix}/events/${eventId}/${kind}/${randomUUID()}`;
   }
 
   private isOwnedPublicId(
@@ -280,7 +288,9 @@ export class EventMediaService {
     publicId: string,
     kind: 'cover' | 'gallery',
   ): boolean {
-    return publicId.startsWith(`elintys/events/${eventId}/${kind}/`);
+    return publicId.startsWith(
+      `${this.mediaRootPrefix}/events/${eventId}/${kind}/`,
+    );
   }
 
   private toMediaState(

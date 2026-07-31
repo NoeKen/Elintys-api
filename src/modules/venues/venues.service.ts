@@ -19,6 +19,7 @@ import { CreateVenueDto } from './dto/create-venue.dto';
 import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-booking.dto';
 import { RespondVenueBookingDto } from './dto/respond-booking.dto';
+import { QueryVenueDto } from './dto/query-venue.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -26,6 +27,7 @@ import { NotificationType } from '../notifications/notification.schema';
 import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
+import { escapeRegExp } from '../../shared/utils/escape-regexp';
 
 @Injectable()
 export class VenuesService {
@@ -47,11 +49,21 @@ export class VenuesService {
     return venue.toObject();
   }
 
-  async findAll(page = 1, limit = 20): Promise<PaginatedResult<VenueProfile>> {
+  async findAll(query: QueryVenueDto): Promise<PaginatedResult<VenueProfile>> {
+    const { page = 1, limit = 20, type, city, capacity } = query;
     const skip = (page - 1) * limit;
+    const filter: Record<string, unknown> = { isActive: true };
+    if (type) filter.type = type;
+    if (city) {
+      filter['address.city'] = {
+        $regex: escapeRegExp(city),
+        $options: 'i',
+      };
+    }
+    if (capacity) filter.capacity = { $gte: capacity };
     const [data, total] = await Promise.all([
-      this.venueModel.find({ isActive: true }).skip(skip).limit(limit).sort({ rating: -1 }).lean().select('-__v'),
-      this.venueModel.countDocuments({ isActive: true }),
+      this.venueModel.find(filter).skip(skip).limit(limit).sort({ rating: -1 }).lean().select('-__v'),
+      this.venueModel.countDocuments(filter),
     ]);
     return { data, total, page, limit };
   }

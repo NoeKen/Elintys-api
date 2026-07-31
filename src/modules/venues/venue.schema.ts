@@ -3,6 +3,16 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type VenueProfileDocument = HydratedDocument<VenueProfile>;
 
+export enum VenueType {
+  CONFERENCE = 'conference',
+  RECEPTION = 'reception',
+  STUDIO = 'studio',
+  RESTAURANT = 'restaurant',
+  ROOFTOP = 'rooftop',
+  SPECTACLE = 'spectacle',
+  OTHER = 'other',
+}
+
 @Schema({ _id: false })
 class VenueAddress {
   @Prop({ required: true, trim: true })
@@ -25,6 +35,9 @@ export class VenueProfile {
 
   @Prop({ required: true, trim: true, maxlength: 200 })
   name!: string;
+
+  @Prop({ enum: Object.values(VenueType), default: VenueType.OTHER })
+  type!: VenueType;
 
   @Prop({ maxlength: 3000 })
   description?: string;
@@ -62,6 +75,7 @@ export class VenueProfile {
 
 export const VenueProfileSchema = SchemaFactory.createForClass(VenueProfile);
 VenueProfileSchema.index({ 'address.city': 1, isActive: 1 });
+VenueProfileSchema.index({ type: 1, isActive: 1 });
 VenueProfileSchema.index({ capacity: 1 });
 
 export type VenueBookingDocument = HydratedDocument<VenueBooking>;

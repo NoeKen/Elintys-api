@@ -8,6 +8,8 @@ import {
   UploadedImageFile,
 } from '../modules/media/image-file-validation.service';
 import { MEDIA_MAX_FILE_SIZE } from '../modules/media/media.constants';
+import { resolveElintysEnvironment } from '../config/elintys-environment';
+import { getMediaRootPrefix } from '../modules/media/media-environment';
 
 const ALLOWED_LEGACY_HOSTS = new Set([
   'images.unsplash.com',
@@ -71,6 +73,12 @@ async function downloadLegacyImage(urlValue: string): Promise<UploadedImageFile>
 async function main(): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) throw new Error('MONGODB_URI is required');
+  const mediaRootPrefix = getMediaRootPrefix(
+    resolveElintysEnvironment(
+      process.env.ELINTYS_ENV,
+      process.env.NODE_ENV ?? 'development',
+    ),
+  );
   await mongoose.connect(uri);
 
   const collection = mongoose.connection.db?.collection<LegacyEvent>('events');
@@ -108,7 +116,7 @@ async function main(): Promise<void> {
     const normalized = await validator.validateAndNormalize(file);
     const uploaded = await storage.uploadImage({
       buffer: normalized.buffer,
-      publicId: `elintys/events/${event._id.toString()}/cover/${randomUUID()}`,
+      publicId: `${mediaRootPrefix}/events/${event._id.toString()}/cover/${randomUUID()}`,
     });
     const result = await collection.updateOne(
       { _id: event._id, coverImage: event.coverImage } as never,

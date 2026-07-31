@@ -33,6 +33,8 @@ export class VendorsController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
   @ApiQuery({ name: 'category', required: false, enum: ['photographe', 'traiteur', 'decorateur', 'animateur', 'dj', 'sonorisation', 'autre'] })
+  @ApiQuery({ name: 'city', required: false, type: String, example: 'Montréal' })
+  @ApiQuery({ name: 'price', required: false, enum: ['$', '$$', '$$$', '$$$$'] })
   @ApiResponse({ status: 200, description: 'Liste paginée de prestataires' })
   findAll(@Query() query: QueryVendorDto) {
     return this.vendorsService.findAll(query);
