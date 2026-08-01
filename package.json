@@ -18,6 +18,7 @@
     "test:verbose": "jest --verbose",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "media:migrate": "ts-node src/scripts/migrate-event-media.ts",
+    "event-access:migrate": "ts-node src/scripts/migrate-event-access-v2.ts",
     "seed:dev": "ts-node src/scripts/seed-development.ts"
   },
   "dependencies": {

@@ -16,8 +16,10 @@ import {
 import { CreateTicketTypeDto } from './dto/create-ticket-type.dto';
 import { UpdateTicketTypeDto } from './dto/update-ticket-type.dto';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
-import { Event, EventDocument } from '../events/event.schema';
+import { Event, EventDiscoverability, EventDocument, EventStatus } from '../events/event.schema';
 import { generateQRCode } from '../../shared/utils/qr-code';
+import { EventAccessService } from '../events/event-access.service';
+import { canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
 
 export type ScanResult = {
   purchase: TicketPurchase & { _id: Types.ObjectId };
@@ -30,6 +32,7 @@ export class TicketsService {
     @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
     @InjectModel(TicketPurchase.name) private readonly ticketPurchaseModel: Model<TicketPurchaseDocument>,
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
+    private readonly eventAccessService: EventAccessService,
   ) {}
 
   private async assertEventOwner(eventId: string, organizerId: string): Promise<void> {
@@ -47,6 +50,11 @@ export class TicketsService {
   }
 
   async findTicketTypes(eventId: string): Promise<TicketType[]> {
+    const event = await this.eventModel.findById(eventId).lean().select('status discoverability visibility accessModelVersion');
+    if (!event || event.status !== EventStatus.PUBLISHED) throw new NotFoundException('Événement introuvable.');
+    if (normalizeLegacyEventAccess(event).discoverability === EventDiscoverability.PRIVATE) {
+      throw new NotFoundException('Événement introuvable.');
+    }
     return this.ticketTypeModel.find({ event: new Types.ObjectId(eventId) }).lean().select('-__v');
   }
 
@@ -90,6 +98,14 @@ export class TicketsService {
     if (!tt.isFree) {
       throw new BadRequestException('Ce billet est payant. Veuillez passer par le module de paiement.');
     }
+
+    const event = await this.eventModel.findById(tt.event).lean().select('-accessPolicy.codeHash');
+    if (!event) throw new NotFoundException('Événement introuvable.');
+    const actor = buyerId
+      ? await this.eventAccessService.buildActor(buyerId, tt.event.toString(), dto.accessGrant)
+      : { email: dto.guestEmail };
+    const decision = canPurchaseTicket(actor, normalizeLegacyEventAccess(event));
+    if (!decision.allowed) throw new ForbiddenException(decision.reason);
 
     const available = tt.quantity - tt.sold;
     if (available < dto.quantity) {

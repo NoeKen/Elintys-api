@@ -63,13 +63,17 @@ describe('DiscoveryService', () => {
       expect(result.events).toHaveLength(1);
     });
 
-    it('filtre les événements sur status published et visibility public', async () => {
+    it('filtre les événements publiés sur discoverability public avec compatibilité legacy', async () => {
       await service.search('gala', 1, 10);
 
       expect(eventModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: EventStatus.PUBLISHED,
-          visibility: EventVisibility.PUBLIC,
+          $and: expect.arrayContaining([
+            expect.objectContaining({
+              status: EventStatus.PUBLISHED,
+              $or: expect.any(Array),
+            }),
+          ]),
         }),
       );
     });
@@ -111,10 +115,10 @@ describe('DiscoveryService', () => {
       const result = await service.featuredEvents(6);
 
       expect(result).toHaveLength(1);
-      expect(eventModel.find).toHaveBeenCalledWith({
+      expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({
         status: EventStatus.PUBLISHED,
-        visibility: EventVisibility.PUBLIC,
-      });
+        $or: expect.any(Array),
+      }));
     });
 
     it('utilise la limite fournie', async () => {

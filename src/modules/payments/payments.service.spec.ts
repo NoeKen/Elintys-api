@@ -7,6 +7,7 @@ import { TicketType, TicketPurchase, TicketPurchaseStatus } from '../tickets/tic
 import { Event } from '../events/event.schema';
 import { TicketsService } from '../tickets/tickets.service';
 import { EmailsService } from '../emails/emails.service';
+import { EventAccessService } from '../events/event-access.service';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -70,6 +71,10 @@ describe('PaymentsService', () => {
   const mockEvent = (overrides = {}) => ({
     _id:       eventId,
     organizer: { toString: () => organizerId },
+    status: 'published',
+    discoverability: 'public',
+    accessPolicy: { type: 'open' },
+    admissionModes: ['paid_ticket'],
     ...overrides,
   });
 
@@ -88,6 +93,7 @@ describe('PaymentsService', () => {
     eventModel = {
       findById: jest.fn(),
     };
+    eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
 
     ticketsService = { createPurchasesFromCheckout: jest.fn() };
     emailsService  = { sendTicketConfirmation:       jest.fn().mockResolvedValue(undefined) };
@@ -122,6 +128,7 @@ describe('PaymentsService', () => {
         { provide: getModelToken(Event.name),          useValue: eventModel },
         { provide: TicketsService,  useValue: ticketsService },
         { provide: EmailsService,   useValue: emailsService },
+        { provide: EventAccessService, useValue: { buildActor: jest.fn().mockResolvedValue({ userId: buyerId }) } },
       ],
     }).compile();
 
@@ -341,6 +348,7 @@ describe('PaymentsService', () => {
           { provide: getModelToken(Event.name),          useValue: eventModel },
           { provide: TicketsService,  useValue: ticketsService },
           { provide: EmailsService,   useValue: emailsService },
+          { provide: EventAccessService, useValue: { buildActor: jest.fn() } },
         ],
       }).compile();
 
@@ -371,6 +379,7 @@ describe('PaymentsService', () => {
           { provide: getModelToken(Event.name),          useValue: eventModel },
           { provide: TicketsService,  useValue: ticketsService },
           { provide: EmailsService,   useValue: emailsService },
+          { provide: EventAccessService, useValue: { buildActor: jest.fn() } },
         ],
       }).compile();
 

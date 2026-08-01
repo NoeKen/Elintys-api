@@ -10,6 +10,7 @@ import { TicketsService } from './tickets.service';
 import { TicketType, TicketPurchase, TicketPurchaseStatus, TicketPurchaseSchema } from './ticket.schema';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { Event } from '../events/event.schema';
+import { EventAccessService } from '../events/event-access.service';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -35,6 +36,10 @@ describe('TicketsService', () => {
   const mockEvent = (overrides = {}) => ({
     _id: eventId,
     organizer: { toString: () => organizerId },
+    status: 'published',
+    discoverability: 'public',
+    accessPolicy: { type: 'open' },
+    admissionModes: ['free_ticket', 'paid_ticket'],
     ...overrides,
   });
 
@@ -93,6 +98,7 @@ describe('TicketsService', () => {
         { provide: getModelToken(TicketType.name), useValue: ticketTypeModel },
         { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
+        { provide: EventAccessService, useValue: { buildActor: jest.fn().mockResolvedValue({ userId: buyerId }) } },
       ],
     }).compile();
 

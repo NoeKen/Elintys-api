@@ -1,6 +1,5 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { randomUUID } from 'crypto';
 
 export type InvitationDocument = HydratedDocument<Invitation>;
 
@@ -13,6 +12,7 @@ export enum InvitationStatus {
 export enum InvitationType {
   VENDOR = 'vendor',
   VENUE = 'venue',
+  PARTICIPANT = 'participant',
 }
 
 @Schema({ timestamps: true })
@@ -42,11 +42,21 @@ export class Invitation {
   })
   status!: InvitationStatus;
 
-  @Prop({
-    type: String,
-    default: () => randomUUID(),
-  })
-  token!: string;
+  /** Champ legacy, lecture seulement pendant la migration. */
+  @Prop({ type: String, select: false })
+  token?: string;
+
+  @Prop({ type: String, required: true, select: false })
+  tokenHash!: string;
+
+  @Prop({ type: String, required: true, maxlength: 16 })
+  tokenPrefix!: string;
+
+  @Prop({ default: 1, min: 1, max: 100 })
+  maxUses!: number;
+
+  @Prop({ default: 0, min: 0 })
+  useCount!: number;
 
   @Prop({ type: Date, default: null })
   acceptedAt?: Date | null;
@@ -63,6 +73,6 @@ export class Invitation {
 
 export const InvitationSchema = SchemaFactory.createForClass(Invitation);
 
-InvitationSchema.index({ invitedBy: 1, email: 1 }, { unique: true });
-InvitationSchema.index({ token: 1 }, { unique: true });
+InvitationSchema.index({ invitedBy: 1, email: 1, eventId: 1, type: 1 }, { unique: true });
+InvitationSchema.index({ tokenHash: 1 }, { unique: true });
 InvitationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

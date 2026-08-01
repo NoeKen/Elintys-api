@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Event, EventDocument, EventStatus, EventVisibility } from '../events/event.schema';
+import { Event, EventDiscoverability, EventDocument, EventStatus, EventVisibility } from '../events/event.schema';
 import { VendorProfile, VendorProfileDocument } from '../vendors/vendor.schema';
 import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
 
@@ -10,6 +10,14 @@ export interface SearchResults {
   vendors: VendorProfile[];
   venues: VenueProfile[];
 }
+
+const publicEventFilter = {
+  status: EventStatus.PUBLISHED,
+  $or: [
+    { discoverability: EventDiscoverability.PUBLIC },
+    { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
+  ],
+};
 
 @Injectable()
 export class DiscoveryService {
@@ -25,11 +33,7 @@ export class DiscoveryService {
 
     const [events, vendors, venues] = await Promise.all([
       this.eventModel
-        .find({
-          status: EventStatus.PUBLISHED,
-          visibility: EventVisibility.PUBLIC,
-          $or: [{ title: regex }, { description: regex }, { 'location.city': regex }],
-        })
+        .find({ $and: [publicEventFilter, { $or: [{ title: regex }, { description: regex }, { 'location.city': regex }] }] })
         .skip(skip)
         .limit(limit)
         .lean()
@@ -53,7 +57,7 @@ export class DiscoveryService {
 
   async featuredEvents(limit = 6): Promise<Event[]> {
     return this.eventModel
-      .find({ status: EventStatus.PUBLISHED, visibility: EventVisibility.PUBLIC })
+      .find(publicEventFilter)
       .sort({ startDate: 1 })
       .limit(limit)
       .lean()
@@ -62,10 +66,12 @@ export class DiscoveryService {
 
   async findEvents(q?: string, city?: string, page = 1, limit = 12): Promise<{ data: Event[]; total: number }> {
     const filter: Record<string, unknown> = {
-      status: EventStatus.PUBLISHED,
-      visibility: EventVisibility.PUBLIC,
+      ...publicEventFilter,
     };
-    if (q) filter['$or'] = [{ title: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }];
+    if (q) {
+      delete filter['$or'];
+      filter['$and'] = [publicEventFilter, { $or: [{ title: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }] }];
+    }
     if (city) filter['location.city'] = { $regex: city, $options: 'i' };
     const [data, total] = await Promise.all([
       this.eventModel.find(filter).sort({ startDate: 1 }).skip((page - 1) * limit).limit(limit).lean().select('title startDate location status slug coverImage'),

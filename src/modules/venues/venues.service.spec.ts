@@ -29,6 +29,7 @@ describe('VenuesService', () => {
   let service: VenuesService;
   let venueModel: Record<string, jest.Mock>;
   let venueBookingModel: Record<string, jest.Mock>;
+  let eventModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
   const venueId = new Types.ObjectId().toString();
@@ -71,6 +72,9 @@ describe('VenuesService', () => {
       findByIdAndUpdate: jest.fn(),
       create: jest.fn(),
     };
+    eventModel = {
+      findById: jest.fn().mockReturnValue(makeChainable({ title: 'Test Event', organizer: { toString: () => userId } })),
+    };
 
     venueModel.find.mockReturnValue(makeChainable([mockVenue()]));
     venueModel.findById.mockReturnValue(makeChainable(mockVenue()));
@@ -87,7 +91,7 @@ describe('VenuesService', () => {
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
         { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
         { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
-        { provide: getModelToken(Event.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ title: 'Test Event' })) } },
+        { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
         { provide: EmailsService, useValue: { sendVenueBookingUpdate: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
@@ -220,6 +224,7 @@ describe('VenuesService', () => {
 
     it('devrait créer une réservation avec les bonnes dates', async () => {
       venueBookingModel.create.mockResolvedValue(mockBooking());
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
 
       const result = await service.requestBooking(eventId, userId, dto as never);
 
@@ -240,6 +245,39 @@ describe('VenuesService', () => {
         BadRequestException,
       );
     });
+
+    it('refuse une réservation sur l’événement d’un tiers', async () => {
+      eventModel.findById.mockReturnValue(makeChainable({ organizer: { toString: () => 'other-user' } }));
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+      await expect(service.requestBooking(eventId, userId, dto as never)).rejects.toThrow(ForbiddenException);
+      expect(venueBookingModel.create).not.toHaveBeenCalled();
+    });
+
+    it('refuse une salle inexistante ou inactive', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(null));
+      await expect(service.requestBooking(eventId, userId, dto as never)).rejects.toThrow(NotFoundException);
+      expect(venueBookingModel.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancelBooking', () => {
+    it('annule la réservation lorsque l’acteur gère réellement l’événement', async () => {
+      venueBookingModel.findByIdAndUpdate.mockReturnValue(
+        makeChainable(mockBooking({ status: VenueBookingStatus.CANCELLED })),
+      );
+      const result = await service.cancelBooking(bookingId, userId);
+      expect(result.status).toBe(VenueBookingStatus.CANCELLED);
+      expect(venueBookingModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        bookingId,
+        expect.objectContaining({ status: VenueBookingStatus.CANCELLED }),
+        { new: true },
+      );
+    });
+
+    it('refuse l’annulation d’une réservation liée à l’événement d’un tiers', async () => {
+      await expect(service.cancelBooking(bookingId, new Types.ObjectId().toString()))
+        .rejects.toThrow(ForbiddenException);
+    });
   });
 
   // ── listBookingsByEvent ──
@@ -247,10 +285,15 @@ describe('VenuesService', () => {
     it('devrait retourner les réservations d\'un événement', async () => {
       venueBookingModel.find.mockReturnValue(makeChainable([mockBooking()]));
 
-      const result = await service.listBookingsByEvent(eventId);
+      const result = await service.listBookingsByEvent(eventId, userId);
 
       expect(venueBookingModel.find).toHaveBeenCalledWith({ event: expect.any(Types.ObjectId) });
       expect(result).toHaveLength(1);
+    });
+
+    it('refuse la lecture des réservations d’un événement tiers', async () => {
+      eventModel.findById.mockReturnValue(makeChainable({ organizer: { toString: () => 'other-user' } }));
+      await expect(service.listBookingsByEvent(eventId, userId)).rejects.toThrow(ForbiddenException);
     });
   });
 

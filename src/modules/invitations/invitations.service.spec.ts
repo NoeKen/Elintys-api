@@ -1,13 +1,13 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { InvitationsService } from './invitations.service';
 import { Invitation, InvitationType } from './invitation.schema';
-import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
+import { Event } from '../events/event.schema';
 
 const mockInvitationModel = {
   create: jest.fn(),
@@ -20,6 +20,7 @@ const mockInvitedById = new Types.ObjectId().toString();
 
 describe('InvitationsService', () => {
   let service: InvitationsService;
+  const eventModel = { findById: jest.fn() };
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -27,6 +28,7 @@ describe('InvitationsService', () => {
         InvitationsService,
         { provide: getModelToken(Invitation.name), useValue: mockInvitationModel },
         { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnThis(), select: jest.fn().mockResolvedValue({ fullName: 'Test User' }) }) } },
+        { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: EmailsService, useValue: { sendInvitationEmail: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
@@ -79,11 +81,29 @@ describe('InvitationsService', () => {
         }),
       ).rejects.toThrow(ConflictException);
     });
+
+    it('refuse une invitation liée à l’événement d’un tiers', async () => {
+      eventModel.findById.mockReturnValue({
+        lean: jest.fn().mockReturnThis(),
+        select: jest.fn().mockResolvedValue({
+          organizer: { toString: () => 'other-user' },
+          status: 'draft',
+          admissionModes: ['invitation'],
+        }),
+      });
+      await expect(service.sendInvitation(mockInvitedById, {
+        email: 'participant@example.com',
+        name: 'Participant',
+        type: InvitationType.PARTICIPANT,
+        eventId: new Types.ObjectId().toString(),
+      })).rejects.toThrow(ForbiddenException);
+      expect(mockInvitationModel.create).not.toHaveBeenCalled();
+    });
   });
 
   describe('acceptInvitation', () => {
     it('devrait lancer NotFoundException si token invalide', async () => {
-      mockInvitationModel.findOne.mockReturnValue({
+      mockInvitationModel.findOneAndUpdate.mockReturnValue({
         exec: jest.fn().mockResolvedValueOnce(null),
       });
 
@@ -101,12 +121,17 @@ describe('InvitationsService', () => {
           acceptedAt: new Date(),
         }),
       };
-      mockInvitationModel.findOne.mockReturnValue({
+      mockInvitationModel.findOneAndUpdate.mockReturnValue({
         exec: jest.fn().mockResolvedValueOnce(mockInvitation),
       });
 
       const result = await service.acceptInvitation('valid-token');
-      expect(mockInvitation.save).toHaveBeenCalled();
+      expect(result).toBe(mockInvitation);
+      expect(mockInvitationModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'pending' }),
+        expect.objectContaining({ $inc: { useCount: 1 } }),
+        { new: true },
+      );
     });
   });
 
@@ -115,6 +140,7 @@ describe('InvitationsService', () => {
       const mockInvitations = [{ email: 'a@b.com' }, { email: 'c@d.com' }];
       mockInvitationModel.find.mockReturnValue({
         lean: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
         exec: jest.fn().mockResolvedValueOnce(mockInvitations),
       });
 

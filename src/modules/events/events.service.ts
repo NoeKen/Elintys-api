@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -12,6 +13,9 @@ import {
   EventDocument,
   EventStatus,
   EventVisibility,
+  EventDiscoverability,
+  EventAccessPolicyType,
+  AdmissionMode,
 } from './event.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
@@ -20,19 +24,39 @@ import { PaginatedResult } from '../../shared/interfaces/paginated-result.interf
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EventMediaService } from './event-media.service';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
+import { EventAccessService } from './event-access.service';
+import { normalizeLegacyEventAccess, validateEventAccessConfiguration, validateEventPublishability } from './event-access.policy';
+import { TicketType, TicketTypeDocument } from '../tickets/ticket.schema';
 
 @Injectable()
 export class EventsService {
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
+    @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
     private readonly eventMediaService: EventMediaService,
+    private readonly eventAccessService: EventAccessService,
   ) {}
 
   async create(organizerId: string, dto: CreateEventDto): Promise<Event> {
     const baseSlug = slugify(dto.title, { lower: true, strict: true, locale: 'fr' });
     const slug = await this.generateUniqueSlug(baseSlug);
+    const { accessPolicy, accessRules, visibility, ...eventInput } = dto;
+    const preparedPolicy = accessPolicy
+      ? await this.eventAccessService.preparePolicy(accessPolicy)
+      : undefined;
+    const accessCandidate = {
+      ...eventInput,
+      discoverability: eventInput.discoverability ?? EventDiscoverability.PUBLIC,
+      accessPolicy: preparedPolicy ?? { type: EventAccessPolicyType.OPEN },
+      admissionModes: eventInput.admissionModes ?? [AdmissionMode.REGISTRATION_ONLY],
+    };
+    const accessValidation = validateEventAccessConfiguration(accessCandidate);
+    if (!accessValidation.valid) throw new BadRequestException(accessValidation.errors);
     const event = await this.eventModel.create({
-      ...dto,
+      ...eventInput,
+      ...(visibility ? { visibility } : {}),
+      ...(accessRules ? { accessRules } : {}),
+      ...(preparedPolicy ? { accessPolicy: preparedPolicy, accessModelVersion: 2 } : {}),
       organizer: new Types.ObjectId(organizerId),
       slug,
       creationProgress: {
@@ -42,7 +66,7 @@ export class EventsService {
         lastSavedAt: new Date(),
       },
     });
-    return event.toObject();
+    return this.eventAccessService.toSafeEvent(event.toObject());
   }
 
   private async generateUniqueSlug(base: string): Promise<string> {
@@ -63,7 +87,10 @@ export class EventsService {
 
     const filter: Record<string, unknown> = {
       status: EventStatus.PUBLISHED,
-      visibility: EventVisibility.PUBLIC,
+      $or: [
+        { discoverability: EventDiscoverability.PUBLIC },
+        { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
+      ],
     };
     if (city) {
       filter['location.city'] = {
@@ -78,7 +105,7 @@ export class EventsService {
       this.eventModel.countDocuments(filter),
     ]);
 
-    return { data, total, page, limit };
+    return { data: data.map((event) => this.eventAccessService.toPublicEvent(normalizeLegacyEventAccess(event))), total, page, limit };
   }
 
   async getPublicCategoryCounts(): Promise<{
@@ -87,7 +114,10 @@ export class EventsService {
   }> {
     const filter = {
       status: EventStatus.PUBLISHED,
-      visibility: EventVisibility.PUBLIC,
+      $or: [
+        { discoverability: EventDiscoverability.PUBLIC },
+        { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
+      ],
       eventType: { $exists: true, $ne: null },
     };
     const [groups, total] = await Promise.all([
@@ -98,7 +128,10 @@ export class EventsService {
       ]),
       this.eventModel.countDocuments({
         status: EventStatus.PUBLISHED,
-        visibility: EventVisibility.PUBLIC,
+        $or: [
+          { discoverability: EventDiscoverability.PUBLIC },
+          { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
+        ],
       }),
     ]);
 
@@ -114,31 +147,44 @@ export class EventsService {
     if (event.organizer.toString() !== organizerId) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
-    return event;
+    return this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(event));
   }
 
   async update(id: string, organizerId: string, dto: UpdateEventDto): Promise<Event> {
-    const event = await this.eventModel.findById(id).lean().select('organizer');
+    const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (event.organizer.toString() !== organizerId) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
+    const { accessPolicy, ...dtoWithoutAccessPolicy } = dto;
+    const preparedPolicy = accessPolicy
+      ? await this.eventAccessService.preparePolicy(accessPolicy, event.accessPolicy?.codeHash)
+      : undefined;
+    const normalizedDto = {
+      ...dtoWithoutAccessPolicy,
+      ...(preparedPolicy ? { accessPolicy: preparedPolicy, accessModelVersion: 2 } : {}),
+    };
+    if (dto.accessPolicy || dto.discoverability || dto.admissionModes) {
+      const candidate = normalizeLegacyEventAccess({ ...event, ...normalizedDto });
+      const validation = validateEventAccessConfiguration(candidate);
+      if (!validation.valid) throw new BadRequestException(validation.errors);
+    }
     const updatePayload = dto.creationProgress
       ? {
-          ...dto,
+          ...normalizedDto,
           creationProgress: {
             ...dto.creationProgress,
             lastSavedAt: new Date(),
           },
         }
-      : dto;
+      : normalizedDto;
 
     const updated = await this.eventModel
       .findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })
       .lean()
       .select('-__v');
-    return updated!;
+    return this.eventAccessService.toSafeEvent(updated!);
   }
 
   async remove(id: string, organizerId: string): Promise<void> {
@@ -155,7 +201,29 @@ export class EventsService {
   }
 
   async publish(id: string, organizerId: string): Promise<Event> {
+    const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (event.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    const readiness = await this.getPublishReadinessForEvent(event);
+    if (!readiness.publishable) {
+      throw new ConflictException({ code: 'EVENT_NOT_PUBLISHABLE', ...readiness });
+    }
     return this.update(id, organizerId, { status: EventStatus.PUBLISHED } as UpdateEventDto);
+  }
+
+  async getPublishReadiness(id: string, organizerId: string) {
+    const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (event.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    return this.getPublishReadinessForEvent(event);
+  }
+
+  private async getPublishReadinessForEvent(event: Event) {
+    const [freeTicketTypes, paidTicketTypes] = await Promise.all([
+      this.ticketTypeModel.countDocuments({ event: (event as Event & { _id: unknown })._id, isFree: true }),
+      this.ticketTypeModel.countDocuments({ event: (event as Event & { _id: unknown })._id, isFree: false }),
+    ]);
+    return validateEventPublishability(normalizeLegacyEventAccess(event), { freeTicketTypes, paidTicketTypes });
   }
 
   async cancel(id: string, organizerId: string): Promise<Event> {
@@ -164,11 +232,18 @@ export class EventsService {
 
   async findBySlug(slug: string): Promise<Event> {
     const event = await this.eventModel
-      .findOne({ slug, status: EventStatus.PUBLISHED })
+      .findOne({
+        slug,
+        status: EventStatus.PUBLISHED,
+        $or: [
+          { discoverability: { $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED] } },
+          { accessModelVersion: { $exists: false }, visibility: { $in: [EventVisibility.PUBLIC, EventVisibility.INVITE_ONLY] } },
+        ],
+      })
       .lean()
-      .select('-__v');
+      .select('-__v -accessPolicy.codeHash');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    return event;
+    return this.eventAccessService.toPublicEvent(normalizeLegacyEventAccess(event));
   }
 
   async findByOrganizer(organizerId: string, query: QueryEventDto): Promise<PaginatedResult<Event>> {
@@ -180,6 +255,6 @@ export class EventsService {
       this.eventModel.find(filter).skip(skip).limit(limit).lean().select('-__v'),
       this.eventModel.countDocuments(filter),
     ]);
-    return { data, total, page, limit };
+    return { data: data.map((event) => this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(event))), total, page, limit };
   }
 }

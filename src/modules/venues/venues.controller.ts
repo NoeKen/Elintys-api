@@ -77,6 +77,14 @@ export class VenuesController {
     return this.venuesService.respondToBooking(bookingId, user.sub, dto);
   }
 
+  @Patch('bookings/:bookingId/cancel')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Annuler une réservation appartenant à son événement' })
+  @ApiParam({ name: 'bookingId' })
+  cancelBooking(@Param('bookingId') bookingId: string, @CurrentUser() user: JwtPayload) {
+    return this.venuesService.cancelBooking(bookingId, user.sub, user.roles);
+  }
+
   @Public()
   @Get(':id')
   @ApiOperation({ summary: 'Récupérer une salle par ID' })
@@ -109,7 +117,7 @@ export class VenuesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateVenueBookingDto,
   ) {
-    return this.venuesService.requestBooking(eventId, user.sub, dto);
+    return this.venuesService.requestBooking(eventId, user.sub, dto, user.roles);
   }
 
   @Get(':eventId/bookings')
@@ -117,7 +125,7 @@ export class VenuesController {
   @ApiParam({ name: 'eventId' })
   @ApiResponse({ status: 200, description: 'Liste des réservations' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  listBookingsByEvent(@Param('eventId') eventId: string) {
-    return this.venuesService.listBookingsByEvent(eventId);
+  listBookingsByEvent(@Param('eventId') eventId: string, @CurrentUser() user: JwtPayload) {
+    return this.venuesService.listBookingsByEvent(eventId, user.sub, user.roles);
   }
 }

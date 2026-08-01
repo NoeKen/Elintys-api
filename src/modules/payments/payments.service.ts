@@ -16,6 +16,8 @@ import { EmailsService } from '../emails/emails.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { Event, EventDocument } from '../events/event.schema';
 import { ErrorCodes } from '../../shared/constants/error-codes';
+import { EventAccessService } from '../events/event-access.service';
+import { canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
 
 type StripeClient = InstanceType<typeof Stripe>;
 
@@ -40,6 +42,7 @@ export class PaymentsService {
     private readonly configService: ConfigService,
     private readonly ticketsService: TicketsService,
     private readonly emailsService: EmailsService,
+    private readonly eventAccessService: EventAccessService,
     @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
     @InjectModel(TicketPurchase.name) private readonly ticketPurchaseModel: Model<TicketPurchaseDocument>,
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
@@ -73,6 +76,14 @@ export class PaymentsService {
     if (tt.isFree) {
       throw new BadRequestException('Ce billet est gratuit. Utilisez /tickets/purchase directement.');
     }
+
+    const event = await this.eventModel.findById(tt.event).lean().select('-accessPolicy.codeHash');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    const actor = buyerId
+      ? await this.eventAccessService.buildActor(buyerId, tt.event.toString(), dto.accessGrant)
+      : { email: dto.guestEmail };
+    const decision = canPurchaseTicket(actor, normalizeLegacyEventAccess(event));
+    if (!decision.allowed) throw new ForbiddenException(decision.reason);
 
     const available = tt.quantity - tt.sold;
     if (available < dto.quantity) {

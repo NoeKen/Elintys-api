@@ -5,14 +5,32 @@ import { EventsService } from './events.service';
 import { Event, EventSchema } from './event.schema';
 import { MediaModule } from '../media/media.module';
 import { EventMediaService } from './event-media.service';
+import { JwtModule } from '@nestjs/jwt';
+import { EventAccessService } from './event-access.service';
+import {
+  EventAccessRequest,
+  EventAccessRequestSchema,
+} from './event-access-request.schema';
+import { User, UserSchema } from '../auth/user.schema';
+import { Guest, GuestSchema } from '../guests/guest.schema';
+import { TicketType, TicketTypeSchema } from '../tickets/ticket.schema';
+import { Invitation, InvitationSchema } from '../invitations/invitation.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Event.name, schema: EventSchema }]),
+    MongooseModule.forFeature([
+      { name: Event.name, schema: EventSchema },
+      { name: EventAccessRequest.name, schema: EventAccessRequestSchema },
+      { name: User.name, schema: UserSchema },
+      { name: Guest.name, schema: GuestSchema },
+      { name: TicketType.name, schema: TicketTypeSchema },
+      { name: Invitation.name, schema: InvitationSchema },
+    ]),
+    JwtModule.register({}),
     MediaModule,
   ],
   controllers: [EventsController],
-  providers: [EventsService, EventMediaService],
-  exports: [EventsService, MongooseModule],
+  providers: [EventsService, EventMediaService, EventAccessService],
+  exports: [EventsService, EventAccessService, MongooseModule],
 })
 export class EventsModule {}

@@ -1,6 +1,9 @@
 import {
   IsDateString,
   IsBoolean,
+  ArrayNotEmpty,
+  ArrayUnique,
+  IsArray,
   IsEmail,
   IsEnum,
   IsInt,
@@ -11,6 +14,7 @@ import {
   Matches,
   Max,
   MaxLength,
+  MinLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -22,6 +26,9 @@ import {
   EventVisibility,
   ProviderSelectionMode,
   VenueMode,
+  AdmissionMode,
+  EventAccessPolicyType,
+  EventDiscoverability,
 } from '../event.schema';
 
 export class LocationDto {
@@ -121,6 +128,39 @@ export class EventAccessRulesDto {
   manualApproval?: boolean;
 }
 
+export class EventAccessPolicyDto {
+  @ApiProperty({ enum: EventAccessPolicyType })
+  @IsEnum(EventAccessPolicyType)
+  type!: EventAccessPolicyType;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  requiresAuthentication?: boolean;
+
+  @ApiPropertyOptional({ type: [String], example: ['entreprise.ca'] })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsString({ each: true })
+  @MaxLength(253, { each: true })
+  @Transform(({ value }: { value: unknown }) =>
+    Array.isArray(value)
+      ? value.map((domain) => String(domain).trim().toLowerCase().replace(/^@/, ''))
+      : value,
+  )
+  allowedDomains?: string[];
+
+  /** Le code brut est accepté uniquement à l'écriture puis remplacé par son hash. */
+  @ApiPropertyOptional({ minLength: 6, maxLength: 128, writeOnly: true })
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  @MaxLength(128)
+  code?: string;
+}
+
 export class EventCreationProgressDto {
   @IsInt()
   @Min(1)
@@ -212,6 +252,25 @@ export class CreateEventDto {
   @ValidateNested()
   @Type(() => EventAccessRulesDto)
   accessRules?: EventAccessRulesDto;
+
+  @ApiPropertyOptional({ enum: EventDiscoverability })
+  @IsOptional()
+  @IsEnum(EventDiscoverability)
+  discoverability?: EventDiscoverability;
+
+  @ApiPropertyOptional({ type: () => EventAccessPolicyDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EventAccessPolicyDto)
+  accessPolicy?: EventAccessPolicyDto;
+
+  @ApiPropertyOptional({ enum: AdmissionMode, isArray: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayUnique()
+  @IsEnum(AdmissionMode, { each: true })
+  admissionModes?: AdmissionMode[];
 
   @ApiPropertyOptional({ example: 200, description: 'Capacité maximale (0 = illimitée)', minimum: 0 })
   @IsOptional()

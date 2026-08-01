@@ -20,6 +20,30 @@ export enum EventVisibility {
   INVITE_ONLY = 'invite_only',
 }
 
+export enum EventDiscoverability {
+  PUBLIC = 'public',
+  UNLISTED = 'unlisted',
+  PRIVATE = 'private',
+}
+
+export enum EventAccessPolicyType {
+  OPEN = 'open',
+  REGISTRATION_REQUIRED = 'registration_required',
+  ACCESS_CODE = 'access_code',
+  EMAIL_DOMAIN = 'email_domain',
+  MANUAL_APPROVAL = 'manual_approval',
+  GUEST_LIST = 'guest_list',
+  INVITATION_TOKEN = 'invitation_token',
+}
+
+export enum AdmissionMode {
+  FREE = 'free',
+  REGISTRATION_ONLY = 'registration_only',
+  FREE_TICKET = 'free_ticket',
+  PAID_TICKET = 'paid_ticket',
+  INVITATION = 'invitation',
+}
+
 export enum EventLocationType {
   PHYSICAL = 'physical',
   ONLINE = 'online',
@@ -112,6 +136,27 @@ class EventAccessRules {
   manualApproval!: boolean;
 }
 
+@Schema({ _id: false, discriminatorKey: 'type' })
+export class EventAccessPolicy {
+  @Prop({
+    required: true,
+    enum: Object.values(EventAccessPolicyType),
+    default: EventAccessPolicyType.OPEN,
+  })
+  type!: EventAccessPolicyType;
+
+  @Prop({ default: false })
+  requiresAuthentication?: boolean;
+
+  @Prop({ type: [String], default: [] })
+  allowedDomains?: string[];
+
+  @Prop({ select: false })
+  codeHash?: string;
+}
+
+const EventAccessPolicySchema = SchemaFactory.createForClass(EventAccessPolicy);
+
 @Schema({ _id: false })
 class EventCreationProgress {
   @Prop({ min: 1, max: 6, default: 1 })
@@ -178,6 +223,25 @@ export class Event {
   @Prop({ type: EventAccessRules })
   accessRules?: EventAccessRules;
 
+  @Prop({
+    enum: Object.values(EventDiscoverability),
+    default: EventDiscoverability.PUBLIC,
+  })
+  discoverability!: EventDiscoverability;
+
+  @Prop({ type: EventAccessPolicySchema, default: () => ({ type: EventAccessPolicyType.OPEN }) })
+  accessPolicy!: EventAccessPolicy;
+
+  @Prop({
+    type: [String],
+    enum: Object.values(AdmissionMode),
+    default: [AdmissionMode.REGISTRATION_ONLY],
+  })
+  admissionModes!: AdmissionMode[];
+
+  @Prop({ default: 2, min: 1 })
+  accessModelVersion!: number;
+
   @Prop({ enum: Object.values(EventStatus), default: EventStatus.DRAFT })
   status!: EventStatus;
 
@@ -207,3 +271,4 @@ EventSchema.index({ organizer: 1, status: 1 });
 EventSchema.index({ startDate: 1 });
 EventSchema.index({ 'location.city': 1, status: 1 });
 EventSchema.index({ eventType: 1, status: 1, visibility: 1 });
+EventSchema.index({ eventType: 1, status: 1, discoverability: 1 });

@@ -5,6 +5,8 @@ import { Types } from 'mongoose';
 import { EventsService } from './events.service';
 import { Event, EventStatus, EventType } from './event.schema';
 import { EventMediaService } from './event-media.service';
+import { EventAccessService } from './event-access.service';
+import { TicketType } from '../tickets/ticket.schema';
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
@@ -22,6 +24,12 @@ describe('EventsService', () => {
   const eventMediaService = {
     cleanupAfterEventDeletion: jest.fn().mockResolvedValue(undefined),
   };
+  const eventAccessService = {
+    preparePolicy: jest.fn(),
+    toSafeEvent: jest.fn((event: unknown) => event),
+    toPublicEvent: jest.fn((event: unknown) => event),
+  };
+  const ticketTypeModel = { countDocuments: jest.fn().mockResolvedValue(0) };
 
   const organizerId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
@@ -31,6 +39,11 @@ describe('EventsService', () => {
     title: 'Gala de printemps',
     status: EventStatus.DRAFT,
     visibility: 'public',
+    discoverability: 'public',
+    accessPolicy: { type: 'open' },
+    admissionModes: ['registration_only'],
+    eventType: EventType.GALA,
+    location: { type: 'physical', name: 'Maison Elintys' },
     organizer: { toString: () => organizerId },
     startDate: new Date('2025-06-15'),
     toObject: jest.fn().mockReturnThis(),
@@ -59,7 +72,9 @@ describe('EventsService', () => {
       providers: [
         EventsService,
         { provide: getModelToken(Event.name), useValue: eventModel },
+        { provide: getModelToken(TicketType.name), useValue: ticketTypeModel },
         { provide: EventMediaService, useValue: eventMediaService },
+        { provide: EventAccessService, useValue: eventAccessService },
       ],
     }).compile();
 
@@ -103,7 +118,7 @@ describe('EventsService', () => {
       expect(eventModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
           status: EventStatus.PUBLISHED,
-          visibility: 'public',
+          $or: expect.any(Array),
         }),
       );
     });
@@ -148,7 +163,7 @@ describe('EventsService', () => {
           {
             $match: expect.objectContaining({
               status: EventStatus.PUBLISHED,
-              visibility: 'public',
+              $or: expect.any(Array),
             }),
           },
         ]),
@@ -298,10 +313,11 @@ describe('EventsService', () => {
       const result = await service.findBySlug(slug);
 
       // Assert
-      expect(eventModel.findOne).toHaveBeenCalledWith({
+      expect(eventModel.findOne).toHaveBeenCalledWith(expect.objectContaining({
         slug,
         status: EventStatus.PUBLISHED,
-      });
+        $or: expect.any(Array),
+      }));
       expect((result as unknown as Record<string, unknown>).slug).toBe(slug);
     });
 

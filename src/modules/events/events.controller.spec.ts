@@ -2,6 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { EventsController } from './events.controller';
 import { EventsService } from './events.service';
 import { EventMediaService } from './event-media.service';
+import { EventAccessService } from './event-access.service';
 
 const mockEventsService = {
   create: jest.fn(),
@@ -31,6 +32,7 @@ describe('EventsController', () => {
       providers: [
         { provide: EventsService, useValue: mockEventsService },
         { provide: EventMediaService, useValue: mockEventMediaService },
+        { provide: EventAccessService, useValue: {} },
       ],
     }).compile();
 

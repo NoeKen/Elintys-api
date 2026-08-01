@@ -28,6 +28,7 @@ import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
+import { canManageEvent } from '../events/event-access.policy';
 
 @Injectable()
 export class VenuesService {
@@ -89,10 +90,20 @@ export class VenuesService {
     return venue;
   }
 
-  async requestBooking(eventId: string, organizerId: string, dto: CreateVenueBookingDto): Promise<VenueBooking> {
+  async requestBooking(eventId: string, organizerId: string, dto: CreateVenueBookingDto, roles: string[] = []): Promise<VenueBooking> {
     const start = new Date(dto.bookingStart);
     const end = new Date(dto.bookingEnd);
     if (end <= start) throw new BadRequestException(ErrorCodes.INVALID_DATE_RANGE);
+
+    const [event, venue] = await Promise.all([
+      this.eventModel.findById(eventId).lean().select('organizer'),
+      this.venueModel.findOne({ _id: dto.venueId, isActive: true }).lean().select('_id'),
+    ]);
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId: organizerId, roles }, event).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
 
     const booking = await this.venueBookingModel.create({
       event: new Types.ObjectId(eventId),
@@ -107,7 +118,12 @@ export class VenuesService {
     return booking.toObject();
   }
 
-  async listBookingsByEvent(eventId: string): Promise<VenueBooking[]> {
+  async listBookingsByEvent(eventId: string, userId: string, roles: string[] = []): Promise<VenueBooking[]> {
+    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId, roles }, event).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
     return this.venueBookingModel
       .find({ event: new Types.ObjectId(eventId) })
       .populate('venue', 'name address city')
@@ -158,6 +174,24 @@ export class VenuesService {
       });
     }).catch(() => undefined);
 
+    return updated!;
+  }
+
+  async cancelBooking(bookingId: string, userId: string, roles: string[] = []): Promise<VenueBooking> {
+    const booking = await this.venueBookingModel.findById(bookingId).lean().select('event status');
+    if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
+    if (![VenueBookingStatus.PENDING, VenueBookingStatus.CONFIRMED].includes(booking.status)) {
+      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+    const event = await this.eventModel.findById(booking.event.toString()).lean().select('organizer');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId, roles }, event).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    const updated = await this.venueBookingModel
+      .findByIdAndUpdate(bookingId, { status: VenueBookingStatus.CANCELLED, respondedAt: new Date() }, { new: true })
+      .lean()
+      .select('-__v');
     return updated!;
   }
 

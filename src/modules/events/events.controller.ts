@@ -13,7 +13,9 @@ import {
   UploadedFile,
   UploadedFiles,
   UseInterceptors,
+  Req,
 } from '@nestjs/common';
+import { Request } from 'express';
 import {
   ApiTags,
   ApiBearerAuth,
@@ -43,6 +45,9 @@ import {
   MEDIA_MAX_FILE_SIZE,
   MEDIA_MAX_GALLERY_IMAGES,
 } from '../media/media.constants';
+import { EventAccessService } from './event-access.service';
+import { UpdateEventAccessConfigurationDto } from './dto/update-event-access-configuration.dto';
+import { ReviewEventAccessRequestDto, VerifyEventAccessCodeDto } from './dto/event-access.dto';
 
 @ApiTags('Events')
 @ApiBearerAuth('access-token')
@@ -51,6 +56,7 @@ export class EventsController {
   constructor(
     private readonly eventsService: EventsService,
     private readonly eventMediaService: EventMediaService,
+    private readonly eventAccessService: EventAccessService,
   ) {}
 
   @Post()
@@ -104,6 +110,86 @@ export class EventsController {
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   findBySlug(@Param('slug') slug: string) {
     return this.eventsService.findBySlug(slug);
+  }
+
+  @Public()
+  @Post(':id/access/code/verify')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  verifyAccessCode(
+    @Param('id') id: string,
+    @Body() dto: VerifyEventAccessCodeDto,
+    @Req() request: Request,
+  ) {
+    return this.eventAccessService.verifyCode(id, dto.code, request.headers['x-request-id'] as string | undefined);
+  }
+
+  @Public()
+  @Get('access/:token')
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  resolveAccessGrant(@Param('token') token: string) {
+    return this.eventAccessService.resolveAccessGrant(token);
+  }
+
+  @Post(':id/access/domain/check')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  checkAccessDomain(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
+    return this.eventAccessService.checkDomain(id, user.sub, request.headers['x-request-id'] as string | undefined);
+  }
+
+  @Get(':id/access')
+  getAuthorizedEvent(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Req() request: Request,
+  ) {
+    const grant = request.headers['x-event-access-grant'];
+    return this.eventAccessService.findAuthorizedEvent(
+      id,
+      user.sub,
+      typeof grant === 'string' ? grant : undefined,
+      request.headers['x-request-id'] as string | undefined,
+    );
+  }
+
+  @Post(':id/access/request')
+  @Throttle({ default: { ttl: 10 * 60_000, limit: 3 } })
+  requestAccess(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
+    return this.eventAccessService.requestAccess(id, user.sub, request.headers['x-request-id'] as string | undefined);
+  }
+
+  @Get(':id/access/requests')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  listAccessRequests(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.eventAccessService.listRequests(id, { userId: user.sub, roles: user.roles });
+  }
+
+  @Patch(':id/access/requests/:requestId')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  reviewAccessRequest(
+    @Param('id') id: string,
+    @Param('requestId') requestId: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ReviewEventAccessRequestDto,
+  ) {
+    return this.eventAccessService.reviewRequest(id, requestId, { userId: user.sub, roles: user.roles }, dto.status);
+  }
+
+  @Put(':id/access-configuration')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  updateAccessConfiguration(
+    @Param('id') id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateEventAccessConfigurationDto,
+  ) {
+    return this.eventAccessService.updateConfiguration(id, { userId: user.sub, roles: user.roles }, dto);
+  }
+
+  @Get(':id/publish-readiness')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  getPublishReadiness(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+    return this.eventsService.getPublishReadiness(id, user.sub);
   }
 
   @Get(':id')
