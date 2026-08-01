@@ -2,24 +2,20 @@
 
 ## Domaines apparentés
 
-L'API conserve les jetons dans des cookies `HttpOnly`, `SameSite=Lax` et
-`Secure` dès qu'elle est déployée (`NODE_ENV=production`) ou qu'un domaine de
-cookie est configuré.
+L'API conserve les jetons dans des cookies host-only `HttpOnly`,
+`SameSite=Lax` et `Secure` dès qu'elle est déployée
+(`NODE_ENV=production`). Aucun attribut `Domain` n'est émis.
 
 | Environnement | Frontend | API | `COOKIE_DOMAIN` |
 | --- | --- | --- | --- |
-| Développement hébergé | `https://app.dev.elintys.app` | `https://api.dev.elintys.app` | `.dev.elintys.app` |
-| Production | `https://app.elintys.com` | `https://api.elintys.com` | `.elintys.com` |
+| Développement hébergé | `https://dev.elintys.com` | `https://api.dev.elintys.com` | omis |
+| Production | `https://app.elintys.com` | `https://api.elintys.com` | omis |
 
-`COOKIE_DOMAIN` doit commencer par un point, être un nom DNS valide et être un
-domaine parent de l'hôte défini par `FRONTEND_URL`. L'API refuse de démarrer si
-une valeur configurée ne respecte pas ces contraintes. `ELINTYS_ENV=dev`
-impose `.dev.elintys.app`, tandis que `ELINTYS_ENV=prod` impose `.elintys.com`.
-Les domaines enregistrables distincts empêchent un hôte de développement de
-recevoir ou d'émettre les cookies de production.
-Dans un runtime déployé (`NODE_ENV=production`), `ELINTYS_ENV` et
-`COOKIE_DOMAIN` sont obligatoires. En local, la variable de domaine doit être
-omise pour utiliser un cookie limité à l'hôte.
+`COOKIE_DOMAIN` doit rester vide dans tous les environnements. L'API refuse de
+démarrer si une valeur est définie. Le navigateur limite ainsi les cookies à
+l'hôte API qui les a émis: `api.dev.elintys.com` en développement et
+`api.elintys.com` en production. `ELINTYS_ENV` reste obligatoire dans un
+runtime déployé afin d'isoler la base de données et les médias.
 
 La suppression des cookies réutilise exactement le même domaine, chemin et les
 mêmes attributs de sécurité que leur création.
@@ -29,10 +25,11 @@ mêmes attributs de sécurité que leur création.
 CORS est limité aux origines exactes définies par `FRONTEND_URL` et
 `CORS_ORIGINS`. En complément, les requêtes navigateur `POST`, `PUT`, `PATCH`
 et `DELETE` dont l'en-tête `Origin` ne correspond pas à cette liste sont
-refusées avec un statut 403. Ce contrôle évite qu'un site tiers déclenche une
-écriture authentifiée sans pouvoir lire la réponse. Les lectures, les
-pré-requêtes `OPTIONS` et les clients serveur ou natifs sans en-tête `Origin`
-restent autorisés.
+refusées avec un statut 403. Une écriture sans `Origin` est également refusée
+si elle transporte un cookie d'authentification. Ce contrôle évite qu'un site
+tiers déclenche une écriture authentifiée sans pouvoir lire la réponse. Les
+lectures, les pré-requêtes `OPTIONS` et les clients serveur ou natifs sans
+cookie restent autorisés.
 
 ## Corrélation et logs réseau
 

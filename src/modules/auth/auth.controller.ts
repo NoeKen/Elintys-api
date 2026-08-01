@@ -34,13 +34,10 @@ export class AuthController {
   ) {}
 
   private get sharedCookieOptions(): CookieOptions {
-    const domain = this.configService.get<string>('authCookie.domain');
-
     return {
       httpOnly: true,
       secure: this.configService.getOrThrow<boolean>('authCookie.secure'),
       sameSite: 'lax',
-      ...(domain ? { domain } : {}),
       path: '/',
     };
   }
