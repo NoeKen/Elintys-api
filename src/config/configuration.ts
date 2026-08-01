@@ -8,12 +8,7 @@ export default () => {
     nodeEnv,
   );
   const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
-  const cookieDomain = resolveCookieDomain(
-    process.env.COOKIE_DOMAIN,
-    frontendUrl,
-    elintysEnv,
-    nodeEnv === 'production',
-  );
+  resolveCookieDomain(process.env.COOKIE_DOMAIN);
 
   return {
     port: parseInt(process.env.PORT ?? '3001', 10),
@@ -45,8 +40,7 @@ export default () => {
     },
     frontendUrl,
     authCookie: {
-      domain: cookieDomain,
-      secure: nodeEnv === 'production' || cookieDomain !== undefined,
+      secure: nodeEnv === 'production',
     },
   };
 };

@@ -25,10 +25,6 @@ const mockConfigService = {
     if (key === 'authCookie.secure') return true;
     return 'value';
   }),
-  get: jest.fn().mockImplementation((key: string) => {
-    if (key === 'authCookie.domain') return '.dev.elintys.com';
-    return undefined;
-  }),
 };
 
 const mockResponse = (): Partial<Response> => ({
@@ -75,13 +71,16 @@ describe('AuthController', () => {
         'access_token',
         'access_token',
         expect.objectContaining({
-          domain: '.dev.elintys.com',
           httpOnly: true,
           path: '/',
           sameSite: 'lax',
           secure: true,
         }),
       );
+      const accessCookieOptions = (res.cookie as jest.Mock).mock.calls.find(
+        ([name]) => name === 'access_token',
+      )?.[2] as Record<string, unknown>;
+      expect(accessCookieOptions).not.toHaveProperty('domain');
       expect(result).toHaveProperty('user');
       expect(result).not.toHaveProperty('accessToken');
       expect(result).not.toHaveProperty('refreshToken');
@@ -170,7 +169,6 @@ describe('AuthController', () => {
 
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith('old_cookie_token');
       const expectedOptions = {
-        domain: '.dev.elintys.com',
         httpOnly: true,
         path: '/',
         sameSite: 'lax',
@@ -178,6 +176,7 @@ describe('AuthController', () => {
       };
       expect(res.clearCookie).toHaveBeenCalledWith('access_token', expectedOptions);
       expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', expectedOptions);
+      expect(expectedOptions).not.toHaveProperty('domain');
       expect(result).toEqual({ message: 'Déconnecté avec succès' });
     });
 
@@ -191,11 +190,11 @@ describe('AuthController', () => {
       expect(mockAuthService.logoutFromCookie).toHaveBeenCalledWith(undefined);
       expect(res.clearCookie).toHaveBeenCalledWith(
         'access_token',
-        expect.objectContaining({ domain: '.dev.elintys.com', path: '/' }),
+        expect.objectContaining({ path: '/' }),
       );
       expect(res.clearCookie).toHaveBeenCalledWith(
         'refresh_token',
-        expect.objectContaining({ domain: '.dev.elintys.com', path: '/' }),
+        expect.objectContaining({ path: '/' }),
       );
     });
   });

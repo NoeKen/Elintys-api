@@ -28,8 +28,9 @@ export function normalizeAllowedOrigins(origins: string[]): string[] {
  * CORS: browsers can still submit some cross-origin requests even when their
  * response is unreadable, so CORS alone is not a CSRF defense.
  *
- * Requests without an Origin are retained for server-to-server and native
- * clients. Web browsers attach Origin to cross-origin unsafe requests.
+ * Requests without an Origin remain available to server/native clients only
+ * when they do not carry authentication cookies. A cookie-authenticated write
+ * without Origin fails closed.
  */
 export function createTrustedOriginMiddleware(allowedOrigins: string[]) {
   const trustedOrigins = new Set(normalizeAllowedOrigins(allowedOrigins));
@@ -45,7 +46,16 @@ export function createTrustedOriginMiddleware(allowedOrigins: string[]) {
     }
 
     const origin = request.get('origin');
-    if (!origin || trustedOrigins.has(origin)) {
+    if (origin && trustedOrigins.has(origin)) {
+      next();
+      return;
+    }
+
+    const hasAuthCookie = Boolean(
+      request.cookies?.access_token || request.cookies?.refresh_token,
+    );
+
+    if (!origin && !hasAuthCookie) {
       next();
       return;
     }

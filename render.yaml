@@ -44,8 +44,6 @@ services:
       - key: STRIPE_WEBHOOK_SECRET
         sync: false
       - key: FRONTEND_URL
-        sync: false
-      - key: COOKIE_DOMAIN
-        value: .dev.elintys.app
+        value: https://dev.elintys.com
       - key: CORS_ORIGINS
         sync: false
