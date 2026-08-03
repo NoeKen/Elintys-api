@@ -359,5 +359,19 @@ describe('EventsService', () => {
       expect(result.total).toBe(2);
       expect(result.page).toBe(1);
     });
+
+    // Non-régression : une pagination sans tri explicite s'appuie sur l'ordre
+    // naturel de MongoDB, qui peut omettre ou dupliquer des documents entre
+    // deux pages — et masquait un brouillon fraîchement créé au-delà de la
+    // première page.
+    it('devrait trier la page sur un ordre stable et déterministe', async () => {
+      const chain = makeChainable([mockEvent()]);
+      eventModel.find.mockReturnValue(chain);
+      eventModel.countDocuments.mockResolvedValue(1);
+
+      await service.findByOrganizer(organizerId, { page: 2, limit: 20 });
+
+      expect(chain['sort']).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
+    });
   });
 });

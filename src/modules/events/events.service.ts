@@ -28,6 +28,13 @@ import { EventAccessService } from './event-access.service';
 import { normalizeLegacyEventAccess, validateEventAccessConfiguration, validateEventPublishability } from './event-access.policy';
 import { TicketType, TicketTypeDocument } from '../tickets/ticket.schema';
 
+/**
+ * Tri stable obligatoire sur toute requête paginée : sans ordre explicite,
+ * `skip`/`limit` s'appuient sur l'ordre naturel de MongoDB, qui peut omettre
+ * ou dupliquer des documents d'une page à l'autre. Le `_id` sert de départage.
+ */
+const PAGINATION_SORT = { createdAt: -1, _id: -1 } as const;
+
 @Injectable()
 export class EventsService {
   constructor(
@@ -101,7 +108,7 @@ export class EventsService {
     if (category) filter.eventType = category;
 
     const [data, total] = await Promise.all([
-      this.eventModel.find(filter).skip(skip).limit(limit).lean().select('-__v'),
+      this.eventModel.find(filter).sort(PAGINATION_SORT).skip(skip).limit(limit).lean().select('-__v'),
       this.eventModel.countDocuments(filter),
     ]);
 
@@ -252,7 +259,7 @@ export class EventsService {
     const filter: Record<string, unknown> = { organizer: new Types.ObjectId(organizerId) };
     if (status) filter['status'] = status;
     const [data, total] = await Promise.all([
-      this.eventModel.find(filter).skip(skip).limit(limit).lean().select('-__v'),
+      this.eventModel.find(filter).sort(PAGINATION_SORT).skip(skip).limit(limit).lean().select('-__v'),
       this.eventModel.countDocuments(filter),
     ]);
     return { data: data.map((event) => this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(event))), total, page, limit };
