@@ -15,6 +15,13 @@ import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -85,7 +92,7 @@ describe('VenuesService', () => {
     venueBookingModel.findById.mockReturnValue(makeChainable(mockBooking()));
     venueBookingModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockBooking()));
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         VenuesService,
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
@@ -98,7 +105,7 @@ describe('VenuesService', () => {
       ],
     }).compile();
 
-    service = module.get<VenuesService>(VenuesService);
+    service = testingModule.get<VenuesService>(VenuesService);
   });
 
   afterEach(() => jest.clearAllMocks());

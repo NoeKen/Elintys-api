@@ -17,6 +17,13 @@ import type { MediaImage } from '../media/media-image.schema';
 import { MediaCleanupService } from '../media/media-cleanup.service';
 import { ConfigService } from '@nestjs/config';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 function chain<T>(value: T) {
   const result = {
     lean: jest.fn(),
@@ -84,7 +91,7 @@ describe('EventMediaService', () => {
       }),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         EventMediaService,
         { provide: getModelToken(Event.name), useValue: eventModel },
@@ -97,7 +104,7 @@ describe('EventMediaService', () => {
         },
       ],
     }).compile();
-    service = module.get(EventMediaService);
+    service = testingModule.get(EventMediaService);
   });
 
   afterEach(() => jest.clearAllMocks());

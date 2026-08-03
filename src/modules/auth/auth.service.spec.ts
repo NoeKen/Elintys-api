@@ -11,6 +11,13 @@ import { EmailsService } from '../emails/emails.service';
 import { TicketsService } from '../tickets/tickets.service';
 import { Types } from 'mongoose';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 jest.mock('bcrypt', () => ({
   compare: jest.fn(),
   hash: jest.fn(),
@@ -53,7 +60,7 @@ describe('AuthService', () => {
       create:            jest.fn(),
     };
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         AuthService,
         { provide: getModelToken(User.name), useValue: userModel },
@@ -94,7 +101,7 @@ describe('AuthService', () => {
       ],
     }).compile();
 
-    service = module.get<AuthService>(AuthService);
+    service = testingModule.get<AuthService>(AuthService);
 
     (bcrypt.hash as jest.Mock).mockResolvedValue('new_hashed_token');
     (bcrypt.compare as jest.Mock).mockResolvedValue(false);

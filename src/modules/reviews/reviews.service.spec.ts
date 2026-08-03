@@ -5,6 +5,13 @@ import { Types } from 'mongoose';
 import { ReviewsService } from './reviews.service';
 import { Review, ReviewTargetType } from './review.schema';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -47,14 +54,14 @@ describe('ReviewsService', () => {
     reviewModel.find.mockReturnValue(makeChainable([mockReview()]));
     reviewModel.countDocuments.mockResolvedValue(1);
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         ReviewsService,
         { provide: getModelToken(Review.name), useValue: reviewModel },
       ],
     }).compile();
 
-    service = module.get<ReviewsService>(ReviewsService);
+    service = testingModule.get<ReviewsService>(ReviewsService);
   });
 
   afterEach(() => jest.clearAllMocks());

@@ -5,6 +5,13 @@ import { Types } from 'mongoose';
 import { FavoritesService } from './favorites.service';
 import { Favorite, FavoriteTargetType } from './favorite.schema';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -42,14 +49,14 @@ describe('FavoritesService', () => {
     favoriteModel.findOne.mockReturnValue(makeChainable(null));
     favoriteModel.find.mockReturnValue(makeChainable([mockFavorite()]));
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         FavoritesService,
         { provide: getModelToken(Favorite.name), useValue: favoriteModel },
       ],
     }).compile();
 
-    service = module.get<FavoritesService>(FavoritesService);
+    service = testingModule.get<FavoritesService>(FavoritesService);
   });
 
   afterEach(() => jest.clearAllMocks());

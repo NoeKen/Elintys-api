@@ -4,6 +4,13 @@ import { Types } from 'mongoose';
 import { NotificationsService } from './notifications.service';
 import { Notification, NotificationType } from './notification.schema';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (resolveWith: unknown) => ({
   sort: jest.fn().mockReturnThis(),
   skip: jest.fn().mockReturnThis(),
@@ -25,7 +32,7 @@ describe('NotificationsService', () => {
   let service: NotificationsService;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         NotificationsService,
         {
@@ -34,7 +41,7 @@ describe('NotificationsService', () => {
         },
       ],
     }).compile();
-    service = module.get<NotificationsService>(NotificationsService);
+    service = testingModule.get<NotificationsService>(NotificationsService);
   });
 
   afterEach(() => jest.clearAllMocks());

@@ -3,6 +3,13 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EmailsService } from './emails.service';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const mockResendSend = jest.fn();
 
 jest.mock('resend', () => ({
@@ -17,7 +24,7 @@ describe('EmailsService', () => {
   beforeEach(async () => {
     mockResendSend.mockReset();
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         EmailsService,
         {
@@ -36,7 +43,7 @@ describe('EmailsService', () => {
       ],
     }).compile();
 
-    service = module.get<EmailsService>(EmailsService);
+    service = testingModule.get<EmailsService>(EmailsService);
   });
 
   afterEach(() => jest.clearAllMocks());

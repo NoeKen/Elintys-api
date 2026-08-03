@@ -1,0 +1,14 @@
+{
+  // Vérification de types seule (finding F-006).
+  // `tsconfig.json` fixe rootDir=./src pour l'émission, ce qui faisait échouer
+  // `tsc --noEmit` sur les fichiers de test/ (TS6059). Ici on n'émet rien :
+  // rootDir est élargi à la racine pour couvrir src/ ET test/.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "incremental": false,
+    "declaration": false
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}

@@ -11,6 +11,13 @@ import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
 import { VendorPriceTier } from './dto/query-vendor.dto';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -83,7 +90,7 @@ describe('VendorsService', () => {
     vendorRequestModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockRequest()));
     vendorRequestModel.findByIdAndDelete.mockResolvedValue(null);
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         VendorsService,
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
@@ -106,7 +113,7 @@ describe('VendorsService', () => {
       ],
     }).compile();
 
-    service = module.get<VendorsService>(VendorsService);
+    service = testingModule.get<VendorsService>(VendorsService);
   });
 
   afterEach(() => jest.clearAllMocks());

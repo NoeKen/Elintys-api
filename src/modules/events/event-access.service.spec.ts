@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
 import { EventAccessService } from './event-access.service';
@@ -54,5 +55,45 @@ describe('EventAccessService security boundaries', () => {
     expect(result).not.toHaveProperty('organizer');
     expect(result).not.toHaveProperty('creationProgress');
     expect(result.accessPolicy).toEqual({ type: EventAccessPolicyType.EMAIL_DOMAIN });
+  });
+});
+
+describe('EventAccessService organizer request projection', () => {
+  it('retourne uniquement le nom et le courriel du demandeur au propriétaire', async () => {
+    const organizerId = new Types.ObjectId().toString();
+    const eventId = new Types.ObjectId().toString();
+    const query: Record<string, jest.Mock> = {};
+    const expected = [{
+      _id: new Types.ObjectId(),
+      eventId: new Types.ObjectId(eventId),
+      userId: { _id: new Types.ObjectId(), fullName: 'Marie Tremblay', email: 'marie@example.ca' },
+      status: 'pending',
+      requestedAt: new Date(),
+    }];
+    ['populate', 'sort', 'lean', 'select'].forEach((method) => {
+      query[method] = jest.fn().mockReturnValue(query);
+    });
+    query.then = jest.fn((resolve: (value: unknown) => unknown) => Promise.resolve(expected).then(resolve));
+    const eventModel = {
+      findById: jest.fn().mockReturnValue({
+        lean: jest.fn().mockReturnValue({
+          select: jest.fn().mockResolvedValue({ organizer: { toString: () => organizerId } }),
+        }),
+      }),
+    };
+    const requestModel = { find: jest.fn().mockReturnValue(query) };
+    const projectionService = new EventAccessService(
+      eventModel as never,
+      requestModel as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      new JwtService(),
+      { getOrThrow: jest.fn().mockReturnValue('test-secret-with-at-least-32-characters') } as never,
+    );
+
+    await expect(projectionService.listRequests(eventId, { userId: organizerId, roles: ['organisateur'] })).resolves.toEqual(expected);
+    expect(query.populate).toHaveBeenCalledWith('userId', 'fullName email');
+    expect(query.sort).toHaveBeenCalledWith({ requestedAt: -1 });
   });
 });

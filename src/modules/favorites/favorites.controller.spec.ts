@@ -3,6 +3,13 @@ import { FavoritesController } from './favorites.controller';
 import { FavoritesService } from './favorites.service';
 import { FavoriteTargetType } from './favorite.schema';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const mockFavoritesService = {
   add: jest.fn(),
   findMyFavorites: jest.fn(),
@@ -15,12 +22,12 @@ describe('FavoritesController', () => {
   let controller: FavoritesController;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       controllers: [FavoritesController],
       providers: [{ provide: FavoritesService, useValue: mockFavoritesService }],
     }).compile();
 
-    controller = module.get<FavoritesController>(FavoritesController);
+    controller = testingModule.get<FavoritesController>(FavoritesController);
   });
 
   afterEach(() => jest.clearAllMocks());

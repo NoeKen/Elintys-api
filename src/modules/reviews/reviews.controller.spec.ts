@@ -2,6 +2,13 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ReviewsController } from './reviews.controller';
 import { ReviewsService } from './reviews.service';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const mockReviewsService = {
   create: jest.fn(),
   findForTarget: jest.fn(),
@@ -14,12 +21,12 @@ describe('ReviewsController', () => {
   let controller: ReviewsController;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       controllers: [ReviewsController],
       providers: [{ provide: ReviewsService, useValue: mockReviewsService }],
     }).compile();
 
-    controller = module.get<ReviewsController>(ReviewsController);
+    controller = testingModule.get<ReviewsController>(ReviewsController);
   });
 
   afterEach(() => jest.clearAllMocks());

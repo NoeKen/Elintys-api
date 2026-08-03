@@ -7,6 +7,13 @@ import { UpdateTicketTypeDto } from './dto/update-ticket-type.dto';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { JwtPayload } from '../../shared/decorators/current-user.decorator';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const mockTicketsService = {
   createTicketType:          jest.fn(),
   findTicketTypes:           jest.fn(),
@@ -25,12 +32,12 @@ describe('TicketTypesController', () => {
   let controller: TicketTypesController;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       controllers: [TicketTypesController],
       providers: [{ provide: TicketsService, useValue: mockTicketsService }],
     }).compile();
 
-    controller = module.get<TicketTypesController>(TicketTypesController);
+    controller = testingModule.get<TicketTypesController>(TicketTypesController);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -86,12 +93,12 @@ describe('TicketsController', () => {
   let controller: TicketsController;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       controllers: [TicketsController],
       providers: [{ provide: TicketsService, useValue: mockTicketsService }],
     }).compile();
 
-    controller = module.get<TicketsController>(TicketsController);
+    controller = testingModule.get<TicketsController>(TicketsController);
   });
 
   afterEach(() => jest.clearAllMocks());

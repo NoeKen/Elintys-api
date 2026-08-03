@@ -9,6 +9,13 @@ import { TicketsService } from '../tickets/tickets.service';
 import { EmailsService } from '../emails/emails.service';
 import { EventAccessService } from '../events/event-access.service';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -102,7 +109,7 @@ describe('PaymentsService', () => {
     mockStripeWebhooksConstructEvent.mockReset();
     mockStripeRefundsCreate.mockReset();
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         PaymentsService,
         {
@@ -132,7 +139,7 @@ describe('PaymentsService', () => {
       ],
     }).compile();
 
-    service = module.get<PaymentsService>(PaymentsService);
+    service = testingModule.get<PaymentsService>(PaymentsService);
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -333,7 +340,7 @@ describe('PaymentsService', () => {
     });
 
     it('devrait lever ServiceUnavailableException si billet payant et Stripe non configuré', async () => {
-      const module: TestingModule = await Test.createTestingModule({
+      testingModule = await Test.createTestingModule({
         providers: [
           PaymentsService,
           {
@@ -352,7 +359,7 @@ describe('PaymentsService', () => {
         ],
       }).compile();
 
-      const serviceNoStripe = module.get<PaymentsService>(PaymentsService);
+      const serviceNoStripe = testingModule.get<PaymentsService>(PaymentsService);
       ticketPurchaseModel.findById.mockReturnValue(makeChainable(mockPurchase()));
       eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
 
@@ -364,7 +371,7 @@ describe('PaymentsService', () => {
   // ── handleWebhook — Stripe guard ──
   describe('handleWebhook — Stripe guard', () => {
     it('devrait lever ServiceUnavailableException si Stripe non configuré', async () => {
-      const module: TestingModule = await Test.createTestingModule({
+      testingModule = await Test.createTestingModule({
         providers: [
           PaymentsService,
           {
@@ -383,7 +390,7 @@ describe('PaymentsService', () => {
         ],
       }).compile();
 
-      const serviceNoStripe = module.get<PaymentsService>(PaymentsService);
+      const serviceNoStripe = testingModule.get<PaymentsService>(PaymentsService);
 
       expect(() => serviceNoStripe.handleWebhook(Buffer.from('body'), 'sig'))
         .toThrow(ServiceUnavailableException);

@@ -12,6 +12,13 @@ import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { Event } from '../events/event.schema';
 import { EventAccessService } from '../events/event-access.service';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -92,7 +99,7 @@ describe('TicketsService', () => {
     ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType()));
     ticketTypeModel.find.mockReturnValue(makeChainable([mockTicketType()]));
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         TicketsService,
         { provide: getModelToken(TicketType.name), useValue: ticketTypeModel },
@@ -102,7 +109,7 @@ describe('TicketsService', () => {
       ],
     }).compile();
 
-    service = module.get<TicketsService>(TicketsService);
+    service = testingModule.get<TicketsService>(TicketsService);
   });
 
   afterEach(() => jest.clearAllMocks());

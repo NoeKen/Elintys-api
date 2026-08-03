@@ -3,6 +3,13 @@ import { BadRequestException } from '@nestjs/common';
 import { PaymentsController } from './payments.controller';
 import { PaymentsService } from './payments.service';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const mockPaymentsService = {
   createCheckoutSession: jest.fn(),
   handleWebhook:         jest.fn(),
@@ -15,12 +22,12 @@ describe('PaymentsController', () => {
   let controller: PaymentsController;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       controllers: [PaymentsController],
       providers: [{ provide: PaymentsService, useValue: mockPaymentsService }],
     }).compile();
 
-    controller = module.get<PaymentsController>(PaymentsController);
+    controller = testingModule.get<PaymentsController>(PaymentsController);
   });
 
   afterEach(() => jest.clearAllMocks());

@@ -4,6 +4,13 @@ import { EventsService } from './events.service';
 import { EventMediaService } from './event-media.service';
 import { EventAccessService } from './event-access.service';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const mockEventsService = {
   create: jest.fn(),
   findAll: jest.fn(),
@@ -27,7 +34,7 @@ describe('EventsController', () => {
   let controller: EventsController;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       controllers: [EventsController],
       providers: [
         { provide: EventsService, useValue: mockEventsService },
@@ -36,7 +43,7 @@ describe('EventsController', () => {
       ],
     }).compile();
 
-    controller = module.get<EventsController>(EventsController);
+    controller = testingModule.get<EventsController>(EventsController);
   });
 
   afterEach(() => jest.clearAllMocks());

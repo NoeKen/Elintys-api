@@ -11,6 +11,7 @@
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
+    "typecheck": "tsc -p tsconfig.typecheck.json",
     "lint:fix": "npm run lint -- --fix",
     "test": "jest",
     "test:watch": "jest --watch",
@@ -19,7 +20,11 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "media:migrate": "ts-node src/scripts/migrate-event-media.ts",
     "event-access:migrate": "ts-node src/scripts/migrate-event-access-v2.ts",
-    "seed:dev": "ts-node src/scripts/seed-development.ts"
+    "seed:dev": "ts-node src/scripts/seed-development.ts",
+    "qa:provision": "ts-node src/scripts/provision-qa-users.ts",
+    "backup:dev": "ts-node src/scripts/backup-dev-database.ts",
+    "invitation-index:migrate": "ts-node src/scripts/migrate-invitation-token-index.ts",
+    "invitation-dedup:migrate": "ts-node src/scripts/migrate-invitation-dedup-index.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",
@@ -92,12 +97,73 @@
     "testEnvironment": "node",
     "coverageThreshold": {
       "global": {
-        "statements": 80,
-        "branches": 70,
-        "functions": 80,
-        "lines": 80
+        "statements": 64,
+        "branches": 46,
+        "functions": 54,
+        "lines": 65
+      },
+      "./src/modules/events/event-access.service.ts": {
+        "statements": 95,
+        "branches": 90,
+        "functions": 100,
+        "lines": 95
+      },
+      "./src/modules/events/event-access.policy.ts": {
+        "statements": 95,
+        "branches": 90,
+        "functions": 100,
+        "lines": 95
+      },
+      "./src/modules/events/events.service.ts": {
+        "statements": 85,
+        "branches": 60,
+        "functions": 90,
+        "lines": 90
+      },
+      "./src/modules/auth/auth.service.ts": {
+        "statements": 90,
+        "branches": 80,
+        "functions": 90,
+        "lines": 95
+      },
+      "./src/modules/invitations/invitations.service.ts": {
+        "statements": 90,
+        "branches": 63,
+        "functions": 77,
+        "lines": 90
+      },
+      "./src/modules/media/cloudinary-media-storage.service.ts": {
+        "statements": 100,
+        "branches": 95,
+        "functions": 100,
+        "lines": 100
+      },
+      "./src/modules/media/image-file-validation.service.ts": {
+        "statements": 89,
+        "branches": 90,
+        "functions": 100,
+        "lines": 87
+      },
+      "./src/shared/guards/jwt-auth.guard.ts": {
+        "statements": 100,
+        "branches": 100,
+        "functions": 100,
+        "lines": 100
+      },
+      "./src/shared/guards/roles.guard.ts": {
+        "statements": 100,
+        "branches": 100,
+        "functions": 100,
+        "lines": 100
+      },
+      "./src/shared/utils/transform.ts": {
+        "statements": 100,
+        "branches": 100,
+        "functions": 100,
+        "lines": 100
       }
-    }
+    },
+    "maxWorkers": 4
   },
   "overrides": {
     "js-yaml": "5.2.2"

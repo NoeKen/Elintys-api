@@ -8,6 +8,13 @@ import { EventMediaService } from './event-media.service';
 import { EventAccessService } from './event-access.service';
 import { TicketType } from '../tickets/ticket.schema';
 
+// Ferme le module Nest après chaque test : sans cela, des handles
+// restent ouverts et Jest force la sortie du worker (finding F-011).
+let testingModule: TestingModule;
+afterEach(async () => {
+  await testingModule?.close();
+});
+
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
   ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
@@ -68,7 +75,7 @@ describe('EventsService', () => {
     eventModel.countDocuments.mockResolvedValue(1);
     eventModel.aggregate.mockResolvedValue([]);
 
-    const module: TestingModule = await Test.createTestingModule({
+    testingModule = await Test.createTestingModule({
       providers: [
         EventsService,
         { provide: getModelToken(Event.name), useValue: eventModel },
@@ -78,7 +85,7 @@ describe('EventsService', () => {
       ],
     }).compile();
 
-    service = module.get<EventsService>(EventsService);
+    service = testingModule.get<EventsService>(EventsService);
   });
 
   afterEach(() => jest.clearAllMocks());

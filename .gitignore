@@ -25,3 +25,7 @@ lerna-debug.log*
 # temp directory
 .temp
 .tmp
+backups/
+
+# Artefacts opérationnels de migration (peuvent contenir des données sensibles)
+*-rollback-*.json
