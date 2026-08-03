@@ -3,10 +3,21 @@ import { writeFile } from 'node:fs/promises';
 import mongoose from 'mongoose';
 import {
   AdmissionMode,
-  EventAccessPolicyType,
+  EventAccessPolicy,
   EventDiscoverability,
   EventVisibility,
 } from '../modules/events/event.schema';
+import {
+  LegacyAmbiguityReason,
+  mapLegacyEventAccessToV2,
+} from '../modules/events/event-access.policy';
+import {
+  ElintysEnvironment,
+  resolveElintysEnvironment,
+} from '../config/elintys-environment';
+
+/** Base de développement autorisée — toute autre base est refusée (finding F-029). */
+const REQUIRED_DEV_DATABASE = 'elintys-dev';
 
 type LegacyEvent = {
   _id: mongoose.Types.ObjectId;
@@ -20,91 +31,101 @@ type LegacyEvent = {
   accessModelVersion?: number;
 };
 
+type MigrationUpdate = {
+  accessModelVersion: number;
+  discoverability: EventDiscoverability;
+  accessPolicy: EventAccessPolicy;
+  admissionModes: AdmissionMode[];
+};
+
 type MigrationPlan = {
   eventId: mongoose.Types.ObjectId;
   legacyVisibility: EventVisibility | undefined;
-  update?: Record<string, unknown>;
-  ambiguousReason?: string;
+  update?: MigrationUpdate;
+  ambiguousReason?: LegacyAmbiguityReason;
 };
 
-function normalizedDomain(value: string): string {
-  return value.trim().toLowerCase().replace(/^@/, '');
+/**
+ * Extrait le nom de base d'une URI MongoDB.
+ * Retourne `undefined` si l'URI est invalide ou ne nomme aucune base.
+ */
+export function extractDatabaseName(mongoUri: string): string | undefined {
+  let pathname: string;
+  try {
+    pathname = new URL(mongoUri).pathname;
+  } catch {
+    return undefined;
+  }
+  const name = decodeURIComponent(pathname.replace(/^\//, '')).trim();
+  return name.length > 0 ? name : undefined;
 }
 
+/**
+ * Garde dure exécutée **avant toute connexion** (finding F-029).
+ * Refuse : environnement non-dev, URI absente/invalide, base sans nom explicite,
+ * et toute base différente de `elintys-dev` (notamment la production `elintys`).
+ */
+export function assertEventAccessMigrationAllowed(
+  elintysEnvironment: ElintysEnvironment,
+  mongoUri: string | undefined,
+): asserts mongoUri is string {
+  if (elintysEnvironment !== 'dev') {
+    throw new Error('MIGRATION_REFUSED: ELINTYS_ENV must be exactly "dev".');
+  }
+  if (!mongoUri) {
+    throw new Error('MIGRATION_REFUSED: MONGODB_URI is required.');
+  }
+  const databaseName = extractDatabaseName(mongoUri);
+  if (!databaseName) {
+    throw new Error('MIGRATION_REFUSED: MONGODB_URI must name an explicit database.');
+  }
+  if (databaseName !== REQUIRED_DEV_DATABASE) {
+    throw new Error(
+      `MIGRATION_REFUSED: database must be exactly "${REQUIRED_DEV_DATABASE}" (received "${databaseName}").`,
+    );
+  }
+}
+
+/**
+ * Plan de migration d'un document legacy.
+ * Délègue **entièrement** à `mapLegacyEventAccessToV2` (source de vérité partagée
+ * avec la normalisation runtime) : aucune logique de mapping dupliquée ici (F-027).
+ */
 export function planEventAccessMigration(event: LegacyEvent): MigrationPlan {
-  const base = { accessModelVersion: 2 };
-  if (event.visibility === EventVisibility.PUBLIC || !event.visibility) {
+  const mapping = mapLegacyEventAccessToV2(event);
+  if (mapping.status === 'ambiguous') {
     return {
       eventId: event._id,
       legacyVisibility: event.visibility,
-      update: {
-        ...base,
-        discoverability: EventDiscoverability.PUBLIC,
-        accessPolicy: { type: EventAccessPolicyType.OPEN },
-        admissionModes: [AdmissionMode.REGISTRATION_ONLY],
-      },
-    };
-  }
-  if (event.visibility === EventVisibility.INVITE_ONLY) {
-    return {
-      eventId: event._id,
-      legacyVisibility: event.visibility,
-      update: {
-        ...base,
-        discoverability: EventDiscoverability.UNLISTED,
-        accessPolicy: { type: EventAccessPolicyType.INVITATION_TOKEN },
-        admissionModes: [AdmissionMode.INVITATION],
-      },
-    };
-  }
-  if (event.accessRules?.accessCode) {
-    return {
-      eventId: event._id,
-      legacyVisibility: event.visibility,
-      ambiguousReason: 'ACCESS_CODE_MISSING_RAW_VALUE',
-    };
-  }
-  if (event.accessRules?.allowedEmailDomain) {
-    return {
-      eventId: event._id,
-      legacyVisibility: event.visibility,
-      update: {
-        ...base,
-        discoverability: EventDiscoverability.UNLISTED,
-        accessPolicy: {
-          type: EventAccessPolicyType.EMAIL_DOMAIN,
-          requiresAuthentication: true,
-          allowedDomains: [normalizedDomain(event.accessRules.allowedEmailDomain)],
-        },
-        admissionModes: [AdmissionMode.REGISTRATION_ONLY],
-      },
-    };
-  }
-  if (event.accessRules?.manualApproval) {
-    return {
-      eventId: event._id,
-      legacyVisibility: event.visibility,
-      update: {
-        ...base,
-        discoverability: EventDiscoverability.PRIVATE,
-        accessPolicy: { type: EventAccessPolicyType.MANUAL_APPROVAL, requiresAuthentication: true },
-        admissionModes: [AdmissionMode.REGISTRATION_ONLY],
-      },
+      ambiguousReason: mapping.reason,
     };
   }
   return {
     eventId: event._id,
     legacyVisibility: event.visibility,
-    ambiguousReason: 'PRIVATE_INTENT_UNDETERMINED',
+    update: { accessModelVersion: 2, ...mapping.value },
   };
 }
 
 async function main(): Promise<void> {
   const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error('MONGODB_URI is required');
+  const elintysEnvironment = resolveElintysEnvironment(
+    process.env.ELINTYS_ENV,
+    process.env.NODE_ENV ?? 'development',
+  );
+  // Garde AVANT toute connexion.
+  assertEventAccessMigrationAllowed(elintysEnvironment, uri);
+
   await mongoose.connect(uri);
-  const collection = mongoose.connection.db?.collection<LegacyEvent>('events');
-  if (!collection) throw new Error('MongoDB connection is unavailable');
+  const database = mongoose.connection.db;
+  if (!database) throw new Error('MongoDB connection is unavailable');
+  // Seconde garde : nom réel de la base après connexion.
+  if (database.databaseName !== REQUIRED_DEV_DATABASE) {
+    throw new Error(
+      `MIGRATION_REFUSED: connected database "${database.databaseName}" != "${REQUIRED_DEV_DATABASE}".`,
+    );
+  }
+  const collection = database.collection<LegacyEvent>('events');
 
   const events = await collection.find({ accessModelVersion: { $ne: 2 } }).toArray();
   const plans = events.map(planEventAccessMigration);
@@ -118,6 +139,7 @@ async function main(): Promise<void> {
   );
   const report = {
     mode: process.argv.includes('--execute') ? 'execute' : 'dry-run',
+    database: database.databaseName,
     total: events.length,
     mapping: byVisibility,
     migratable: executable.length,

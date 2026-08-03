@@ -48,6 +48,7 @@ import {
 import { EventAccessService } from './event-access.service';
 import { UpdateEventAccessConfigurationDto } from './dto/update-event-access-configuration.dto';
 import { ReviewEventAccessRequestDto, VerifyEventAccessCodeDto } from './dto/event-access.dto';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 
 @ApiTags('Events')
 @ApiBearerAuth('access-token')
@@ -117,7 +118,7 @@ export class EventsController {
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 5 } })
   verifyAccessCode(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @Body() dto: VerifyEventAccessCodeDto,
     @Req() request: Request,
   ) {
@@ -134,13 +135,13 @@ export class EventsController {
   @Post(':id/access/domain/check')
   @HttpCode(HttpStatus.OK)
   @Throttle({ default: { ttl: 60_000, limit: 10 } })
-  checkAccessDomain(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
+  checkAccessDomain(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
     return this.eventAccessService.checkDomain(id, user.sub, request.headers['x-request-id'] as string | undefined);
   }
 
   @Get(':id/access')
   getAuthorizedEvent(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
     @Req() request: Request,
   ) {
@@ -155,20 +156,20 @@ export class EventsController {
 
   @Post(':id/access/request')
   @Throttle({ default: { ttl: 10 * 60_000, limit: 3 } })
-  requestAccess(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
+  requestAccess(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
     return this.eventAccessService.requestAccess(id, user.sub, request.headers['x-request-id'] as string | undefined);
   }
 
   @Get(':id/access/requests')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
-  listAccessRequests(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  listAccessRequests(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.eventAccessService.listRequests(id, { userId: user.sub, roles: user.roles });
   }
 
   @Patch(':id/access/requests/:requestId')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   reviewAccessRequest(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @Param('requestId') requestId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: ReviewEventAccessRequestDto,
@@ -179,7 +180,7 @@ export class EventsController {
   @Put(':id/access-configuration')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   updateAccessConfiguration(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateEventAccessConfigurationDto,
   ) {
@@ -188,7 +189,7 @@ export class EventsController {
 
   @Get(':id/publish-readiness')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
-  getPublishReadiness(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  getPublishReadiness(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.eventsService.getPublishReadiness(id, user.sub);
   }
 
@@ -198,7 +199,7 @@ export class EventsController {
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId de l\'événement' })
   @ApiResponse({ status: 200, description: 'Événement trouvé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
-  findOne(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  findOne(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.eventsService.findOne(id, user.sub);
   }
 
@@ -211,7 +212,7 @@ export class EventsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   update(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateEventDto,
   ) {
@@ -227,7 +228,7 @@ export class EventsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   patch(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateEventDto,
   ) {
@@ -253,7 +254,7 @@ export class EventsController {
   })
   @ApiOperation({ summary: 'Téléverser ou remplacer la couverture' })
   uploadCover(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @UploadedFile() file?: Express.Multer.File,
   ) {
@@ -264,7 +265,7 @@ export class EventsController {
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Supprimer la couverture de l’événement' })
   deleteCover(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.eventMediaService.deleteCover(eventId, user.sub);
@@ -298,7 +299,7 @@ export class EventsController {
   })
   @ApiOperation({ summary: 'Ajouter des images à la galerie' })
   uploadGallery(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
@@ -309,7 +310,7 @@ export class EventsController {
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Supprimer une image de la galerie' })
   deleteGalleryImage(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: DeleteEventGalleryImageDto,
   ) {
@@ -329,7 +330,7 @@ export class EventsController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
-  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  remove(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.eventsService.remove(id, user.sub);
   }
 
@@ -341,7 +342,7 @@ export class EventsController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
-  publish(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  publish(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.eventsService.publish(id, user.sub);
   }
 
@@ -353,7 +354,7 @@ export class EventsController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
-  cancel(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  cancel(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.eventsService.cancel(id, user.sub);
   }
 }

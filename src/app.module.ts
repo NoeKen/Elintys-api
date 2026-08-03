@@ -4,6 +4,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import configuration from './config/configuration';
+import { THROTTLE_TIERS } from './config/throttle.config';
 
 import { AuthModule } from './modules/auth/auth.module';
 import { EventsModule } from './modules/events/events.module';
@@ -44,7 +45,15 @@ import { HealthModule } from './modules/health/health.module';
         return { uri };
       },
     }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // Tier global généreux (PUBLIC_READ). Les endpoints sensibles surchargent
+    // via @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT }) — cf. throttle.config.ts.
+    ThrottlerModule.forRoot([
+      {
+        name: 'default',
+        ttl: THROTTLE_TIERS.PUBLIC_READ.ttl,
+        limit: THROTTLE_TIERS.PUBLIC_READ.limit,
+      },
+    ]),
     EmailsModule,
     AuthModule,
     EventsModule,

@@ -1,5 +1,6 @@
 import { IsEnum, IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty } from '@nestjs/swagger';
 import { ReviewTargetType } from '../review.schema';
 
@@ -19,7 +20,7 @@ export class CreateReviewDto {
   rating!: number;
 
   @ApiProperty({ example: 'Excellent événement, organisation impeccable!', maxLength: 2000 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(2000)
   comment!: string;

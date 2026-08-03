@@ -1,5 +1,6 @@
 import { IsEmail, IsInt, IsMongoId, IsOptional, IsPhoneNumber, IsString, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class PurchaseTicketDto {
@@ -21,7 +22,7 @@ export class PurchaseTicketDto {
 
   @ApiPropertyOptional({ example: 'marie@exemple.ca', description: 'Courriel invité (achat sans compte)' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   guestEmail?: string;
 
@@ -29,7 +30,7 @@ export class PurchaseTicketDto {
   @ValidateIf(o => !!o.guestEmail)
   @IsString()
   @MaxLength(100)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   guestName?: string;
 
   @ApiPropertyOptional({ example: '+15141234567', description: 'Téléphone de l\'invité' })

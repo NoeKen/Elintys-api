@@ -1,4 +1,11 @@
-import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { FlattenMaps, Model, Types } from 'mongoose';
@@ -13,6 +20,8 @@ import { canManageEvent } from '../events/event-access.policy';
 
 @Injectable()
 export class InvitationsService {
+  private readonly logger = new Logger(InvitationsService.name);
+
   constructor(
     @InjectModel(Invitation.name)
     private readonly invitationModel: Model<InvitationDocument>,
@@ -60,11 +69,7 @@ export class InvitationsService {
         tokenPrefix: rawToken.slice(0, 8),
       });
     } catch (error: unknown) {
-      const mongoError = error as { code?: number };
-      if (mongoError?.code === 11000) {
-        throw new ConflictException(ErrorCodes.INVITATION_ALREADY_SENT);
-      }
-      throw error;
+      throw this.translateDuplicateKeyError(error);
     }
 
     const inviter = await this.userModel
@@ -132,6 +137,42 @@ export class InvitationsService {
 
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * Traduit une erreur de clé dupliquée MongoDB (finding F-028).
+   *
+   * L'ancienne implémentation transformait **toute** collision E11000 en
+   * `INVITATION_ALREADY_SENT`, ce qui masquait les défauts techniques derrière un
+   * message métier trompeur. On distingue désormais l'index en cause via
+   * `keyPattern`, et aucune valeur d'erreur Mongo (donc aucun jeton) n'est propagée.
+   */
+  private translateDuplicateKeyError(error: unknown): Error {
+    const mongoError = error as {
+      code?: number;
+      keyPattern?: Record<string, unknown>;
+      message?: string;
+    };
+    if (mongoError?.code !== 11000) {
+      return error as Error;
+    }
+
+    const keys = Object.keys(mongoError.keyPattern ?? {});
+    const isBusinessDuplicate =
+      keys.includes('invitedBy') && keys.includes('email');
+
+    if (isBusinessDuplicate) {
+      return new ConflictException(ErrorCodes.INVITATION_ALREADY_SENT);
+    }
+
+    // Collision technique (tokenHash, ou tout autre index) : jamais présentée comme
+    // un doublon métier. On journalise l'index en cause — jamais la valeur.
+    this.logger.error(
+      `INVITATION_PERSISTENCE_CONFLICT sur l'index [${keys.join(',') || 'inconnu'}]`,
+    );
+    return new InternalServerErrorException(
+      "Impossible d'enregistrer l'invitation. Veuillez réessayer.",
+    );
   }
 
   private toSafeInvitation(invitation: Record<string, unknown>): Record<string, unknown> {

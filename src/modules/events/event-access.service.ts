@@ -204,11 +204,23 @@ export class EventAccessService {
     }
   }
 
-  async listRequests(eventId: string, actor: EventActor): Promise<EventAccessRequest[]> {
+  async listRequests(eventId: string, actor: EventActor): Promise<Array<
+    Omit<EventAccessRequest, 'userId'> & {
+      userId: { _id: Types.ObjectId; fullName: string; email: string };
+    }
+  >> {
     const event = await this.eventModel.findById(eventId).lean().select('organizer');
     if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
     if (!canManageEvent(actor, event).allowed) throw new ForbiddenException('EVENT_NOT_OWNER');
-    return this.requestModel.find({ eventId: new Types.ObjectId(eventId) }).lean().select('-__v');
+    return this.requestModel
+      .find({ eventId: new Types.ObjectId(eventId) })
+      .populate<{ userId: { _id: Types.ObjectId; fullName: string; email: string } }>(
+        'userId',
+        'fullName email',
+      )
+      .sort({ requestedAt: -1 })
+      .lean()
+      .select('-__v');
   }
 
   async reviewRequest(

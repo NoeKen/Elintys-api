@@ -19,6 +19,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   EventLocationType,
@@ -38,55 +39,55 @@ export class LocationDto {
 
   @ApiPropertyOptional({ example: 'Le Belvédère', maxLength: 200 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(200)
   name?: string;
 
   @ApiPropertyOptional({ example: '1234 Rue Sainte-Catherine, Montréal, QC', maxLength: 300 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(300)
   address?: string;
 
   @ApiPropertyOptional({ example: 'Montréal', maxLength: 100 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   city?: string;
 
   @ApiPropertyOptional({ example: 'Québec', maxLength: 100 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   province?: string;
 
   @ApiPropertyOptional({ example: 'H2X 1Y4', maxLength: 20 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(20)
   postalCode?: string;
 
   @ApiPropertyOptional({ maxLength: 100 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   contactName?: string;
 
   @ApiPropertyOptional({ example: 'contact@lieu.ca' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   contactEmail?: string;
 
   @ApiPropertyOptional({ maxLength: 50 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(50)
   contactPhone?: string;
@@ -100,7 +101,7 @@ export class LocationDto {
 export class ProviderNeedDto {
   @IsString()
   @MaxLength(50)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   category!: string;
 
   @IsEnum(ProviderSelectionMode)
@@ -120,7 +121,7 @@ export class EventAccessRulesDto {
   @IsString()
   @MaxLength(200)
   @Matches(/^@?[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/)
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   allowedEmailDomain?: string;
 
   @IsOptional()
@@ -180,7 +181,7 @@ export class EventCreationProgressDto {
 
 export class CreateEventDto {
   @ApiProperty({ example: 'Gala de printemps 2025', description: 'Titre de l\'événement', maxLength: 200 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(200)
   title!: string;
@@ -192,14 +193,14 @@ export class CreateEventDto {
 
   @ApiPropertyOptional({ maxLength: 500 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(500)
   shortDescription?: string;
 
   @ApiPropertyOptional({ example: 'Un événement exceptionnel réunissant les leaders du secteur.', maxLength: 5000 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(5000)
   description?: string;

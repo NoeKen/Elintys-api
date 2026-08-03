@@ -1,4 +1,5 @@
 import { Transform, Type } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
@@ -34,7 +35,7 @@ export class QueryVenueDto {
 
   @ApiPropertyOptional({ example: 'Montréal' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   city?: string;

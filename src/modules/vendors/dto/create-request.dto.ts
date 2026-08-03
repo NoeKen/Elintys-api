@@ -1,5 +1,6 @@
 import { IsEmail, IsEnum, IsMongoId, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorRequestSource } from '../vendor.schema';
 
@@ -7,7 +8,7 @@ export class ExternalContactDto {
   @ApiProperty({ example: 'Jean Tremblay Photo' })
   @IsString()
   @MaxLength(200)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   name!: string;
 
   @ApiPropertyOptional({ example: 'jean@example.com' })
@@ -15,7 +16,7 @@ export class ExternalContactDto {
   @IsEmail()
   @IsString()
   @MaxLength(200)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   email?: string;
 
   @ApiPropertyOptional({ example: '514-555-0000' })
@@ -28,7 +29,7 @@ export class ExternalContactDto {
   @IsOptional()
   @IsString()
   @MaxLength(50)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   category?: string;
 }
 
@@ -47,7 +48,7 @@ export class CreateVendorRequestDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   message?: string;
 
   @ApiPropertyOptional()

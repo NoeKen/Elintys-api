@@ -1,15 +1,16 @@
 import { IsEmail, IsEnum, IsMongoId, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { InvitationType } from '../invitation.schema';
 
 export class CreateInvitationDto {
   @IsEmail()
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   email!: string;
 
   @IsString()
   @MaxLength(100)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   name!: string;
 
   @IsEnum(InvitationType)
@@ -18,7 +19,7 @@ export class CreateInvitationDto {
   @IsOptional()
   @IsString()
   @MaxLength(50)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   category?: string;
 
   @IsOptional()

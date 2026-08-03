@@ -1,5 +1,6 @@
 import { IsDateString, IsMongoId, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateVenueBookingDto {
@@ -19,7 +20,7 @@ export class CreateVenueBookingDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   message?: string;
 
   @ApiPropertyOptional({ description: 'Prix total négocié (CAD, en cents)', minimum: 0 })

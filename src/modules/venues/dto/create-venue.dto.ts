@@ -9,32 +9,33 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VenueType } from '../venue.schema';
 
 export class AddressDto {
   @ApiProperty({ example: '1234 Rue Sainte-Catherine Ouest', maxLength: 300 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(300)
   street!: string;
 
   @ApiProperty({ example: 'Montréal', maxLength: 100 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   city!: string;
 
   @ApiPropertyOptional({ example: 'Québec', maxLength: 50 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(50)
   province?: string;
 
   @ApiPropertyOptional({ example: 'H3G 1P9', maxLength: 10 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(10)
   postalCode?: string;
@@ -42,7 +43,7 @@ export class AddressDto {
 
 export class CreateVenueDto {
   @ApiProperty({ example: 'Salle Windsor', description: 'Nom de la salle', maxLength: 200 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(200)
   name!: string;
@@ -54,7 +55,7 @@ export class CreateVenueDto {
 
   @ApiPropertyOptional({ example: 'Salle de réception historique au cœur du centre-ville.', maxLength: 3000 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(3000)
   description?: string;
@@ -77,13 +78,13 @@ export class CreateVenueDto {
 
   @ApiPropertyOptional({ example: 'info@sallewindsor.ca' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   contactEmail?: string;
 
   @ApiPropertyOptional({ example: '514-555-9876', maxLength: 20 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(20)
   contactPhone?: string;

@@ -42,9 +42,10 @@ export class Invitation {
   })
   status!: InvitationStatus;
 
-  /** Champ legacy, lecture seulement pendant la migration. */
-  @Prop({ type: String, select: false })
-  token?: string;
+  // Le champ legacy `token` (jeton brut stocké en base) a été retiré : seul
+  // `tokenHash` fait foi (finding F-028). Les lectures `.lean()` continuent
+  // d'exclure explicitement `token` pour ne jamais exposer un éventuel document
+  // legacy résiduel d'un autre environnement.
 
   @Prop({ type: String, required: true, select: false })
   tokenHash!: string;

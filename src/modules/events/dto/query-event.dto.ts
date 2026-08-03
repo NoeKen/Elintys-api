@@ -1,5 +1,6 @@
 import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { EventStatus, EventType, EventVisibility } from '../event.schema';
 
@@ -31,7 +32,7 @@ export class QueryEventDto {
 
   @ApiPropertyOptional({ example: 'Montréal', description: 'Filtrer par ville' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   city?: string;

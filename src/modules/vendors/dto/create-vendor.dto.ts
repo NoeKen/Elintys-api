@@ -7,6 +7,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorCategory } from '../vendor.schema';
 
@@ -22,7 +23,7 @@ export class PriceRangeDto {
 
 export class CreateVendorDto {
   @ApiProperty({ example: 'Photo Lumière Montréal', description: 'Nom de l\'entreprise', maxLength: 200 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(200)
   businessName!: string;
@@ -33,7 +34,7 @@ export class CreateVendorDto {
 
   @ApiPropertyOptional({ example: 'Photographe professionnel spécialisé en événements corporatifs.', maxLength: 3000 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(3000)
   description?: string;
@@ -46,20 +47,20 @@ export class CreateVendorDto {
 
   @ApiPropertyOptional({ example: 'Montréal et banlieue', maxLength: 200 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(200)
   serviceArea?: string;
 
   @ApiPropertyOptional({ example: 'contact@photolumiere.ca' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   contactEmail?: string;
 
   @ApiPropertyOptional({ example: '514-555-0123', maxLength: 20 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(20)
   contactPhone?: string;

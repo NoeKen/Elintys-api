@@ -1,10 +1,11 @@
 import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateTicketTypeDto {
   @ApiProperty({ example: 'Billet VIP', description: 'Nom du type de billet', maxLength: 100 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   name!: string;
@@ -27,7 +28,7 @@ export class CreateTicketTypeDto {
 
   @ApiPropertyOptional({ example: 'Accès prioritaire + cocktail de bienvenue', maxLength: 500 })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(500)
   description?: string;

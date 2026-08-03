@@ -1,17 +1,18 @@
 import { IsArray, IsEmail, IsEnum, IsString, ArrayMaxSize, ArrayMinSize, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '../user.schema';
 
 export class RegisterDto {
   @ApiProperty({ example: 'Marie Tremblay', description: 'Nom complet', maxLength: 100 })
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   fullName!: string;
 
   @ApiProperty({ example: 'marie@example.com', description: 'Adresse courriel' })
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   email!: string;
 

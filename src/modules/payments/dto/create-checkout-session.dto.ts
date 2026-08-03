@@ -1,5 +1,6 @@
 import { IsEmail, IsInt, IsMongoId, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCheckoutSessionDto {
@@ -21,13 +22,13 @@ export class CreateCheckoutSessionDto {
 
   @ApiPropertyOptional({ example: 'marie@exemple.ca', description: 'Courriel invité (achat sans compte)' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   guestEmail?: string;
 
   @ApiPropertyOptional({ example: 'Marie Dupuis', description: 'Nom de l\'invité' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   guestName?: string;

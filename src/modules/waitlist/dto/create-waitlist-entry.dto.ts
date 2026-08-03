@@ -1,18 +1,19 @@
 import { Transform } from 'class-transformer';
+import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 import { WaitlistRole, WaitlistSource } from '../waitlist.schema';
 
 export class CreateWaitlistEntryDto {
   @ApiProperty({ example: 'Marie' })
-  @Transform(({ value }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MinLength(1)
   @MaxLength(50)
   firstName!: string;
 
   @ApiProperty({ example: 'marie@example.com' })
-  @Transform(({ value }) => value?.trim().toLowerCase())
+  @Transform(trimLowerValue)
   @IsEmail()
   email!: string;
 

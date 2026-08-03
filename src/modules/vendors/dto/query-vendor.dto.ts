@@ -1,5 +1,6 @@
 import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorCategory } from '../vendor.schema';
 
@@ -33,7 +34,7 @@ export class QueryVendorDto {
 
   @ApiPropertyOptional({ example: 'Montréal', description: 'Filtrer par zone de service' })
   @IsOptional()
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   @IsString()
   @MaxLength(100)
   city?: string;

@@ -56,6 +56,117 @@ export interface EventValidationError {
   field: string;
 }
 
+/** Forme d'accès V2 résolue à partir d'un document legacy. */
+export interface LegacyAccessShape {
+  discoverability: EventDiscoverability;
+  accessPolicy: EventAccessPolicy;
+  admissionModes: AdmissionMode[];
+}
+
+export type LegacyAmbiguityReason =
+  | 'ACCESS_CODE_MISSING_RAW_VALUE'
+  | 'PRIVATE_INTENT_UNDETERMINED';
+
+/**
+ * `mapped`    : intention legacy déterminée — persistable par la migration.
+ * `ambiguous` : intention indéterminable — la migration NE persiste PAS, mais
+ *               `fallback` donne le comportement runtime appliqué en attendant
+ *               (identique à l'historique, donc aucun changement de comportement).
+ */
+export type LegacyAccessMapping =
+  | { status: 'mapped'; value: LegacyAccessShape }
+  | { status: 'ambiguous'; reason: LegacyAmbiguityReason; fallback: LegacyAccessShape };
+
+type LegacyAccessSource = Pick<AccessControlledEvent, 'visibility' | 'accessRules'>;
+
+const PUBLIC_SHAPE: LegacyAccessShape = {
+  discoverability: EventDiscoverability.PUBLIC,
+  accessPolicy: { type: EventAccessPolicyType.OPEN },
+  admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+};
+
+const INVITE_ONLY_SHAPE: LegacyAccessShape = {
+  discoverability: EventDiscoverability.UNLISTED,
+  accessPolicy: { type: EventAccessPolicyType.INVITATION_TOKEN },
+  admissionModes: [AdmissionMode.INVITATION],
+};
+
+const MANUAL_APPROVAL_SHAPE: LegacyAccessShape = {
+  discoverability: EventDiscoverability.PRIVATE,
+  accessPolicy: { type: EventAccessPolicyType.MANUAL_APPROVAL, requiresAuthentication: true },
+  admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+};
+
+const REGISTRATION_REQUIRED_SHAPE: LegacyAccessShape = {
+  discoverability: EventDiscoverability.PRIVATE,
+  accessPolicy: { type: EventAccessPolicyType.REGISTRATION_REQUIRED, requiresAuthentication: true },
+  admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+};
+
+function emailDomainShape(allowedEmailDomain: string): LegacyAccessShape {
+  return {
+    discoverability: EventDiscoverability.UNLISTED,
+    accessPolicy: {
+      type: EventAccessPolicyType.EMAIL_DOMAIN,
+      requiresAuthentication: true,
+      allowedDomains: [normalizeDomain(allowedEmailDomain)],
+    },
+    admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+  };
+}
+
+/**
+ * **Source de vérité unique** du mapping legacy → Access V2 (finding F-027).
+ *
+ * Utilisée par la normalisation runtime (`normalizeLegacyEventAccess`) ET par le
+ * script de migration (`migrate-event-access-v2.ts`) : aucune logique dupliquée,
+ * donc aucune divergence possible.
+ *
+ * Priorité = **restriction la plus forte d'abord**. En particulier
+ * `manualApproval` prime sur `allowedEmailDomain` : un événement privé à
+ * approbation manuelle ne doit JAMAIS être dégradé en `unlisted + email_domain`.
+ */
+export function mapLegacyEventAccessToV2(event: LegacyAccessSource): LegacyAccessMapping {
+  if (!event.visibility || event.visibility === EventVisibility.PUBLIC) {
+    return { status: 'mapped', value: PUBLIC_SHAPE };
+  }
+  if (event.visibility === EventVisibility.INVITE_ONLY) {
+    return { status: 'mapped', value: INVITE_ONLY_SHAPE };
+  }
+
+  // visibility = private (ou valeur inconnue) : chaîne par restriction décroissante.
+  const rules = event.accessRules;
+  const restrictive: LegacyAccessShape = rules?.manualApproval
+    ? MANUAL_APPROVAL_SHAPE
+    : rules?.allowedEmailDomain
+      ? emailDomainShape(rules.allowedEmailDomain)
+      : REGISTRATION_REQUIRED_SHAPE;
+
+  // Le code d'accès brut n'est pas récupérable (seul un hash pourrait être stocké) :
+  // on refuse de persister pour ne pas perdre silencieusement l'exigence de code.
+  if (rules?.accessCode) {
+    return {
+      status: 'ambiguous',
+      reason: 'ACCESS_CODE_MISSING_RAW_VALUE',
+      fallback: restrictive,
+    };
+  }
+  if (rules?.manualApproval || rules?.allowedEmailDomain) {
+    return { status: 'mapped', value: restrictive };
+  }
+  return {
+    status: 'ambiguous',
+    reason: 'PRIVATE_INTENT_UNDETERMINED',
+    fallback: REGISTRATION_REQUIRED_SHAPE,
+  };
+}
+
+/** Résout la forme d'accès effective (mapping retenu, ou repli si ambigu). */
+export function resolveLegacyAccessShape(event: LegacyAccessSource): LegacyAccessShape {
+  const mapping = mapLegacyEventAccessToV2(event);
+  return mapping.status === 'mapped' ? mapping.value : mapping.fallback;
+}
+
 /** Compatibilité temporaire à supprimer après migration complète vers accessModelVersion=2. */
 export function normalizeLegacyEventAccess<T extends AccessControlledEvent>(event: T): T & {
   discoverability: EventDiscoverability;
@@ -65,19 +176,7 @@ export function normalizeLegacyEventAccess<T extends AccessControlledEvent>(even
   if (event.discoverability && event.accessPolicy && event.admissionModes?.length) {
     return event as T & { discoverability: EventDiscoverability; accessPolicy: EventAccessPolicy; admissionModes: AdmissionMode[] };
   }
-  if (event.visibility === EventVisibility.INVITE_ONLY) {
-    return { ...event, discoverability: EventDiscoverability.UNLISTED, accessPolicy: { type: EventAccessPolicyType.INVITATION_TOKEN }, admissionModes: [AdmissionMode.INVITATION] };
-  }
-  if (event.visibility === EventVisibility.PRIVATE) {
-    if (event.accessRules?.manualApproval) {
-      return { ...event, discoverability: EventDiscoverability.PRIVATE, accessPolicy: { type: EventAccessPolicyType.MANUAL_APPROVAL, requiresAuthentication: true }, admissionModes: [AdmissionMode.REGISTRATION_ONLY] };
-    }
-    if (event.accessRules?.allowedEmailDomain) {
-      return { ...event, discoverability: EventDiscoverability.UNLISTED, accessPolicy: { type: EventAccessPolicyType.EMAIL_DOMAIN, requiresAuthentication: true, allowedDomains: [normalizeDomain(event.accessRules.allowedEmailDomain)] }, admissionModes: [AdmissionMode.REGISTRATION_ONLY] };
-    }
-    return { ...event, discoverability: EventDiscoverability.PRIVATE, accessPolicy: { type: EventAccessPolicyType.REGISTRATION_REQUIRED, requiresAuthentication: true }, admissionModes: [AdmissionMode.REGISTRATION_ONLY] };
-  }
-  return { ...event, discoverability: EventDiscoverability.PUBLIC, accessPolicy: { type: EventAccessPolicyType.OPEN }, admissionModes: [AdmissionMode.REGISTRATION_ONLY] };
+  return { ...event, ...resolveLegacyAccessShape(event) };
 }
 
 export function normalizeDomain(domain: string): string {

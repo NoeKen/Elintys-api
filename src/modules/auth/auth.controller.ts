@@ -12,7 +12,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Throttle } from '@nestjs/throttler';
 import { CookieOptions, Request, Response } from 'express';
+import { THROTTLE_TIERS } from '../../config/throttle.config';
 import { ApiTags, ApiOperation, ApiResponse, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -62,6 +64,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Créer un nouveau compte' })
@@ -79,6 +82,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Se connecter et obtenir un access token' })
@@ -161,6 +165,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: THROTTLE_TIERS.FORGOT_PASSWORD })
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Demander un lien de réinitialisation de mot de passe' })
@@ -172,6 +177,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Réinitialiser le mot de passe avec le token reçu par courriel' })
@@ -184,6 +190,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Vérifier l'adresse courriel avec le token reçu" })
@@ -196,6 +203,7 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
   @Post('resend-verification')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Renvoyer le courriel de vérification d'adresse" })

@@ -1,5 +1,6 @@
 import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { VendorRequestStatus } from '../vendor.schema';
 
@@ -12,6 +13,6 @@ export class RespondVendorRequestDto {
   @IsOptional()
   @IsString()
   @MaxLength(500)
-  @Transform(({ value }: { value: string }) => value?.trim())
+  @Transform(trimValue)
   responseMessage?: string;
 }
