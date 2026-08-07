@@ -1,4 +1,5 @@
 import { NestFactory, Reflector } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -17,7 +18,7 @@ import {
 type CorsOriginCallback = (error: Error | null, allow?: boolean) => void;
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, {
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     rawBody: true,
   });
 
@@ -62,6 +63,13 @@ async function bootstrap(): Promise<void> {
     credentials: true,
     exposedHeaders: ['x-request-id'],
   });
+
+  // Résolution de l'IP réelle derrière le proxy de la plateforme. Sans cela,
+  // `req.ip` vaut l'adresse du proxy et *tous* les visiteurs partagent une
+  // seule clé de rate-limiting (F-019). Un nombre de sauts est utilisé plutôt
+  // que `true` : un `X-Forwarded-For` forgé par le client n'est jamais retenu.
+  const trustedProxyHops = configService.get<number>('trustedProxyHops') ?? 0;
+  app.set('trust proxy', trustedProxyHops);
 
   app.setGlobalPrefix('api/v1');
 

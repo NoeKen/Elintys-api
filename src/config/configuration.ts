@@ -14,6 +14,23 @@ export default () => {
     port: parseInt(process.env.PORT ?? '3001', 10),
     nodeEnv,
     elintysEnv,
+    /**
+     * Nombre de proxys de confiance devant l'API.
+     *
+     * Express n'accorde aucune confiance à `X-Forwarded-For` par défaut :
+     * `req.ip` vaut alors l'adresse de la socket, c'est-à-dire celle du proxy
+     * de la plateforme. Tous les visiteurs partagent alors une seule et même
+     * clé de rate-limiting.
+     *
+     * La valeur est un **nombre de sauts**, jamais `true` : Express retient
+     * l'adresse observée par le proxy le plus proche de nous, si bien qu'un
+     * en-tête forgé par le client reste plus à gauche dans la chaîne et n'est
+     * jamais retenu.
+     */
+    trustedProxyHops: parseInt(
+      process.env.TRUSTED_PROXY_HOPS ?? (nodeEnv === 'production' ? '1' : '0'),
+      10,
+    ),
     jwt: {
       secret: process.env.JWT_SECRET,
       expiresIn: process.env.JWT_EXPIRES_IN ?? '15m',
