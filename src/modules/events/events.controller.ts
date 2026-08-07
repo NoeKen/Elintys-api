@@ -49,6 +49,7 @@ import { EventAccessService } from './event-access.service';
 import { UpdateEventAccessConfigurationDto } from './dto/update-event-access-configuration.dto';
 import { ReviewEventAccessRequestDto, VerifyEventAccessCodeDto } from './dto/event-access.dto';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
+import { THROTTLE_TIERS } from '../../config/throttle.config';
 
 @ApiTags('Events')
 @ApiBearerAuth('access-token')
@@ -116,7 +117,7 @@ export class EventsController {
   @Public()
   @Post(':id/access/code/verify')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Throttle({ default: THROTTLE_TIERS.ACCESS_CODE })
   verifyAccessCode(
     @Param('id', ParseObjectIdPipe) id: string,
     @Body() dto: VerifyEventAccessCodeDto,
@@ -127,14 +128,14 @@ export class EventsController {
 
   @Public()
   @Get('access/:token')
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Throttle({ default: THROTTLE_TIERS.ACCESS_CODE })
   resolveAccessGrant(@Param('token') token: string) {
     return this.eventAccessService.resolveAccessGrant(token);
   }
 
   @Post(':id/access/domain/check')
   @HttpCode(HttpStatus.OK)
-  @Throttle({ default: { ttl: 60_000, limit: 10 } })
+  @Throttle({ default: THROTTLE_TIERS.ACCESS_CODE })
   checkAccessDomain(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload, @Req() request: Request) {
     return this.eventAccessService.checkDomain(id, user.sub, request.headers['x-request-id'] as string | undefined);
   }
@@ -237,7 +238,7 @@ export class EventsController {
 
   @Post(':eventId/cover')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
-  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @Throttle({ default: THROTTLE_TIERS.UPLOAD })
   @UseInterceptors(
     FileInterceptor('file', {
       storage: memoryStorage(),
@@ -273,7 +274,7 @@ export class EventsController {
 
   @Post(':eventId/gallery')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
-  @Throttle({ default: { ttl: 60_000, limit: 20 } })
+  @Throttle({ default: THROTTLE_TIERS.UPLOAD })
   @UseInterceptors(
     FilesInterceptor('files', MEDIA_MAX_GALLERY_IMAGES, {
       storage: memoryStorage(),

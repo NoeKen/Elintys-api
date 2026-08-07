@@ -4,6 +4,7 @@ import { CreateInvitationDto } from './dto/create-invitation.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Throttle } from '@nestjs/throttler';
+import { THROTTLE_TIERS } from '../../config/throttle.config';
 
 @Controller('invitations')
 export class InvitationsController {
@@ -24,7 +25,7 @@ export class InvitationsController {
 
   @Public()
   @Post('accept/:token')
-  @Throttle({ default: { ttl: 60_000, limit: 5 } })
+  @Throttle({ default: THROTTLE_TIERS.INVITATION_ACCEPT })
   accept(@Param('token') token: string) {
     return this.invitationsService.acceptInvitation(token);
   }

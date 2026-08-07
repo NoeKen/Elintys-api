@@ -1,10 +1,16 @@
 import { Controller, Get, Query } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { DiscoveryService } from './discovery.service';
 import { Public } from '../../shared/decorators/public.decorator';
+import { THROTTLE_TIERS } from '../../config/throttle.config';
 
 @ApiTags('Discovery')
 @Public()
+// Recherche et filtres : plus coûteux qu'une lecture de fiche, donc plafond
+// intermédiaire — nettement au-dessus d'une navigation normale, en dessous du
+// catalogue.
+@Throttle({ default: THROTTLE_TIERS.PUBLIC_SEARCH })
 @Controller('discovery')
 export class DiscoveryController {
   constructor(private readonly discoveryService: DiscoveryService) {}

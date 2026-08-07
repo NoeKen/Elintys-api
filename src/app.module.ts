@@ -2,7 +2,8 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { ThrottlerModule } from '@nestjs/throttler';
+import { ElintysThrottlerGuard } from './shared/guards/elintys-throttler.guard';
 import configuration from './config/configuration';
 import { THROTTLE_TIERS } from './config/throttle.config';
 
@@ -71,6 +72,6 @@ import { HealthModule } from './modules/health/health.module';
     WaitlistModule,
     HealthModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [{ provide: APP_GUARD, useClass: ElintysThrottlerGuard }],
 })
 export class AppModule {}
