@@ -20,6 +20,10 @@ const mockEventsService = {
   remove: jest.fn(),
   publish: jest.fn(),
   cancel: jest.fn(),
+  findByOrganizer: jest.fn(),
+  getOrganizerSummary: jest.fn(),
+  archive: jest.fn(),
+  restore: jest.fn(),
 };
 const mockEventMediaService = {
   uploadCover: jest.fn(),
@@ -82,6 +86,25 @@ describe('EventsController', () => {
       await controller.getCategoryCounts();
 
       expect(mockEventsService.getPublicCategoryCounts).toHaveBeenCalled();
+    });
+  });
+
+  describe('surfaces organisateur', () => {
+    it('dérive la liste et le résumé de user.sub', async () => {
+      const query = { page: 2, limit: 12 };
+      await controller.findMyEvents(mockUser as never, query as never);
+      await controller.getMyEventsSummary(mockUser as never);
+
+      expect(mockEventsService.findByOrganizer).toHaveBeenCalledWith(mockUser.sub, query);
+      expect(mockEventsService.getOrganizerSummary).toHaveBeenCalledWith(mockUser.sub);
+    });
+
+    it('dérive archive et restauration de user.sub', async () => {
+      await controller.archive('event-id', mockUser as never);
+      await controller.restore('event-id', mockUser as never);
+
+      expect(mockEventsService.archive).toHaveBeenCalledWith('event-id', mockUser.sub);
+      expect(mockEventsService.restore).toHaveBeenCalledWith('event-id', mockUser.sub);
     });
   });
 

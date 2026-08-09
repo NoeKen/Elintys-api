@@ -3,10 +3,23 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventsService } from './events.service';
-import { Event, EventStatus, EventType } from './event.schema';
+import {
+  Event,
+  EventAccessPolicyType,
+  EventDiscoverability,
+  EventStatus,
+  EventType,
+} from './event.schema';
 import { EventMediaService } from './event-media.service';
 import { EventAccessService } from './event-access.service';
 import { TicketType } from '../tickets/ticket.schema';
+import { EventAccessRequest } from './event-access-request.schema';
+import {
+  OrganizerEventDate,
+  OrganizerEventProgress,
+  OrganizerEventSort,
+  OrganizerEventView,
+} from './dto/query-event.dto';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -36,7 +49,11 @@ describe('EventsService', () => {
     toSafeEvent: jest.fn((event: unknown) => event),
     toPublicEvent: jest.fn((event: unknown) => event),
   };
-  const ticketTypeModel = { countDocuments: jest.fn().mockResolvedValue(0) };
+  const ticketTypeModel = {
+    countDocuments: jest.fn().mockResolvedValue(0),
+    aggregate: jest.fn().mockResolvedValue([]),
+  };
+  const accessRequestModel = { aggregate: jest.fn().mockResolvedValue([]) };
 
   const organizerId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
@@ -71,6 +88,7 @@ describe('EventsService', () => {
 
     eventModel.find.mockReturnValue(makeChainable([mockEvent()]));
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
+    eventModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockEvent()));
     eventModel.findOne.mockReturnValue(makeChainable(null));
     eventModel.countDocuments.mockResolvedValue(1);
     eventModel.aggregate.mockResolvedValue([]);
@@ -80,6 +98,7 @@ describe('EventsService', () => {
         EventsService,
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(TicketType.name), useValue: ticketTypeModel },
+        { provide: getModelToken(EventAccessRequest.name), useValue: accessRequestModel },
         { provide: EventMediaService, useValue: eventMediaService },
         { provide: EventAccessService, useValue: eventAccessService },
       ],
@@ -256,6 +275,19 @@ describe('EventsService', () => {
 
       expect(result.status).toBe(EventStatus.PUBLISHED);
     });
+
+    it('retourne la readiness au propriétaire et protège les autres utilisateurs', async () => {
+      ticketTypeModel.countDocuments
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(0);
+
+      await expect(service.getPublishReadiness(eventId, organizerId)).resolves.toEqual(
+        expect.objectContaining({ publishable: true }),
+      );
+      await expect(service.getPublishReadiness(eventId, 'autre-user-id')).rejects.toThrow(ForbiddenException);
+      eventModel.findById.mockReturnValue(makeChainable(null));
+      await expect(service.getPublishReadiness('id-inexistant', organizerId)).rejects.toThrow(NotFoundException);
+    });
   });
 
   // ── cancel ──
@@ -371,7 +403,165 @@ describe('EventsService', () => {
 
       await service.findByOrganizer(organizerId, { page: 2, limit: 20 });
 
-      expect(chain['sort']).toHaveBeenCalledWith({ createdAt: -1, _id: -1 });
+      expect(chain['sort']).toHaveBeenCalledWith({ updatedAt: -1, _id: -1 });
+    });
+
+    it('applique recherche, vue, progression et tri côté serveur', async () => {
+      const chain = makeChainable([mockEvent()]);
+      eventModel.find.mockReturnValue(chain);
+
+      await service.findByOrganizer(organizerId, {
+        page: 1,
+        limit: 12,
+        view: OrganizerEventView.DRAFT,
+        search: 'Montréal',
+        progress: OrganizerEventProgress.INCOMPLETE,
+        sort: OrganizerEventSort.TITLE_ASC,
+      });
+
+      expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        organizer: expect.any(Types.ObjectId),
+        archivedAt: null,
+        status: EventStatus.DRAFT,
+        $and: expect.arrayContaining([
+          expect.objectContaining({ $or: expect.any(Array) }),
+          expect.objectContaining({ $expr: expect.any(Object) }),
+        ]),
+      }));
+      expect(chain['sort']).toHaveBeenCalledWith({ title: 1, _id: 1 });
+    });
+
+    it('compose les vues, filtres d’accès, dates et tris supportés', async () => {
+      const chain = makeChainable([mockEvent()]);
+      eventModel.find.mockReturnValue(chain);
+
+      await service.findByOrganizer(organizerId, {
+        view: OrganizerEventView.PUBLISHED,
+        eventType: EventType.GALA,
+        discoverability: EventDiscoverability.PUBLIC,
+        accessPolicy: EventAccessPolicyType.OPEN,
+        progress: OrganizerEventProgress.COMPLETE,
+        date: OrganizerEventDate.UPCOMING,
+        sort: OrganizerEventSort.DATE_ASC,
+      });
+      expect(eventModel.find).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: EventStatus.PUBLISHED,
+        eventType: EventType.GALA,
+        discoverability: 'public',
+        'accessPolicy.type': 'open',
+        startDate: expect.objectContaining({ $gte: expect.any(Date) }),
+      }));
+      expect(chain['sort']).toHaveBeenLastCalledWith({ startDate: 1, _id: 1 });
+
+      await service.findByOrganizer(organizerId, {
+        view: OrganizerEventView.COMPLETED,
+        status: EventStatus.CANCELLED,
+        date: OrganizerEventDate.PAST,
+      });
+      expect(eventModel.find).toHaveBeenLastCalledWith(expect.objectContaining({
+        status: EventStatus.CANCELLED,
+        startDate: expect.objectContaining({ $lt: expect.any(Date) }),
+      }));
+
+      await service.findByOrganizer(organizerId, {
+        view: OrganizerEventView.ARCHIVED,
+        date: OrganizerEventDate.UNDATED,
+      });
+      expect(eventModel.find).toHaveBeenLastCalledWith(expect.objectContaining({
+        archivedAt: { $ne: null },
+        $and: expect.arrayContaining([expect.objectContaining({ $or: expect.any(Array) })]),
+      }));
+    });
+
+    it('retourne uniquement les brouillons réellement publiables dans la vue À publier', async () => {
+      eventModel.find.mockReturnValue(makeChainable([
+        mockEvent({ accessModelVersion: 2 }),
+        mockEvent({ _id: new Types.ObjectId(), eventType: undefined, accessModelVersion: 2 }),
+      ]));
+
+      const result = await service.findByOrganizer(organizerId, {
+        view: OrganizerEventView.READY,
+        page: 1,
+        limit: 10,
+      });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].readiness.publishable).toBe(true);
+      expect(result.total).toBe(1);
+    });
+  });
+
+  describe('dashboard organisateur', () => {
+    it('calcule un résumé borné depuis les événements du propriétaire', async () => {
+      const summary = await service.getOrganizerSummary(organizerId);
+
+      expect(summary.metrics).toEqual({
+        totalEvents: 1,
+        activeEvents: 1,
+        upcomingEvents: 1,
+        draftEvents: 1,
+        pendingActions: 1,
+      });
+      expect(summary.upcoming).toHaveLength(1);
+      expect(summary.actions).toHaveLength(1);
+      expect(summary.activityAvailable).toBe(false);
+      expect(eventModel.countDocuments).toHaveBeenCalledWith(expect.objectContaining({
+        organizer: expect.any(Types.ObjectId),
+        archivedAt: null,
+      }));
+    });
+
+    it('priorise les demandes d’accès et agrège les inventaires sans N+1', async () => {
+      const requestEventId = new Types.ObjectId();
+      const requestEvent = mockEvent({
+        _id: requestEventId,
+        creationProgress: { completedSteps: [1, 2, 3] },
+      });
+      accessRequestModel.aggregate
+        .mockResolvedValueOnce([{ _id: requestEventId, requestCount: 2, event: requestEvent }])
+        .mockResolvedValue([{ _id: requestEventId, count: 2 }]);
+      ticketTypeModel.aggregate.mockResolvedValue([
+        { _id: requestEventId, freeTicketTypes: 1, paidTicketTypes: 0 },
+      ]);
+
+      const summary = await service.getOrganizerSummary(organizerId);
+
+      expect(summary.actions[0]).toEqual(expect.objectContaining({
+        code: 'REVIEW_ACCESS_REQUESTS',
+        priority: 'high',
+        requestCount: 2,
+        progress: 50,
+      }));
+      expect(ticketTypeModel.aggregate).toHaveBeenCalledTimes(3);
+      expect(accessRequestModel.aggregate).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe('archive', () => {
+    it('archive puis restaure uniquement un événement possédé', async () => {
+      await service.archive(eventId, organizerId);
+      expect(eventModel.findByIdAndUpdate).toHaveBeenCalledWith(
+        eventId,
+        { archivedAt: expect.any(Date) },
+        { new: true, runValidators: true },
+      );
+
+      await service.restore(eventId, organizerId);
+      expect(eventModel.findByIdAndUpdate).toHaveBeenLastCalledWith(
+        eventId,
+        { archivedAt: null },
+        { new: true, runValidators: true },
+      );
+    });
+
+    it('refuse l’archive d’un événement appartenant à un tiers', async () => {
+      await expect(service.archive(eventId, 'autre-user-id')).rejects.toThrow(ForbiddenException);
+      expect(eventModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuse l’archive d’un événement inexistant', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(null));
+      await expect(service.archive('id-inexistant', organizerId)).rejects.toThrow(NotFoundException);
     });
   });
 });
