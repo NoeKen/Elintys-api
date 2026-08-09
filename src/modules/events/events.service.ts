@@ -19,14 +19,31 @@ import {
 } from './event.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
-import { QueryEventDto } from './dto/query-event.dto';
+import {
+  OrganizerEventDate,
+  OrganizerEventProgress,
+  OrganizerEventSort,
+  OrganizerEventView,
+  QueryEventDto,
+} from './dto/query-event.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EventMediaService } from './event-media.service';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
 import { EventAccessService } from './event-access.service';
-import { normalizeLegacyEventAccess, validateEventAccessConfiguration, validateEventPublishability } from './event-access.policy';
+import {
+  canManageEvent,
+  normalizeLegacyEventAccess,
+  PublishabilityResult,
+  validateEventAccessConfiguration,
+  validateEventPublishability,
+} from './event-access.policy';
 import { TicketType, TicketTypeDocument } from '../tickets/ticket.schema';
+import {
+  EventAccessRequest,
+  EventAccessRequestDocument,
+  EventAccessRequestStatus,
+} from './event-access-request.schema';
 
 /**
  * Tri stable obligatoire sur toute requête paginée : sans ordre explicite,
@@ -34,12 +51,52 @@ import { TicketType, TicketTypeDocument } from '../tickets/ticket.schema';
  * ou dupliquer des documents d'une page à l'autre. Le `_id` sert de départage.
  */
 const PAGINATION_SORT = { createdAt: -1, _id: -1 } as const;
+const ORGANIZER_SCAN_BATCH_SIZE = 100;
+const UPCOMING_WINDOW_DAYS = 30;
+
+export type OrganizerActionCode =
+  | 'REVIEW_ACCESS_REQUESTS'
+  | 'COMPLETE_INFORMATION'
+  | 'COMPLETE_SCHEDULE'
+  | 'ADD_VENUE'
+  | 'ADD_COVER'
+  | 'CONFIGURE_ACCESS'
+  | 'CONFIGURE_TICKETS'
+  | 'CONTINUE_CREATION'
+  | 'PUBLISH_EVENT';
+
+export interface OrganizerEventListItem extends Event {
+  readiness: PublishabilityResult;
+  pendingAccessRequests: number;
+}
+
+export interface OrganizerDashboardAction {
+  code: OrganizerActionCode;
+  priority: 'high' | 'medium' | 'low';
+  event: OrganizerEventListItem;
+  progress: number;
+  requestCount?: number;
+}
+
+export interface OrganizerDashboardSummary {
+  metrics: {
+    totalEvents: number;
+    activeEvents: number;
+    upcomingEvents: number;
+    draftEvents: number;
+    pendingActions: number;
+  };
+  actions: OrganizerDashboardAction[];
+  upcoming: OrganizerEventListItem[];
+  activityAvailable: false;
+}
 
 @Injectable()
 export class EventsService {
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
     @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
+    @InjectModel(EventAccessRequest.name) private readonly accessRequestModel: Model<EventAccessRequestDocument>,
     private readonly eventMediaService: EventMediaService,
     private readonly eventAccessService: EventAccessService,
   ) {}
@@ -94,6 +151,7 @@ export class EventsService {
 
     const filter: Record<string, unknown> = {
       status: EventStatus.PUBLISHED,
+      archivedAt: null,
       $or: [
         { discoverability: EventDiscoverability.PUBLIC },
         { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
@@ -126,6 +184,7 @@ export class EventsService {
         { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
       ],
       eventType: { $exists: true, $ne: null },
+      archivedAt: null,
     };
     const [groups, total] = await Promise.all([
       this.eventModel.aggregate<{ _id: string; count: number }>([
@@ -135,6 +194,7 @@ export class EventsService {
       ]),
       this.eventModel.countDocuments({
         status: EventStatus.PUBLISHED,
+        archivedAt: null,
         $or: [
           { discoverability: EventDiscoverability.PUBLIC },
           { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
@@ -211,6 +271,7 @@ export class EventsService {
     const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (event.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    if (event.archivedAt) throw new ConflictException('EVENT_ARCHIVED');
     const readiness = await this.getPublishReadinessForEvent(event);
     if (!readiness.publishable) {
       throw new ConflictException({ code: 'EVENT_NOT_PUBLISHABLE', ...readiness });
@@ -242,6 +303,7 @@ export class EventsService {
       .findOne({
         slug,
         status: EventStatus.PUBLISHED,
+        archivedAt: null,
         $or: [
           { discoverability: { $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED] } },
           { accessModelVersion: { $exists: false }, visibility: { $in: [EventVisibility.PUBLIC, EventVisibility.INVITE_ONLY] } },
@@ -253,15 +315,271 @@ export class EventsService {
     return this.eventAccessService.toPublicEvent(normalizeLegacyEventAccess(event));
   }
 
-  async findByOrganizer(organizerId: string, query: QueryEventDto): Promise<PaginatedResult<Event>> {
-    const { page = 1, limit = 20, status } = query;
+  async findByOrganizer(
+    organizerId: string,
+    query: QueryEventDto,
+  ): Promise<PaginatedResult<OrganizerEventListItem>> {
+    const { page = 1, limit = 12 } = query;
+    const filter = this.buildOrganizerFilter(organizerId, query);
+    const sort = this.getOrganizerSort(query.sort);
+
+    if (query.view === OrganizerEventView.READY) {
+      return this.findReadyByOrganizer(filter, sort, page, limit);
+    }
+
     const skip = (page - 1) * limit;
-    const filter: Record<string, unknown> = { organizer: new Types.ObjectId(organizerId) };
-    if (status) filter['status'] = status;
     const [data, total] = await Promise.all([
-      this.eventModel.find(filter).sort(PAGINATION_SORT).skip(skip).limit(limit).lean().select('-__v'),
+      this.eventModel
+        .find(filter)
+        .sort(sort)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .select('+accessPolicy.codeHash -__v'),
       this.eventModel.countDocuments(filter),
     ]);
-    return { data: data.map((event) => this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(event))), total, page, limit };
+    return {
+      data: await this.enrichOrganizerEvents(data as unknown as Event[]),
+      total,
+      page,
+      limit,
+    };
+  }
+
+  async getOrganizerSummary(organizerId: string): Promise<OrganizerDashboardSummary> {
+    const organizer = new Types.ObjectId(organizerId);
+    const now = new Date();
+    const upcomingEnd = new Date(now.getTime() + UPCOMING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const visibleFilter = { organizer, archivedAt: null };
+    const upcomingFilter = {
+      ...visibleFilter,
+      status: { $nin: [EventStatus.CANCELLED, EventStatus.COMPLETED] },
+      startDate: { $gte: now, $lte: upcomingEnd },
+    };
+
+    const [totalEvents, activeEvents, upcomingEvents, draftEvents, upcoming, draftCandidates, requestGroups] = await Promise.all([
+      this.eventModel.countDocuments(visibleFilter),
+      this.eventModel.countDocuments({
+        ...visibleFilter,
+        status: { $nin: [EventStatus.CANCELLED, EventStatus.COMPLETED] },
+      }),
+      this.eventModel.countDocuments(upcomingFilter),
+      this.eventModel.countDocuments({ ...visibleFilter, status: EventStatus.DRAFT }),
+      this.eventModel
+        .find(upcomingFilter)
+        .sort({ startDate: 1, _id: 1 })
+        .limit(5)
+        .lean()
+        .select('+accessPolicy.codeHash -__v'),
+      this.eventModel
+        .find({ ...visibleFilter, status: EventStatus.DRAFT })
+        .sort({ updatedAt: -1, _id: -1 })
+        .limit(8)
+        .lean()
+        .select('+accessPolicy.codeHash -__v'),
+      this.accessRequestModel.aggregate<{
+        _id: Types.ObjectId;
+        requestCount: number;
+        event: Event;
+      }>([
+        { $match: { status: EventAccessRequestStatus.PENDING } },
+        { $lookup: { from: 'events', localField: 'eventId', foreignField: '_id', as: 'event' } },
+        { $unwind: '$event' },
+        { $match: { 'event.organizer': organizer, 'event.archivedAt': null } },
+        { $group: { _id: '$eventId', requestCount: { $sum: 1 }, event: { $first: '$event' } } },
+        { $sort: { requestCount: -1, _id: 1 } },
+      ]),
+    ]);
+
+    const [safeUpcoming, safeDrafts, safeRequestEvents] = await Promise.all([
+      this.enrichOrganizerEvents(upcoming as unknown as Event[]),
+      this.enrichOrganizerEvents(draftCandidates as unknown as Event[]),
+      this.enrichOrganizerEvents(requestGroups.map((group) => group.event)),
+    ]);
+
+    const requestActions = requestGroups.map((group, index): OrganizerDashboardAction => ({
+      code: 'REVIEW_ACCESS_REQUESTS',
+      priority: 'high',
+      event: safeRequestEvents[index],
+      progress: this.getProgress(safeRequestEvents[index]),
+      requestCount: group.requestCount,
+    }));
+    const draftActions = safeDrafts.map((event) => this.getDraftAction(event));
+    const actions = [...requestActions, ...draftActions]
+      .sort((left, right) => this.priorityRank(left.priority) - this.priorityRank(right.priority))
+      .slice(0, 4);
+
+    return {
+      metrics: {
+        totalEvents,
+        activeEvents,
+        upcomingEvents,
+        draftEvents,
+        pendingActions: draftEvents + requestGroups.length,
+      },
+      actions,
+      upcoming: safeUpcoming,
+      activityAvailable: false,
+    };
+  }
+
+  async archive(id: string, organizerId: string): Promise<Event> {
+    return this.setArchivedAt(id, organizerId, new Date());
+  }
+
+  async restore(id: string, organizerId: string): Promise<Event> {
+    return this.setArchivedAt(id, organizerId, null);
+  }
+
+  private async setArchivedAt(id: string, organizerId: string, archivedAt: Date | null): Promise<Event> {
+    const event = await this.eventModel.findById(id).lean().select('organizer');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId: organizerId }, event).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    const updated = await this.eventModel
+      .findByIdAndUpdate(id, { archivedAt }, { new: true, runValidators: true })
+      .lean()
+      .select('-__v');
+    return this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(updated!));
+  }
+
+  private buildOrganizerFilter(organizerId: string, query: QueryEventDto): Record<string, unknown> {
+    const filter: Record<string, unknown> = { organizer: new Types.ObjectId(organizerId) };
+    const conditions: Record<string, unknown>[] = [];
+    const view = query.view ?? OrganizerEventView.ALL;
+
+    filter.archivedAt = view === OrganizerEventView.ARCHIVED ? { $ne: null } : null;
+    if (view === OrganizerEventView.DRAFT || view === OrganizerEventView.READY) filter.status = EventStatus.DRAFT;
+    if (view === OrganizerEventView.PUBLISHED) filter.status = EventStatus.PUBLISHED;
+    if (view === OrganizerEventView.COMPLETED) filter.status = EventStatus.COMPLETED;
+    if (query.status) filter.status = query.status;
+    if (query.eventType) filter.eventType = query.eventType;
+    if (query.discoverability) filter.discoverability = query.discoverability;
+    if (query.accessPolicy) filter['accessPolicy.type'] = query.accessPolicy;
+
+    if (query.search) {
+      const expression = { $regex: escapeRegExp(query.search), $options: 'i' };
+      conditions.push({
+        $or: [
+          { title: expression },
+          { eventType: expression },
+          { 'location.name': expression },
+          { 'location.city': expression },
+        ],
+      });
+    }
+    if (query.progress) {
+      const size = { $size: { $ifNull: ['$creationProgress.completedSteps', []] } };
+      conditions.push({ $expr: query.progress === OrganizerEventProgress.COMPLETE ? { $gte: [size, 6] } : { $lt: [size, 6] } });
+    }
+    if (query.date === OrganizerEventDate.UPCOMING) filter.startDate = { $gte: new Date() };
+    if (query.date === OrganizerEventDate.PAST) filter.startDate = { $lt: new Date() };
+    if (query.date === OrganizerEventDate.UNDATED) conditions.push({ $or: [{ startDate: null }, { startDate: { $exists: false } }] });
+    if (conditions.length) filter.$and = conditions;
+    return filter;
+  }
+
+  private getOrganizerSort(sort = OrganizerEventSort.UPDATED_DESC): Record<string, 1 | -1> {
+    if (sort === OrganizerEventSort.DATE_ASC) return { startDate: 1, _id: 1 };
+    if (sort === OrganizerEventSort.TITLE_ASC) return { title: 1, _id: 1 };
+    return { updatedAt: -1, _id: -1 };
+  }
+
+  private async findReadyByOrganizer(
+    filter: Record<string, unknown>,
+    sort: Record<string, 1 | -1>,
+    page: number,
+    limit: number,
+  ): Promise<PaginatedResult<OrganizerEventListItem>> {
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const data: OrganizerEventListItem[] = [];
+    let total = 0;
+    let offset = 0;
+
+    while (true) {
+      const candidates = await this.eventModel
+        .find(filter)
+        .sort(sort)
+        .skip(offset)
+        .limit(ORGANIZER_SCAN_BATCH_SIZE)
+        .lean()
+        .select('+accessPolicy.codeHash -__v');
+      if (candidates.length === 0) break;
+      const enriched = await this.enrichOrganizerEvents(candidates as unknown as Event[]);
+      for (const event of enriched) {
+        if (!event.readiness.publishable) continue;
+        if (total >= start && total < end) data.push(event);
+        total += 1;
+      }
+      offset += candidates.length;
+      if (candidates.length < ORGANIZER_SCAN_BATCH_SIZE) break;
+    }
+
+    return { data, total, page, limit };
+  }
+
+  private async enrichOrganizerEvents(events: Event[]): Promise<OrganizerEventListItem[]> {
+    if (events.length === 0) return [];
+    const ids = events.map((event) => (event as Event & { _id: Types.ObjectId })._id);
+    const [ticketGroups, requestGroups] = await Promise.all([
+      this.ticketTypeModel.aggregate<{
+        _id: Types.ObjectId;
+        freeTicketTypes: number;
+        paidTicketTypes: number;
+      }>([
+        { $match: { event: { $in: ids } } },
+        {
+          $group: {
+            _id: '$event',
+            freeTicketTypes: { $sum: { $cond: ['$isFree', 1, 0] } },
+            paidTicketTypes: { $sum: { $cond: ['$isFree', 0, 1] } },
+          },
+        },
+      ]),
+      this.accessRequestModel.aggregate<{ _id: Types.ObjectId; count: number }>([
+        { $match: { eventId: { $in: ids }, status: EventAccessRequestStatus.PENDING } },
+        { $group: { _id: '$eventId', count: { $sum: 1 } } },
+      ]),
+    ]);
+    const inventory = new Map(ticketGroups.map((group) => [group._id.toString(), group]));
+    const requests = new Map(requestGroups.map((group) => [group._id.toString(), group.count]));
+
+    return events.map((event) => {
+      const normalized = normalizeLegacyEventAccess(event);
+      const id = (normalized as Event & { _id: Types.ObjectId })._id.toString();
+      const counts = inventory.get(id) ?? { freeTicketTypes: 0, paidTicketTypes: 0 };
+      const readiness = validateEventPublishability(normalized, counts);
+      const safe = this.eventAccessService.toSafeEvent(normalized) as OrganizerEventListItem;
+      return { ...safe, readiness, pendingAccessRequests: requests.get(id) ?? 0 };
+    });
+  }
+
+  private getDraftAction(event: OrganizerEventListItem): OrganizerDashboardAction {
+    const error = event.readiness.errors[0]?.code;
+    let code: OrganizerActionCode = 'CONTINUE_CREATION';
+    let priority: OrganizerDashboardAction['priority'] = 'medium';
+
+    if (['TITLE_REQUIRED', 'EVENT_TYPE_REQUIRED'].includes(error)) code = 'COMPLETE_INFORMATION';
+    else if (['START_DATE_REQUIRED', 'END_BEFORE_START'].includes(error)) code = 'COMPLETE_SCHEDULE';
+    else if (error === 'PHYSICAL_LOCATION_REQUIRED') code = 'ADD_VENUE';
+    else if (error?.includes('TICKET_TYPE')) code = 'CONFIGURE_TICKETS';
+    else if (error) code = 'CONFIGURE_ACCESS';
+    else if (!event.coverImage) code = 'ADD_COVER';
+    else if (event.readiness.publishable) {
+      code = 'PUBLISH_EVENT';
+      priority = 'high';
+    }
+    return { code, priority, event, progress: this.getProgress(event) };
+  }
+
+  private getProgress(event: Event): number {
+    const completed = new Set(event.creationProgress?.completedSteps ?? []).size;
+    return Math.round((Math.min(completed, 6) / 6) * 100);
+  }
+
+  private priorityRank(priority: OrganizerDashboardAction['priority']): number {
+    return priority === 'high' ? 0 : priority === 'medium' ? 1 : 2;
   }
 }

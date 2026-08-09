@@ -29,3 +29,6 @@ backups/
 
 # Artefacts opérationnels de migration (peuvent contenir des données sensibles)
 *-rollback-*.json
+
+# Generated code-graph reports (local audit artefacts)
+/graphify-out/

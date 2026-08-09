@@ -104,6 +104,27 @@ export class EventsController {
     return this.eventsService.findByOrganizer(user.sub, query);
   }
 
+  @Get('my/summary')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Résumé borné du dashboard organisateur connecté' })
+  getMyEventsSummary(@CurrentUser() user: JwtPayload) {
+    return this.eventsService.getOrganizerSummary(user.sub);
+  }
+
+  @Patch(':id/archive')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Archiver un événement appartenant à l’utilisateur courant' })
+  archive(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.eventsService.archive(id, user.sub);
+  }
+
+  @Patch(':id/restore')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Restaurer un événement archivé appartenant à l’utilisateur courant' })
+  restore(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.eventsService.restore(id, user.sub);
+  }
+
   @Public()
   @Get('slug/:slug')
   @ApiOperation({ summary: 'Récupérer un événement par slug' })

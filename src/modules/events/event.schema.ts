@@ -245,6 +245,10 @@ export class Event {
   @Prop({ enum: Object.values(EventStatus), default: EventStatus.DRAFT })
   status!: EventStatus;
 
+  /** Archive opérationnelle, indépendante du cycle de vie de publication. */
+  @Prop({ type: Date, default: null })
+  archivedAt?: Date | null;
+
   @Prop({ type: Types.ObjectId, ref: 'User', required: true })
   organizer!: Types.ObjectId;
 
@@ -268,6 +272,7 @@ export const EventSchema = SchemaFactory.createForClass(Event);
 
 EventSchema.index({ slug: 1 }, { unique: true, sparse: true });
 EventSchema.index({ organizer: 1, status: 1 });
+EventSchema.index({ organizer: 1, archivedAt: 1, updatedAt: -1 });
 EventSchema.index({ startDate: 1 });
 EventSchema.index({ 'location.city': 1, status: 1 });
 EventSchema.index({ eventType: 1, status: 1, visibility: 1 });
