@@ -14,6 +14,9 @@ import { EventMediaService } from './event-media.service';
 import { EventAccessService } from './event-access.service';
 import { TicketType } from '../tickets/ticket.schema';
 import { EventAccessRequest } from './event-access-request.schema';
+import { User } from '../auth/user.schema';
+import { VenueProfile } from '../venues/venue.schema';
+import { VendorProfile, VendorRequest } from '../vendors/vendor.schema';
 import {
   OrganizerEventDate,
   OrganizerEventProgress,
@@ -52,8 +55,13 @@ describe('EventsService', () => {
   const ticketTypeModel = {
     countDocuments: jest.fn().mockResolvedValue(0),
     aggregate: jest.fn().mockResolvedValue([]),
+    find: jest.fn(),
   };
   const accessRequestModel = { aggregate: jest.fn().mockResolvedValue([]) };
+  const userModel = { findById: jest.fn() };
+  const venueModel = { findOne: jest.fn() };
+  const vendorModel = { find: jest.fn() };
+  const vendorRequestModel = { find: jest.fn() };
 
   const organizerId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
@@ -92,6 +100,11 @@ describe('EventsService', () => {
     eventModel.findOne.mockReturnValue(makeChainable(null));
     eventModel.countDocuments.mockResolvedValue(1);
     eventModel.aggregate.mockResolvedValue([]);
+    ticketTypeModel.find.mockReturnValue(makeChainable([]));
+    userModel.findById.mockReturnValue(makeChainable(null));
+    venueModel.findOne.mockReturnValue(makeChainable(null));
+    vendorModel.find.mockReturnValue(makeChainable([]));
+    vendorRequestModel.find.mockReturnValue(makeChainable([]));
 
     testingModule = await Test.createTestingModule({
       providers: [
@@ -99,6 +112,10 @@ describe('EventsService', () => {
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(TicketType.name), useValue: ticketTypeModel },
         { provide: getModelToken(EventAccessRequest.name), useValue: accessRequestModel },
+        { provide: getModelToken(User.name), useValue: userModel },
+        { provide: getModelToken(VenueProfile.name), useValue: venueModel },
+        { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
+        { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
         { provide: EventMediaService, useValue: eventMediaService },
         { provide: EventAccessService, useValue: eventAccessService },
       ],
@@ -358,6 +375,102 @@ describe('EventsService', () => {
         $or: expect.any(Array),
       }));
       expect((result as unknown as Record<string, unknown>).slug).toBe(slug);
+      expect(ticketTypeModel.find).not.toHaveBeenCalled();
+    });
+
+    it('construit une projection allowlistée avec relations sûres et requêtes bornées', async () => {
+      const slug = 'sommet-elintys';
+      const venueId = new Types.ObjectId();
+      const vendorId = new Types.ObjectId();
+      const event = mockEvent({
+        slug,
+        status: EventStatus.PUBLISHED,
+        admissionModes: ['paid_ticket'],
+        venueProfile: venueId,
+        accessPolicy: {
+          type: EventAccessPolicyType.ACCESS_CODE,
+          codeHash: 'hash-interne',
+          allowedDomains: ['secret.ca'],
+        },
+        creationProgress: { currentStep: 6 },
+        location: {
+          type: 'physical',
+          name: 'Maison Elintys',
+          city: 'Montréal',
+          contactEmail: 'prive@lieu.ca',
+          onlineUrl: 'https://secret.example',
+        },
+      });
+      const related = mockEvent({
+        _id: new Types.ObjectId(),
+        slug: 'sommet-associe',
+        status: EventStatus.PUBLISHED,
+        startDate: new Date('2027-08-20T18:00:00.000Z'),
+        organizer: new Types.ObjectId(),
+      });
+      eventModel.findOne.mockReturnValue(makeChainable(event));
+      eventModel.find.mockReturnValue(makeChainable([related]));
+      userModel.findById.mockReturnValue(makeChainable({ fullName: 'Équipe Elintys', email: 'prive@elintys.ca' }));
+      venueModel.findOne.mockReturnValue(makeChainable({
+        _id: venueId,
+        name: 'Maison Elintys',
+        type: 'conference',
+        address: { street: '100 rue du Test', city: 'Montréal' },
+        capacity: 200,
+        photos: [],
+        amenities: ['Wi-Fi'],
+        rating: 4.8,
+        reviewCount: 12,
+        contactEmail: 'secret@lieu.ca',
+      }));
+      vendorRequestModel.find.mockReturnValue(makeChainable([{ vendor: vendorId, message: 'note interne' }]));
+      vendorModel.find.mockReturnValue(makeChainable([{
+        _id: vendorId,
+        businessName: 'Studio Boréal',
+        category: 'photographe',
+        photos: [],
+        serviceArea: 'Montréal',
+        rating: 5,
+        reviewCount: 3,
+        contactEmail: 'secret@studio.ca',
+        user: new Types.ObjectId(),
+      }]));
+      ticketTypeModel.find.mockReturnValue(makeChainable([{
+        _id: new Types.ObjectId(),
+        name: 'Admission générale',
+        price: 4500,
+        isFree: false,
+        quantity: 100,
+        sold: 10,
+      }]));
+
+      const result = await service.findBySlug(slug);
+      const serialized = JSON.stringify(result);
+
+      expect(result.organizer).toEqual({ name: 'Équipe Elintys' });
+      expect(result.venue?.name).toBe('Maison Elintys');
+      expect(result.providers).toHaveLength(1);
+      expect(result.ticketTypes).toHaveLength(1);
+      expect(result.relatedEvents).toHaveLength(1);
+      expect(serialized).not.toMatch(/codeHash|allowedDomains|creationProgress|contactEmail|onlineUrl|note interne|prive@/);
+      expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        status: EventStatus.PUBLISHED,
+        discoverability: EventDiscoverability.PUBLIC,
+        archivedAt: null,
+        _id: { $ne: expect.anything() },
+      }));
+      expect((eventModel.find.mock.results[0].value as Record<string, jest.Mock>).limit).toHaveBeenCalledWith(4);
+      expect(vendorModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        _id: { $in: [vendorId.toString()] },
+        isActive: true,
+      }));
+      expect(vendorModel.find).toHaveBeenCalledTimes(1);
+      expect(vendorRequestModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        event: expect.anything(),
+        status: 'accepted',
+        vendor: { $ne: null },
+      }));
+      expect(venueModel.findOne).toHaveBeenCalledWith({ _id: venueId, isActive: true });
     });
 
     it('devrait lever NotFoundException si slug inexistant', async () => {

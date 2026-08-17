@@ -197,6 +197,18 @@ describe('EventAccessService — verifyCode', () => {
     expect(typeof result.accessGrant).toBe('string');
     expect(result.accessGrant.split('.')).toHaveLength(3);
   });
+
+  it('limite la vérification aux événements publiés non archivés', async () => {
+    const findOne = jest.fn().mockReturnValue(selectExec(null));
+    const service = makeService({ eventModel: { findOne } });
+
+    await expect(service.verifyCode(eventId, 'code')).rejects.toThrow(ForbiddenException);
+    expect(findOne).toHaveBeenCalledWith({
+      _id: eventId,
+      status: EventStatus.PUBLISHED,
+      archivedAt: null,
+    });
+  });
 });
 
 describe('EventAccessService — resolveAccessGrant', () => {
@@ -230,7 +242,7 @@ describe('EventAccessService — resolveAccessGrant', () => {
   });
 
   it('devrait remonter EVENT_NOT_FOUND si l’événement du grant n’existe plus', async () => {
-    const service = makeService({ eventModel: { findById: () => leanSelect(null) } });
+    const service = makeService({ eventModel: { findOne: () => leanSelect(null) } });
     await expect(service.resolveAccessGrant(await grantFor(eventId))).rejects.toThrow(
       NotFoundException,
     );
@@ -239,7 +251,7 @@ describe('EventAccessService — resolveAccessGrant', () => {
   it('devrait retourner la projection publique pour un grant valide', async () => {
     const service = makeService({
       eventModel: {
-        findById: () =>
+        findOne: () =>
           leanSelect({
             _id: eventId,
             title: 'Événement',
@@ -253,6 +265,18 @@ describe('EventAccessService — resolveAccessGrant', () => {
     expect(event.accessPolicy).toEqual({
       type: EventAccessPolicyType.ACCESS_CODE,
       hasAccessCode: true,
+    });
+  });
+
+  it('résout le grant uniquement contre un événement actif', async () => {
+    const findOne = jest.fn().mockReturnValue(leanSelect(null));
+    const service = makeService({ eventModel: { findOne } });
+
+    await expect(service.resolveAccessGrant(await grantFor(eventId))).rejects.toThrow(NotFoundException);
+    expect(findOne).toHaveBeenCalledWith({
+      _id: eventId,
+      status: EventStatus.PUBLISHED,
+      archivedAt: null,
     });
   });
 });
@@ -271,6 +295,16 @@ describe('EventAccessService — checkDomain', () => {
   it('devrait refuser si l’événement n’est pas publié', async () => {
     await expect(
       service({ status: EventStatus.DRAFT }, { email: 'a@b.ca' }).checkDomain(eventId, userId),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('devrait refuser un événement archivé', async () => {
+    await expect(
+      service({
+        status: EventStatus.PUBLISHED,
+        archivedAt: new Date(),
+        accessPolicy: { type: EventAccessPolicyType.EMAIL_DOMAIN, allowedDomains: ['elintys.ca'] },
+      }, { email: 'marie@elintys.ca', isEmailVerified: true }).checkDomain(eventId, userId),
     ).rejects.toThrow(NotFoundException);
   });
 
@@ -323,6 +357,20 @@ describe('EventAccessService — requestAccess', () => {
 
   it('devrait refuser si l’événement n’est pas publié', async () => {
     const service = makeService({ eventModel: { findById: () => leanSelect(null) } });
+    await expect(service.requestAccess(eventId, userId)).rejects.toThrow(NotFoundException);
+  });
+
+  it('devrait refuser une demande sur un événement archivé', async () => {
+    const service = makeService({
+      eventModel: {
+        findById: () => leanSelect({
+          status: EventStatus.PUBLISHED,
+          archivedAt: new Date(),
+          accessPolicy: { type: EventAccessPolicyType.MANUAL_APPROVAL },
+        }),
+      },
+    });
+
     await expect(service.requestAccess(eventId, userId)).rejects.toThrow(NotFoundException);
   });
 

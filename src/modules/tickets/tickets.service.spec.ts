@@ -154,6 +154,17 @@ describe('TicketsService', () => {
         expect.objectContaining({ event: expect.any(Types.ObjectId) }),
       );
     });
+
+    it.each([
+      ['privé', { discoverability: 'private' }],
+      ['archivé', { archivedAt: new Date() }],
+      ['brouillon', { status: 'draft' }],
+    ])('ne projette aucun billet pour un événement %s', async (_label, overrides) => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent(overrides)));
+
+      await expect(service.findTicketTypes(eventId)).rejects.toThrow(NotFoundException);
+      expect(ticketTypeModel.find).not.toHaveBeenCalled();
+    });
   });
 
   // ── updateTicketType ──

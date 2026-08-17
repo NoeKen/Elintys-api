@@ -24,6 +24,7 @@ const mockEventsService = {
   getOrganizerSummary: jest.fn(),
   archive: jest.fn(),
   restore: jest.fn(),
+  findBySlug: jest.fn(),
 };
 const mockEventMediaService = {
   uploadCover: jest.fn(),
@@ -86,6 +87,16 @@ describe('EventsController', () => {
       await controller.getCategoryCounts();
 
       expect(mockEventsService.getPublicCategoryCounts).toHaveBeenCalled();
+    });
+  });
+
+  describe('findBySlug', () => {
+    it('délègue la projection publique au service sans contexte utilisateur', async () => {
+      mockEventsService.findBySlug.mockResolvedValue({ slug: 'gala-public' });
+
+      await controller.findBySlug('gala-public');
+
+      expect(mockEventsService.findBySlug).toHaveBeenCalledWith('gala-public');
     });
   });
 
