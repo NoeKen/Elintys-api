@@ -44,6 +44,24 @@ import {
   EventAccessRequestDocument,
   EventAccessRequestStatus,
 } from './event-access-request.schema';
+import { User, UserDocument } from '../auth/user.schema';
+import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
+import {
+  VendorProfile,
+  VendorProfileDocument,
+  VendorRequest,
+  VendorRequestDocument,
+  VendorRequestStatus,
+} from '../vendors/vendor.schema';
+import {
+  PublicEventDetail,
+  PublicEventLocation,
+  PublicEventMedia,
+  PublicEventProvider,
+  PublicEventTicketType,
+  PublicEventVenue,
+  PublicRelatedEvent,
+} from './dto/public-event-detail.dto';
 
 /**
  * Tri stable obligatoire sur toute requête paginée : sans ordre explicite,
@@ -97,6 +115,10 @@ export class EventsService {
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
     @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
     @InjectModel(EventAccessRequest.name) private readonly accessRequestModel: Model<EventAccessRequestDocument>,
+    @InjectModel(User.name) private readonly userModel: Model<UserDocument>,
+    @InjectModel(VenueProfile.name) private readonly venueModel: Model<VenueProfileDocument>,
+    @InjectModel(VendorProfile.name) private readonly vendorModel: Model<VendorProfileDocument>,
+    @InjectModel(VendorRequest.name) private readonly vendorRequestModel: Model<VendorRequestDocument>,
     private readonly eventMediaService: EventMediaService,
     private readonly eventAccessService: EventAccessService,
   ) {}
@@ -298,7 +320,7 @@ export class EventsService {
     return this.update(id, organizerId, { status: EventStatus.CANCELLED } as UpdateEventDto);
   }
 
-  async findBySlug(slug: string): Promise<Event> {
+  async findBySlug(slug: string): Promise<PublicEventDetail> {
     const event = await this.eventModel
       .findOne({
         slug,
@@ -312,7 +334,196 @@ export class EventsService {
       .lean()
       .select('-__v -accessPolicy.codeHash');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    return this.eventAccessService.toPublicEvent(normalizeLegacyEventAccess(event));
+    const normalized = normalizeLegacyEventAccess(event);
+    const eventId = (normalized as Event & { _id: Types.ObjectId })._id;
+    const hasTicketAdmission = normalized.admissionModes.some((mode) =>
+      [AdmissionMode.FREE_TICKET, AdmissionMode.PAID_TICKET].includes(mode),
+    );
+    const relatedFilter = this.buildRelatedPublicFilter(normalized, eventId);
+
+    const [organizer, venue, acceptedRequests, ticketTypes, relatedEvents] = await Promise.all([
+      this.userModel.findById(normalized.organizer).lean().select('fullName'),
+      normalized.venueProfile
+        ? this.venueModel.findOne({ _id: normalized.venueProfile, isActive: true }).lean().select(
+          'name type description address capacity photos amenities rating reviewCount',
+        )
+        : null,
+      this.vendorRequestModel
+        .find({ event: eventId, status: VendorRequestStatus.ACCEPTED, vendor: { $ne: null } })
+        .lean()
+        .select('vendor'),
+      hasTicketAdmission
+        ? this.ticketTypeModel
+          .find({ event: eventId })
+          .sort({ price: 1, _id: 1 })
+          .lean()
+          .select('name price isFree quantity sold description')
+        : [],
+      relatedFilter
+        ? this.eventModel
+          .find(relatedFilter)
+          .sort({ startDate: 1, _id: 1 })
+          .limit(4)
+          .lean()
+          .select('slug title shortDescription eventType coverImage startDate endDate location')
+        : [],
+    ]);
+
+    const vendorIds = Array.from(new Set(
+      acceptedRequests
+        .map((request) => request.vendor?.toString())
+        .filter((id): id is string => Boolean(id)),
+    ));
+    const providers = vendorIds.length
+      ? await this.vendorModel
+        .find({ _id: { $in: vendorIds }, isActive: true })
+        .lean()
+        .select('businessName category description photos serviceArea rating reviewCount')
+      : [];
+
+    return this.toPublicEventDetail({
+      event: normalized,
+      organizer,
+      venue,
+      providers,
+      ticketTypes,
+      relatedEvents,
+    });
+  }
+
+  private buildRelatedPublicFilter(event: Event, eventId: Types.ObjectId): Record<string, unknown> | null {
+    const relevance: Record<string, unknown>[] = [];
+    if (event.eventType) relevance.push({ eventType: event.eventType });
+    if (event.location?.city) relevance.push({ 'location.city': event.location.city });
+    if (relevance.length === 0) return null;
+    return {
+      _id: { $ne: eventId },
+      status: EventStatus.PUBLISHED,
+      archivedAt: null,
+      discoverability: EventDiscoverability.PUBLIC,
+      startDate: { $gte: new Date() },
+      $or: relevance,
+    };
+  }
+
+  private toPublicEventDetail(input: {
+    event: Event;
+    organizer: Pick<User, 'fullName'> | null;
+    venue: VenueProfile | null;
+    providers: VendorProfile[];
+    ticketTypes: TicketType[];
+    relatedEvents: Event[];
+  }): PublicEventDetail {
+    const { event } = input;
+    const accessType = event.accessPolicy?.type ?? EventAccessPolicyType.OPEN;
+    const detail: PublicEventDetail = {
+      _id: this.idOf(event),
+      slug: event.slug!,
+      title: event.title,
+      ...(event.shortDescription ? { shortDescription: event.shortDescription } : {}),
+      ...(event.description ? { description: event.description } : {}),
+      ...(event.eventType ? { eventType: event.eventType } : {}),
+      ...(event.coverImage ? { coverImage: event.coverImage as PublicEventMedia | string } : {}),
+      gallery: (event.gallery ?? []) as PublicEventMedia[],
+      startDate: event.startDate!,
+      ...(event.endDate ? { endDate: event.endDate } : {}),
+      timezone: event.timezone ?? 'America/Toronto',
+      dateIsTentative: Boolean(event.dateIsTentative),
+      ...(event.location ? { location: this.toPublicLocation(event.location) } : {}),
+      ...(event.capacity > 0 ? { capacity: event.capacity } : {}),
+      discoverability: event.discoverability as PublicEventDetail['discoverability'],
+      accessPolicy: {
+        type: accessType,
+        ...(event.accessPolicy?.requiresAuthentication ? { requiresAuthentication: true } : {}),
+        ...(accessType === EventAccessPolicyType.ACCESS_CODE ? { hasAccessCode: true } : {}),
+      },
+      admissionModes: event.admissionModes,
+      ...(input.organizer?.fullName ? { organizer: { name: input.organizer.fullName } } : {}),
+      ...(input.venue ? { venue: this.toPublicVenue(input.venue) } : {}),
+      providers: input.providers.map((provider) => this.toPublicProvider(provider)),
+      ticketTypes: input.ticketTypes.map((ticket) => this.toPublicTicketType(ticket)),
+      relatedEvents: input.relatedEvents
+        .filter((related) => Boolean(related.slug && related.startDate))
+        .map((related) => this.toPublicRelatedEvent(related)),
+      ...((event as Event & { updatedAt?: Date }).updatedAt
+        ? { updatedAt: (event as Event & { updatedAt: Date }).updatedAt }
+        : {}),
+    };
+    return detail;
+  }
+
+  private toPublicLocation(location: NonNullable<Event['location']>): PublicEventLocation {
+    return {
+      type: location.type,
+      ...(location.name ? { name: location.name } : {}),
+      ...(location.address ? { address: location.address } : {}),
+      ...(location.city ? { city: location.city } : {}),
+      ...(location.province ? { province: location.province } : {}),
+      ...(location.postalCode ? { postalCode: location.postalCode } : {}),
+    };
+  }
+
+  private toPublicVenue(venue: VenueProfile): PublicEventVenue {
+    return {
+      _id: this.idOf(venue),
+      name: venue.name,
+      type: venue.type,
+      ...(venue.description ? { description: venue.description } : {}),
+      address: {
+        street: venue.address.street,
+        city: venue.address.city,
+        ...(venue.address.province ? { province: venue.address.province } : {}),
+        ...(venue.address.postalCode ? { postalCode: venue.address.postalCode } : {}),
+      },
+      capacity: venue.capacity,
+      photos: venue.photos ?? [],
+      amenities: venue.amenities ?? [],
+      rating: venue.rating ?? 0,
+      reviewCount: venue.reviewCount ?? 0,
+    };
+  }
+
+  private toPublicProvider(provider: VendorProfile): PublicEventProvider {
+    return {
+      _id: this.idOf(provider),
+      businessName: provider.businessName,
+      category: provider.category,
+      ...(provider.description ? { description: provider.description } : {}),
+      photos: provider.photos ?? [],
+      serviceArea: provider.serviceArea,
+      rating: provider.rating ?? 0,
+      reviewCount: provider.reviewCount ?? 0,
+    };
+  }
+
+  private toPublicTicketType(ticket: TicketType): PublicEventTicketType {
+    return {
+      _id: this.idOf(ticket),
+      name: ticket.name,
+      price: ticket.price,
+      isFree: ticket.isFree,
+      quantity: ticket.quantity,
+      sold: ticket.sold,
+      ...(ticket.description ? { description: ticket.description } : {}),
+    };
+  }
+
+  private toPublicRelatedEvent(event: Event): PublicRelatedEvent {
+    return {
+      _id: this.idOf(event),
+      slug: event.slug!,
+      title: event.title,
+      ...(event.shortDescription ? { shortDescription: event.shortDescription } : {}),
+      ...(event.eventType ? { eventType: event.eventType } : {}),
+      ...(event.coverImage ? { coverImage: event.coverImage as PublicEventMedia | string } : {}),
+      startDate: event.startDate!,
+      ...(event.endDate ? { endDate: event.endDate } : {}),
+      ...(event.location ? { location: this.toPublicLocation(event.location) } : {}),
+    };
+  }
+
+  private idOf(value: object): string {
+    return String((value as { _id: Types.ObjectId | string })._id);
   }
 
   async findByOrganizer(

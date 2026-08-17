@@ -15,6 +15,13 @@ import { User, UserSchema } from '../auth/user.schema';
 import { Guest, GuestSchema } from '../guests/guest.schema';
 import { TicketType, TicketTypeSchema } from '../tickets/ticket.schema';
 import { Invitation, InvitationSchema } from '../invitations/invitation.schema';
+import { VenueProfile, VenueProfileSchema } from '../venues/venue.schema';
+import {
+  VendorProfile,
+  VendorProfileSchema,
+  VendorRequest,
+  VendorRequestSchema,
+} from '../vendors/vendor.schema';
 
 @Module({
   imports: [
@@ -25,6 +32,9 @@ import { Invitation, InvitationSchema } from '../invitations/invitation.schema';
       { name: Guest.name, schema: GuestSchema },
       { name: TicketType.name, schema: TicketTypeSchema },
       { name: Invitation.name, schema: InvitationSchema },
+      { name: VenueProfile.name, schema: VenueProfileSchema },
+      { name: VendorProfile.name, schema: VendorProfileSchema },
+      { name: VendorRequest.name, schema: VendorRequestSchema },
     ]),
     JwtModule.register({}),
     MediaModule,

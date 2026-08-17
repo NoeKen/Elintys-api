@@ -127,9 +127,9 @@ export class EventsController {
 
   @Public()
   @Get('slug/:slug')
-  @ApiOperation({ summary: 'Récupérer un événement par slug' })
+  @ApiOperation({ summary: 'Récupérer la projection publique sûre d’un événement par slug' })
   @ApiParam({ name: 'slug', description: 'Slug de l\'événement, ex: gala-de-charite-2025' })
-  @ApiResponse({ status: 200, description: 'Événement trouvé' })
+  @ApiResponse({ status: 200, description: 'Projection publique enrichie trouvée' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   findBySlug(@Param('slug') slug: string) {
     return this.eventsService.findBySlug(slug);
