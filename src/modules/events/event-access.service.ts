@@ -117,7 +117,7 @@ export class EventAccessService {
 
   async verifyCode(eventId: string, code: string, requestId?: string): Promise<{ authorized: true; accessGrant: string }> {
     const event = await this.eventModel
-      .findOne({ _id: eventId, status: EventStatus.PUBLISHED })
+      .findOne({ _id: eventId, status: EventStatus.PUBLISHED, archivedAt: null })
       .select('+accessPolicy.codeHash accessPolicy.type')
       .exec();
     const hash = event?.accessPolicy?.codeHash;
@@ -148,7 +148,10 @@ export class EventAccessService {
         audience: 'elintys-event-access',
       });
       if (payload.purpose !== 'event-access') throw new Error('invalid purpose');
-      const event = await this.eventModel.findById(payload.eventId).lean().select('-__v -accessPolicy.codeHash');
+      const event = await this.eventModel
+        .findOne({ _id: payload.eventId, status: EventStatus.PUBLISHED, archivedAt: null })
+        .lean()
+        .select('-__v -accessPolicy.codeHash');
       if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
       return this.toPublicEvent(event);
     } catch (error) {
@@ -159,10 +162,10 @@ export class EventAccessService {
 
   async checkDomain(eventId: string, userId: string, requestId?: string): Promise<{ authorized: boolean; reason: string }> {
     const [event, user] = await Promise.all([
-      this.eventModel.findById(eventId).lean().select('accessPolicy status'),
+      this.eventModel.findById(eventId).lean().select('accessPolicy status archivedAt'),
       this.userModel.findById(userId).lean().select('email isEmailVerified'),
     ]);
-    if (!event || event.status !== EventStatus.PUBLISHED) throw new NotFoundException('EVENT_NOT_FOUND');
+    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) throw new NotFoundException('EVENT_NOT_FOUND');
     if (event.accessPolicy?.type !== EventAccessPolicyType.EMAIL_DOMAIN) throw new BadRequestException('EMAIL_DOMAIN_POLICY_NOT_ACTIVE');
     if (!user?.isEmailVerified) {
       this.logDecision(eventId, 'email_domain', 'denied', 'VERIFIED_EMAIL_REQUIRED', requestId);
@@ -176,7 +179,7 @@ export class EventAccessService {
 
   async findAuthorizedEvent(eventId: string, userId: string, accessGrant?: string, requestId?: string): Promise<Event> {
     const event = await this.eventModel
-      .findOne({ _id: eventId, status: EventStatus.PUBLISHED })
+      .findOne({ _id: eventId, status: EventStatus.PUBLISHED, archivedAt: null })
       .lean()
       .select('-__v -accessPolicy.codeHash');
     if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
@@ -191,8 +194,8 @@ export class EventAccessService {
   }
 
   async requestAccess(eventId: string, userId: string, requestId?: string): Promise<EventAccessRequest> {
-    const event = await this.eventModel.findById(eventId).lean().select('accessPolicy status');
-    if (!event || event.status !== EventStatus.PUBLISHED) throw new NotFoundException('EVENT_NOT_FOUND');
+    const event = await this.eventModel.findById(eventId).lean().select('accessPolicy status archivedAt');
+    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) throw new NotFoundException('EVENT_NOT_FOUND');
     if (event.accessPolicy?.type !== EventAccessPolicyType.MANUAL_APPROVAL) throw new BadRequestException('MANUAL_APPROVAL_NOT_ACTIVE');
     try {
       const request = await this.requestModel.create({ eventId: new Types.ObjectId(eventId), userId: new Types.ObjectId(userId) });

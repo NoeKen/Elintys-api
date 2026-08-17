@@ -50,8 +50,10 @@ export class TicketsService {
   }
 
   async findTicketTypes(eventId: string): Promise<TicketType[]> {
-    const event = await this.eventModel.findById(eventId).lean().select('status discoverability visibility accessModelVersion');
-    if (!event || event.status !== EventStatus.PUBLISHED) throw new NotFoundException('Événement introuvable.');
+    const event = await this.eventModel.findById(eventId).lean().select('status archivedAt discoverability visibility accessModelVersion');
+    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) {
+      throw new NotFoundException('Événement introuvable.');
+    }
     if (normalizeLegacyEventAccess(event).discoverability === EventDiscoverability.PRIVATE) {
       throw new NotFoundException('Événement introuvable.');
     }
