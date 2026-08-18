@@ -45,7 +45,14 @@ export class TicketsService {
 
   async createTicketType(eventId: string, organizerId: string, dto: CreateTicketTypeDto): Promise<TicketType> {
     await this.assertEventOwner(eventId, organizerId);
-    const tt = await this.ticketTypeModel.create({ ...dto, event: new Types.ObjectId(eventId) });
+    if (!dto.isFree && (!dto.price || dto.price <= 0)) {
+      throw new BadRequestException('PAID_TICKET_PRICE_REQUIRED');
+    }
+    const tt = await this.ticketTypeModel.create({
+      ...dto,
+      price: dto.isFree ? 0 : dto.price,
+      event: new Types.ObjectId(eventId),
+    });
     return tt.toObject();
   }
 
@@ -60,19 +67,43 @@ export class TicketsService {
     return this.ticketTypeModel.find({ event: new Types.ObjectId(eventId) }).lean().select('-__v');
   }
 
+  async findManagedTicketTypes(eventId: string, organizerId: string): Promise<TicketType[]> {
+    await this.assertEventOwner(eventId, organizerId);
+    return this.ticketTypeModel
+      .find({ event: new Types.ObjectId(eventId) })
+      .sort({ price: 1, _id: 1 })
+      .lean()
+      .select('-__v');
+  }
+
   async updateTicketType(id: string, organizerId: string, dto: UpdateTicketTypeDto): Promise<TicketType> {
-    const tt = await this.ticketTypeModel.findById(id).lean().select('event');
+    const tt = await this.ticketTypeModel.findById(id).lean().select('event sold price isFree');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
     await this.assertEventOwner(tt.event.toString(), organizerId);
 
-    const updated = await this.ticketTypeModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
+    if (dto.quantity !== undefined && dto.quantity < tt.sold) {
+      throw new BadRequestException('TICKET_QUANTITY_BELOW_SOLD');
+    }
+    const nextIsFree = dto.isFree ?? tt.isFree;
+    const nextPrice = nextIsFree ? 0 : (dto.price ?? tt.price);
+    if (!nextIsFree && nextPrice <= 0) {
+      throw new BadRequestException('PAID_TICKET_PRICE_REQUIRED');
+    }
+
+    const updated = await this.ticketTypeModel
+      .findByIdAndUpdate(id, { ...dto, price: nextPrice }, { new: true, runValidators: true })
+      .lean()
+      .select('-__v');
     return updated!;
   }
 
   async removeTicketType(id: string, organizerId: string): Promise<void> {
-    const tt = await this.ticketTypeModel.findById(id).lean().select('event');
+    const tt = await this.ticketTypeModel.findById(id).lean().select('event sold');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
     await this.assertEventOwner(tt.event.toString(), organizerId);
+    if (tt.sold > 0) {
+      throw new BadRequestException('TICKET_TYPE_HAS_SALES');
+    }
     await this.ticketTypeModel.findByIdAndDelete(id);
   }
 

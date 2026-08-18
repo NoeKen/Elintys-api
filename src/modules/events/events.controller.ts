@@ -50,6 +50,8 @@ import { UpdateEventAccessConfigurationDto } from './dto/update-event-access-con
 import { ReviewEventAccessRequestDto, VerifyEventAccessCodeDto } from './dto/event-access.dto';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { THROTTLE_TIERS } from '../../config/throttle.config';
+import { InvitationsService } from '../invitations/invitations.service';
+import { QueryEventInvitationsDto } from '../invitations/dto/query-event-invitations.dto';
 
 @ApiTags('Events')
 @ApiBearerAuth('access-token')
@@ -59,6 +61,7 @@ export class EventsController {
     private readonly eventsService: EventsService,
     private readonly eventMediaService: EventMediaService,
     private readonly eventAccessService: EventAccessService,
+    private readonly invitationsService: InvitationsService,
   ) {}
 
   @Post()
@@ -197,6 +200,17 @@ export class EventsController {
     @Body() dto: ReviewEventAccessRequestDto,
   ) {
     return this.eventAccessService.reviewRequest(id, requestId, { userId: user.sub, roles: user.roles }, dto.status);
+  }
+
+  @Get(':id/invitations')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
+  @ApiOperation({ summary: 'Lister les invitations participants d\'un événement (organisateur)' })
+  listEventInvitations(
+    @Param('id', ParseObjectIdPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Query() query: QueryEventInvitationsDto,
+  ) {
+    return this.invitationsService.findByEvent(id, user.sub, user.roles, query);
   }
 
   @Put(':id/access-configuration')

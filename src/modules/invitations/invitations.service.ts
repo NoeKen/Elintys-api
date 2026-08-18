@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -17,6 +18,26 @@ import { User, UserDocument } from '../auth/user.schema';
 import { createHash, randomBytes } from 'crypto';
 import { AdmissionMode, Event, EventDocument, EventStatus } from '../events/event.schema';
 import { canManageEvent } from '../events/event-access.policy';
+import { QueryEventInvitationsDto } from './dto/query-event-invitations.dto';
+
+export interface OrganizerInvitationDto {
+  _id: string;
+  email: string;
+  name: string;
+  type: string;
+  status: string;
+  maxUses: number;
+  useCount: number;
+  expiresAt: string;
+  createdAt: string;
+}
+
+export interface PaginatedOrganizerInvitationsDto {
+  data: OrganizerInvitationDto[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 @Injectable()
 export class InvitationsService {
@@ -133,6 +154,61 @@ export class InvitationsService {
         { convertedUserId: new Types.ObjectId(userId) },
       )
       .exec();
+  }
+
+  async findByEvent(
+    eventId: string,
+    requesterId: string,
+    requesterRoles: string[] = [],
+    query: QueryEventInvitationsDto = {},
+  ): Promise<PaginatedOrganizerInvitationsDto> {
+    if (!Types.ObjectId.isValid(eventId) || !/^[0-9a-fA-F]{24}$/.test(eventId)) {
+      throw new BadRequestException('INVALID_OBJECT_ID');
+    }
+
+    const event = await this.eventModel
+      .findById(eventId)
+      .lean()
+      .select('organizer');
+
+    if (!event) {
+      throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    }
+
+    if (!canManageEvent({ userId: requesterId, roles: requesterRoles }, event).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 25;
+    const filter = { eventId: new Types.ObjectId(eventId), type: InvitationType.PARTICIPANT };
+    const [invitations, total] = await Promise.all([
+      this.invitationModel
+        .find(filter)
+        .lean()
+        .select('-tokenHash -token -tokenPrefix -__v')
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .exec(),
+      this.invitationModel.countDocuments(filter),
+    ]);
+
+    const data = invitations.map((inv) => ({
+      _id: String(inv._id),
+      email: inv.email,
+      name: inv.name,
+      type: inv.type,
+      status: inv.status,
+      maxUses: inv.maxUses,
+      useCount: inv.useCount,
+      expiresAt: inv.expiresAt instanceof Date ? inv.expiresAt.toISOString() : String(inv.expiresAt),
+      createdAt: (inv as unknown as { createdAt: Date }).createdAt instanceof Date
+        ? (inv as unknown as { createdAt: Date }).createdAt.toISOString()
+        : String((inv as unknown as { createdAt: unknown }).createdAt),
+    }));
+
+    return { data, total, page, limit };
   }
 
   private hashToken(token: string): string {

@@ -142,6 +142,18 @@ describe('TicketsService', () => {
         service.createTicketType('id-inexistant', organizerId, { name: 'VIP' } as never),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it('refuse un billet payant sans prix strictement positif', async () => {
+      await expect(
+        service.createTicketType(eventId, organizerId, {
+          name: 'VIP',
+          isFree: false,
+          price: 0,
+          quantity: 10,
+        } as never),
+      ).rejects.toThrow('PAID_TICKET_PRICE_REQUIRED');
+      expect(ticketTypeModel.create).not.toHaveBeenCalled();
+    });
   });
 
   // ── findTicketTypes ──
@@ -164,6 +176,23 @@ describe('TicketsService', () => {
 
       await expect(service.findTicketTypes(eventId)).rejects.toThrow(NotFoundException);
       expect(ticketTypeModel.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('findManagedTicketTypes', () => {
+    it('retourne les types de billets au propriétaire même pour un brouillon', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status: 'draft' })));
+
+      const result = await service.findManagedTicketTypes(eventId, organizerId);
+
+      expect(result).toHaveLength(1);
+      expect(ticketTypeModel.find).toHaveBeenCalledWith({ event: expect.any(Types.ObjectId) });
+    });
+
+    it('refuse un autre organisateur', async () => {
+      await expect(service.findManagedTicketTypes(eventId, 'autre-user-id')).rejects.toThrow(
+        ForbiddenException,
+      );
     });
   });
 
@@ -192,6 +221,15 @@ describe('TicketsService', () => {
         service.updateTicketType(ticketTypeId, 'autre-user-id', {}),
       ).rejects.toThrow(ForbiddenException);
     });
+
+    it('refuse de réduire la capacité sous le nombre déjà vendu', async () => {
+      ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType({ sold: 8 })));
+
+      await expect(
+        service.updateTicketType(ticketTypeId, organizerId, { quantity: 7 }),
+      ).rejects.toThrow('TICKET_QUANTITY_BELOW_SOLD');
+      expect(ticketTypeModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
   });
 
   // ── removeTicketType ──
@@ -211,6 +249,15 @@ describe('TicketsService', () => {
 
     it("lève ForbiddenException si l'utilisateur n'est pas l'organisateur", async () => {
       await expect(service.removeTicketType(ticketTypeId, 'autre-user-id')).rejects.toThrow(ForbiddenException);
+    });
+
+    it('refuse de supprimer un type de billet ayant déjà des ventes', async () => {
+      ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType({ sold: 1 })));
+
+      await expect(service.removeTicketType(ticketTypeId, organizerId)).rejects.toThrow(
+        'TICKET_TYPE_HAS_SALES',
+      );
+      expect(ticketTypeModel.findByIdAndDelete).not.toHaveBeenCalled();
     });
   });
 

@@ -17,6 +17,7 @@ afterEach(async () => {
 const mockTicketsService = {
   createTicketType:          jest.fn(),
   findTicketTypes:           jest.fn(),
+  findManagedTicketTypes:    jest.fn(),
   updateTicketType:          jest.fn(),
   removeTicketType:          jest.fn(),
   findMyTickets:             jest.fn(),
@@ -62,6 +63,19 @@ describe('TicketTypesController', () => {
       await controller.findTypes('event-id');
 
       expect(mockTicketsService.findTicketTypes).toHaveBeenCalledWith('event-id');
+    });
+  });
+
+  describe('findManagedTypes', () => {
+    it('dérive le propriétaire de user.sub', async () => {
+      mockTicketsService.findManagedTicketTypes.mockResolvedValue([]);
+
+      await controller.findManagedTypes('event-id', mockUser);
+
+      expect(mockTicketsService.findManagedTicketTypes).toHaveBeenCalledWith(
+        'event-id',
+        mockUser.sub,
+      );
     });
   });
 

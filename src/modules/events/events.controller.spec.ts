@@ -3,6 +3,7 @@ import { EventsController } from './events.controller';
 import { EventsService } from './events.service';
 import { EventMediaService } from './event-media.service';
 import { EventAccessService } from './event-access.service';
+import { InvitationsService } from '../invitations/invitations.service';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -45,6 +46,7 @@ describe('EventsController', () => {
         { provide: EventsService, useValue: mockEventsService },
         { provide: EventMediaService, useValue: mockEventMediaService },
         { provide: EventAccessService, useValue: {} },
+        { provide: InvitationsService, useValue: { findByEvent: jest.fn() } },
       ],
     }).compile();
 

@@ -18,6 +18,7 @@ import { ScanTicketDto } from './dto/scan-ticket.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 
 @ApiTags('Tickets')
 @ApiBearerAuth('access-token')
@@ -34,7 +35,7 @@ export class TicketTypesController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   createType(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateTicketTypeDto,
   ) {
@@ -47,8 +48,18 @@ export class TicketTypesController {
   @ApiParam({ name: 'eventId', description: "MongoDB ObjectId de l'événement" })
   @ApiResponse({ status: 200, description: 'Liste des types de billets' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
-  findTypes(@Param('eventId') eventId: string) {
+  findTypes(@Param('eventId', ParseObjectIdPipe) eventId: string) {
     return this.ticketsService.findTicketTypes(eventId);
+  }
+
+  @Get('events/:eventId/manage')
+  @Roles(Role.ORGANISATEUR)
+  @ApiOperation({ summary: "Lister les types de billets pour la gestion organisateur" })
+  findManagedTypes(
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
+    @CurrentUser() user: JwtPayload,
+  ) {
+    return this.ticketsService.findManagedTicketTypes(eventId, user.sub);
   }
 
   @Put(':id')
@@ -60,7 +71,7 @@ export class TicketTypesController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Type de billet introuvable' })
   updateType(
-    @Param('id') id: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTicketTypeDto,
   ) {
@@ -76,7 +87,7 @@ export class TicketTypesController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Type de billet introuvable' })
-  removeType(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  removeType(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.ticketsService.removeTicketType(id, user.sub);
   }
 }

@@ -22,6 +22,7 @@ import {
   VendorRequest,
   VendorRequestSchema,
 } from '../vendors/vendor.schema';
+import { InvitationsModule } from '../invitations/invitations.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import {
     ]),
     JwtModule.register({}),
     MediaModule,
+    InvitationsModule,
   ],
   controllers: [EventsController],
   providers: [EventsService, EventMediaService, EventAccessService],
