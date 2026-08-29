@@ -5,12 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
-import { Types } from 'mongoose';
+import { ClientSession, Types } from 'mongoose';
 import { TicketsService } from './tickets.service';
 import { TicketType, TicketPurchase, TicketPurchaseStatus, TicketPurchaseSchema } from './ticket.schema';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { Event } from '../events/event.schema';
 import { EventAccessService } from '../events/event-access.service';
+import { IdempotencyService } from '../../shared/consistency/idempotency/idempotency.service';
+import { InsufficientCapacityError } from '../../shared/consistency/errors/consistency.errors';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -21,7 +23,7 @@ afterEach(async () => {
 
 const makeChainable = (value: unknown) => {
   const chain: Record<string, unknown> = {};
-  ['lean', 'select', 'sort', 'skip', 'limit', 'populate'].forEach(
+  ['lean', 'select', 'sort', 'skip', 'limit', 'populate', 'session'].forEach(
     (m) => { chain[m] = jest.fn().mockReturnValue(chain); },
   );
   chain['then'] = (res?: (v: unknown) => unknown) => Promise.resolve(value).then(res);
@@ -34,6 +36,16 @@ describe('TicketsService', () => {
   let ticketTypeModel: Record<string, jest.Mock>;
   let ticketPurchaseModel: Record<string, jest.Mock>;
   let eventModel: Record<string, jest.Mock>;
+  let idempotencyService: { execute: jest.Mock };
+
+  const mockSession = {} as ClientSession;
+
+  const idempotencyPassthrough = (execute: jest.Mock) => {
+    execute.mockImplementation(
+      async (params: { operation: (s: ClientSession) => Promise<unknown> }) =>
+        params.operation(mockSession),
+    );
+  };
 
   const organizerId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
@@ -67,6 +79,8 @@ describe('TicketsService', () => {
     qrCode: 'ABCD-EFGH-IJKL',
     status: TicketPurchaseStatus.VALID,
     event: { toString: () => eventId },
+    ticketType: { toString: () => ticketTypeId },
+    price: 0,
     scannedAt: undefined,
     toObject: jest.fn().mockReturnThis(),
     ...overrides,
@@ -79,6 +93,7 @@ describe('TicketsService', () => {
       findById: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
+      findOneAndUpdate: jest.fn(),
       create: jest.fn(),
     };
 
@@ -95,6 +110,9 @@ describe('TicketsService', () => {
       findById: jest.fn(),
     };
 
+    idempotencyService = { execute: jest.fn() };
+    idempotencyPassthrough(idempotencyService.execute);
+
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
     ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType()));
     ticketTypeModel.find.mockReturnValue(makeChainable([mockTicketType()]));
@@ -106,6 +124,7 @@ describe('TicketsService', () => {
         { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: EventAccessService, useValue: { buildActor: jest.fn().mockResolvedValue({ userId: buyerId }) } },
+        { provide: IdempotencyService, useValue: idempotencyService },
       ],
     }).compile();
 
@@ -277,44 +296,90 @@ describe('TicketsService', () => {
 
   // ── purchase ──
   describe('purchase', () => {
+    const IDEM_KEY = 'test-idempotency-key-abc';
     const dto = { ticketTypeId, quantity: 2, guestEmail: undefined };
     const freeTT = mockTicketType({ isFree: true, quantity: 10, sold: 0, price: 0 });
 
-    it('crée les billets gratuits et retourne les achats', async () => {
+    it('réserve le stock atomiquement et crée les billets séquentiellement', async () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(freeTT));
+      ticketTypeModel.findOneAndUpdate.mockResolvedValue(freeTT);
       const purchase = mockPurchase();
-      ticketPurchaseModel.create.mockResolvedValue(purchase);
-      ticketTypeModel.findByIdAndUpdate.mockResolvedValue({});
+      ticketPurchaseModel.create.mockResolvedValue([purchase]);
 
-      const result = await service.purchase(buyerId, dto as never);
+      const result = await service.purchase(buyerId, dto as never, IDEM_KEY);
 
-      expect(ticketPurchaseModel.create).toHaveBeenCalledTimes(2);
-      expect(ticketTypeModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        dto.ticketTypeId,
+      // Réservation atomique dans la transaction
+      expect(ticketTypeModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          _id: expect.any(Types.ObjectId),
+          $expr: expect.objectContaining({ $lte: expect.any(Array) }),
+        }),
         { $inc: { sold: 2 } },
+        expect.objectContaining({ new: true, session: mockSession }),
+      );
+      // Création séquentielle — une fois par billet
+      expect(ticketPurchaseModel.create).toHaveBeenCalledTimes(2);
+      expect(ticketPurchaseModel.create).toHaveBeenCalledWith(
+        [expect.objectContaining({ status: TicketPurchaseStatus.VALID })],
+        { session: mockSession },
       );
       expect(result).toHaveLength(2);
+      expect(result[0]).toEqual(expect.objectContaining({
+        event: eventId,
+        ticketType: ticketTypeId,
+        price: 0,
+        status: TicketPurchaseStatus.VALID,
+      }));
+    });
+
+    it('passe scope, actorId et idempotencyKey à IdempotencyService', async () => {
+      ticketTypeModel.findById.mockReturnValue(makeChainable(freeTT));
+      ticketTypeModel.findOneAndUpdate.mockResolvedValue(freeTT);
+      ticketPurchaseModel.create.mockResolvedValue([mockPurchase()]);
+
+      await service.purchase(buyerId, dto as never, IDEM_KEY);
+
+      expect(idempotencyService.execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          scope: 'ticket-purchase',
+          actorId: buyerId,
+          idempotencyKey: IDEM_KEY,
+          payload: { ticketTypeId, quantity: 2 },
+        }),
+      );
+    });
+
+    it('lève InsufficientCapacityError si la réservation atomique échoue (race condition)', async () => {
+      ticketTypeModel.findById.mockReturnValue(makeChainable(freeTT));
+      ticketTypeModel.findOneAndUpdate.mockResolvedValue(null); // DB guard catches race
+
+      await expect(service.purchase(buyerId, dto as never, IDEM_KEY))
+        .rejects.toBeInstanceOf(InsufficientCapacityError);
+      expect(ticketPurchaseModel.create).not.toHaveBeenCalled();
     });
 
     it('lève BadRequestException si le billet est payant', async () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType({ isFree: false })));
 
-      await expect(service.purchase(buyerId, dto as never)).rejects.toThrow(BadRequestException);
+      await expect(service.purchase(buyerId, dto as never, IDEM_KEY)).rejects.toThrow(BadRequestException);
+      expect(idempotencyService.execute).toHaveBeenCalled();
     });
 
-    it('lève BadRequestException si le stock est insuffisant', async () => {
+    it('lève InsufficientCapacityError si le stock est insuffisant (vérification applicative)', async () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(
         mockTicketType({ isFree: true, quantity: 1, sold: 1 }),
       ));
 
-      await expect(service.purchase(buyerId, { ...dto, quantity: 2 } as never))
-        .rejects.toThrow(BadRequestException);
+      await expect(service.purchase(buyerId, { ...dto, quantity: 2 } as never, IDEM_KEY))
+        .rejects.toBeInstanceOf(InsufficientCapacityError);
+      expect(idempotencyService.execute).toHaveBeenCalled();
     });
 
     it("lève NotFoundException si le type de billet n'existe pas", async () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(null));
 
-      await expect(service.purchase(buyerId, dto as never)).rejects.toThrow(NotFoundException);
+      await expect(service.purchase(buyerId, dto as never, IDEM_KEY)).rejects.toThrow(NotFoundException);
+      expect(idempotencyService.execute).toHaveBeenCalled();
     });
   });
 
@@ -365,16 +430,8 @@ describe('TicketsService', () => {
     });
   });
 
-  // ── purchase — validation achat invité (CDC v3) ──
-  describe('purchase — validation achat invité (CDC v3)', () => {
-    it('devrait créer un achat avec guestEmail si buyerId est null', () => {
-      const dto = new PurchaseTicketDto();
-      dto.guestEmail = 'jean@example.com';
-      dto.guestName = 'Jean Tremblay';
-      expect(dto.guestEmail).toBe('jean@example.com');
-      expect(dto.guestName).toBe('Jean Tremblay');
-    });
-
+  // ── purchase — identité authentifiée ──
+  describe('purchase — identité authentifiée', () => {
     it('devrait avoir guestName dans le schéma TicketPurchase', () => {
       const guestNamePath = TicketPurchaseSchema.path('guestName');
       expect(guestNamePath).toBeDefined();
@@ -385,7 +442,7 @@ describe('TicketsService', () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(freeTT));
 
       await expect(
-        service.purchase(null as unknown as string, { ticketTypeId, quantity: 1 } as PurchaseTicketDto),
+        service.purchase(null as unknown as string, { ticketTypeId, quantity: 1 } as PurchaseTicketDto, 'key'),
       ).rejects.toThrow(BadRequestException);
     });
   });

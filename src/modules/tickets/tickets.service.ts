@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import {
   TicketType,
   TicketTypeDocument,
@@ -20,10 +20,27 @@ import { Event, EventDiscoverability, EventDocument, EventStatus } from '../even
 import { generateQRCode } from '../../shared/utils/qr-code';
 import { EventAccessService } from '../events/event-access.service';
 import { canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
+import { IdempotencyService } from '../../shared/consistency/idempotency/idempotency.service';
+import { InsufficientCapacityError } from '../../shared/consistency/errors/consistency.errors';
 
 export type ScanResult = {
   purchase: TicketPurchase & { _id: Types.ObjectId };
   message: string;
+};
+
+export type TicketPurchaseResult = {
+  _id: string;
+  event: string;
+  ticketType: string;
+  price: number;
+  qrCode?: string;
+  status: TicketPurchaseStatus;
+};
+
+/** Projection minimale retournée à PaymentsService pour finalisation + email. */
+export type CreatedPurchaseInfo = {
+  _id: Types.ObjectId;
+  qrCode?: string;
 };
 
 @Injectable()
@@ -33,6 +50,7 @@ export class TicketsService {
     @InjectModel(TicketPurchase.name) private readonly ticketPurchaseModel: Model<TicketPurchaseDocument>,
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
     private readonly eventAccessService: EventAccessService,
+    private readonly idempotencyService: IdempotencyService,
   ) {}
 
   private async assertEventOwner(eventId: string, organizerId: string): Promise<void> {
@@ -110,102 +128,158 @@ export class TicketsService {
   async findMyTickets(buyerId: string): Promise<TicketPurchase[]> {
     return this.ticketPurchaseModel
       .find({ buyerId: new Types.ObjectId(buyerId) })
-      .populate('event', 'title startDate')
-      .populate('ticketType', 'name price')
+      .populate('event', 'title startDate slug')
+      .populate('ticketType', 'name price isFree')
       .lean()
-      .select('-__v');
+      .select('-__v')
+      .sort({ createdAt: -1 });
   }
 
   // Achat direct de billets gratuits (les billets payants passent par Stripe)
-  async purchase(buyerId: string | null, dto: PurchaseTicketDto): Promise<TicketPurchase[]> {
-    if (!buyerId && !dto.guestEmail) {
-      throw new BadRequestException('BUYER_OR_GUEST_REQUIRED');
-    }
+  async purchase(
+    buyerId: string,
+    dto: PurchaseTicketDto,
+    idempotencyKey: string,
+    accessGrant?: string,
+  ): Promise<TicketPurchaseResult[]> {
+    if (!buyerId) throw new BadRequestException('BUYER_REQUIRED');
 
-    const tt = await this.ticketTypeModel
-      .findById(dto.ticketTypeId)
-      .lean()
-      .select('event price isFree quantity sold');
+    return this.idempotencyService.execute<TicketPurchaseResult[]>({
+      scope: 'ticket-purchase',
+      actorId: buyerId,
+      idempotencyKey,
+      payload: { ticketTypeId: dto.ticketTypeId, quantity: dto.quantity },
+      operation: async (session: ClientSession) => {
+        const tt = await this.ticketTypeModel
+          .findById(dto.ticketTypeId)
+          .session(session)
+          .lean()
+          .select('event price isFree quantity sold');
 
-    if (!tt) throw new NotFoundException('Type de billet introuvable.');
-    if (!tt.isFree) {
-      throw new BadRequestException('Ce billet est payant. Veuillez passer par le module de paiement.');
-    }
+        if (!tt) throw new NotFoundException('Type de billet introuvable.');
+        if (!tt.isFree) {
+          throw new BadRequestException('Ce billet est payant. Veuillez passer par le module de paiement.');
+        }
 
-    const event = await this.eventModel.findById(tt.event).lean().select('-accessPolicy.codeHash');
-    if (!event) throw new NotFoundException('Événement introuvable.');
-    const actor = buyerId
-      ? await this.eventAccessService.buildActor(buyerId, tt.event.toString(), dto.accessGrant)
-      : { email: dto.guestEmail };
-    const decision = canPurchaseTicket(actor, normalizeLegacyEventAccess(event));
-    if (!decision.allowed) throw new ForbiddenException(decision.reason);
+        const event = await this.eventModel
+          .findById(tt.event)
+          .session(session)
+          .lean()
+          .select('-accessPolicy.codeHash');
+        if (!event) throw new NotFoundException('Événement introuvable.');
 
-    const available = tt.quantity - tt.sold;
-    if (available < dto.quantity) {
-      throw new BadRequestException(`Seulement ${available} billet(s) disponible(s).`);
-    }
+        const actor = await this.eventAccessService.buildActor(
+          buyerId,
+          tt.event.toString(),
+          accessGrant,
+          session,
+        );
+        const decision = canPurchaseTicket(actor, normalizeLegacyEventAccess(event));
+        if (!decision.allowed) throw new ForbiddenException(decision.reason);
 
-    const purchases = await Promise.all(
-      Array.from({ length: dto.quantity }, () =>
-        this.ticketPurchaseModel.create({
-          event: tt.event,
-          ticketType: new Types.ObjectId(dto.ticketTypeId),
-          buyerId: buyerId ? new Types.ObjectId(buyerId) : null,
-          guestEmail: dto.guestEmail,
-          guestName: dto.guestName ?? null,
-          price: tt.price,
-          qrCode: generateQRCode(dto.ticketTypeId),
-          status: TicketPurchaseStatus.VALID,
-        }),
-      ),
-    );
+        // Réservation atomique du stock — DB comme dernière ligne de défense
+        const reserved = await this.ticketTypeModel.findOneAndUpdate(
+          {
+            _id: new Types.ObjectId(dto.ticketTypeId),
+            isFree: true,
+            $expr: { $lte: [{ $add: ['$sold', dto.quantity] }, '$quantity'] },
+          },
+          { $inc: { sold: dto.quantity } },
+          { new: true, session },
+        );
+        if (!reserved) throw new InsufficientCapacityError();
 
-    await this.ticketTypeModel.findByIdAndUpdate(dto.ticketTypeId, { $inc: { sold: dto.quantity } });
-
-    return purchases.map((p) => p.toObject()) as TicketPurchase[];
+        // Création séquentielle — jamais Promise.all dans une transaction MongoDB
+        const purchases: TicketPurchaseResult[] = [];
+        for (let i = 0; i < dto.quantity; i++) {
+          const [p] = await this.ticketPurchaseModel.create(
+            [
+              {
+                event: reserved.event,
+                ticketType: new Types.ObjectId(dto.ticketTypeId),
+                buyerId: new Types.ObjectId(buyerId),
+                guestEmail: null,
+                guestName: null,
+                price: reserved.price,
+                qrCode: generateQRCode(dto.ticketTypeId),
+                status: TicketPurchaseStatus.VALID,
+              },
+            ],
+            { session },
+          );
+          const created = p.toObject() as TicketPurchase & { _id: Types.ObjectId };
+          purchases.push({
+            _id: created._id.toString(),
+            event: created.event.toString(),
+            ticketType: created.ticketType.toString(),
+            price: created.price,
+            qrCode: created.qrCode,
+            status: created.status,
+          });
+        }
+        return purchases;
+      },
+      toReplayResult: (purchases) => purchases,
+    });
   }
 
-  // Crée des achats après confirmation Stripe (appelé par PaymentsService)
-  async createPurchasesFromCheckout(opts: {
-    ticketTypeId: string;
-    quantity: number;
-    buyerId: string | null;
-    guestEmail?: string;
-    price: number;
-    stripePaymentIntentId: string;
-  }): Promise<TicketPurchase[]> {
-    const tt = await this.ticketTypeModel
-      .findById(opts.ticketTypeId)
-      .lean()
-      .select('event quantity sold');
-
-    if (!tt) throw new NotFoundException('Type de billet introuvable.');
-
-    const available = tt.quantity - tt.sold;
-    if (available < opts.quantity) {
-      throw new BadRequestException(`Stock insuffisant pour créer les billets.`);
-    }
-
-    const purchases = await Promise.all(
-      Array.from({ length: opts.quantity }, () =>
-        this.ticketPurchaseModel.create({
-          event: tt.event,
-          ticketType: new Types.ObjectId(opts.ticketTypeId),
-          buyerId: opts.buyerId ? new Types.ObjectId(opts.buyerId) : null,
-          guestEmail: opts.guestEmail,
-          price: opts.price,
-          qrCode: generateQRCode(opts.ticketTypeId),
-          status: TicketPurchaseStatus.VALID,
-          stripePaymentIntentId: opts.stripePaymentIntentId,
-        }),
-      ),
+  /**
+   * Crée les billets après confirmation Stripe.
+   *
+   * Contrat :
+   * - Reçoit explicitement la ClientSession — toutes les mutations sont dans
+   *   la même transaction que la transition SUCCEEDED de la finalisation
+   *   (orchestrée par PaymentsService).
+   * - Réservation atomique du stock via $expr (dernière ligne de défense DB).
+   * - Création séquentielle des N billets — jamais Promise.all dans une transaction.
+   * - Retourne une projection minimale (id + qrCode) — la finalisation stocke
+   *   les ids, l'email consomme les qrCodes.
+   */
+  async createPurchasesFromCheckout(
+    opts: {
+      ticketTypeId: string;
+      quantity: number;
+      buyerId: string | null;
+      guestEmail?: string;
+      price: number;
+      stripePaymentIntentId: string;
+    },
+    session: ClientSession,
+  ): Promise<CreatedPurchaseInfo[]> {
+    // Réservation atomique — jamais findById + check + $inc séparés
+    const reserved = await this.ticketTypeModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(opts.ticketTypeId),
+        isFree: false,
+        $expr: { $lte: [{ $add: ['$sold', opts.quantity] }, '$quantity'] },
+      },
+      { $inc: { sold: opts.quantity } },
+      { new: true, session },
     );
+    if (!reserved) throw new InsufficientCapacityError();
 
-    await this.ticketTypeModel.findByIdAndUpdate(opts.ticketTypeId, {
-      $inc: { sold: opts.quantity },
-    });
-
-    return purchases.map((p) => p.toObject()) as TicketPurchase[];
+    // Création séquentielle — jamais Promise.all dans une transaction MongoDB
+    const created: CreatedPurchaseInfo[] = [];
+    for (let i = 0; i < opts.quantity; i++) {
+      const [p] = await this.ticketPurchaseModel.create(
+        [
+          {
+            event: reserved.event,
+            ticketType: new Types.ObjectId(opts.ticketTypeId),
+            buyerId: opts.buyerId ? new Types.ObjectId(opts.buyerId) : null,
+            guestEmail: opts.guestEmail ?? null,
+            price: opts.price,
+            qrCode: generateQRCode(opts.ticketTypeId),
+            status: TicketPurchaseStatus.VALID,
+            stripePaymentIntentId: opts.stripePaymentIntentId,
+          },
+        ],
+        { session },
+      );
+      const doc = p as TicketPurchase & { _id: Types.ObjectId; qrCode?: string };
+      created.push({ _id: doc._id, qrCode: doc.qrCode });
+    }
+    return created;
   }
 
   async scan(qrCode: string, organizerId: string): Promise<ScanResult> {

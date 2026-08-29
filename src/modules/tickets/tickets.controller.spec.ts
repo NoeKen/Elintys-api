@@ -130,14 +130,33 @@ describe('TicketsController', () => {
 
   // ── POST /tickets/purchase ──
   describe('purchase', () => {
-    it('délègue à ticketsService.purchase avec user.sub et le DTO', async () => {
+    it('délègue à ticketsService.purchase avec user.sub, le DTO, la clé et le grant', async () => {
       const dto: PurchaseTicketDto = { ticketTypeId: 'tt-id', quantity: 2 };
       mockTicketsService.purchase.mockResolvedValue([{ _id: 'p1' }, { _id: 'p2' }]);
 
-      const result = await controller.purchase(mockUser, dto);
+      const result = await controller.purchase(mockUser, dto, 'idem-key-123', 'grant-xyz');
 
-      expect(mockTicketsService.purchase).toHaveBeenCalledWith(mockUser.sub, dto);
+      expect(mockTicketsService.purchase).toHaveBeenCalledWith(
+        mockUser.sub,
+        dto,
+        'idem-key-123',
+        'grant-xyz',
+      );
       expect(result).toHaveLength(2);
+    });
+
+    it("n'invente pas de grant si le header X-Event-Access-Grant est absent", async () => {
+      const dto: PurchaseTicketDto = { ticketTypeId: 'tt-id', quantity: 1 };
+      mockTicketsService.purchase.mockResolvedValue([{ _id: 'p1' }]);
+
+      await controller.purchase(mockUser, dto, 'idem-key-456', undefined);
+
+      expect(mockTicketsService.purchase).toHaveBeenCalledWith(
+        mockUser.sub,
+        dto,
+        'idem-key-456',
+        undefined,
+      );
     });
   });
 

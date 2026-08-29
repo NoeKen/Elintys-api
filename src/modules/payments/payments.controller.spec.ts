@@ -40,9 +40,13 @@ describe('PaymentsController', () => {
         sessionUrl: 'https://checkout.stripe.com/pay/xxx',
       });
 
-      const result = await controller.createCheckoutSession(dto as never, mockUser as never);
+      const result = await controller.createCheckoutSession(dto as never, mockUser as never, 'grant-token');
 
-      expect(mockPaymentsService.createCheckoutSession).toHaveBeenCalledWith(dto, mockUser.sub);
+      expect(mockPaymentsService.createCheckoutSession).toHaveBeenCalledWith(
+        dto,
+        mockUser.sub,
+        'grant-token',
+      );
       expect(result.sessionUrl).toBe('https://checkout.stripe.com/pay/xxx');
     });
   });

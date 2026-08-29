@@ -436,6 +436,9 @@ export class EventsService {
         type: accessType,
         ...(event.accessPolicy?.requiresAuthentication ? { requiresAuthentication: true } : {}),
         ...(accessType === EventAccessPolicyType.ACCESS_CODE ? { hasAccessCode: true } : {}),
+        ...(accessType === EventAccessPolicyType.EMAIL_DOMAIN
+          ? { allowedDomains: event.accessPolicy?.allowedDomains ?? [] }
+          : {}),
       },
       admissionModes: event.admissionModes,
       ...(input.organizer?.fullName ? { organizer: { name: input.organizer.fullName } } : {}),

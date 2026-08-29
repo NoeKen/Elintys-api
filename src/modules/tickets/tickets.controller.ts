@@ -3,13 +3,14 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
   Post,
   Put,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiHeader, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
 import { TicketsService } from './tickets.service';
 import { CreateTicketTypeDto } from './dto/create-ticket-type.dto';
 import { UpdateTicketTypeDto } from './dto/update-ticket-type.dto';
@@ -109,12 +110,19 @@ export class TicketsController {
   @Post('purchase')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Acheter des billets gratuits directement' })
+  @ApiHeader({ name: 'Idempotency-Key', required: true, description: "Clé unique de la tentative d'achat" })
+  @ApiHeader({ name: 'X-Event-Access-Grant', required: false, description: "Jeton d'accès court terme" })
   @ApiResponse({ status: 201, description: 'Billets créés avec succès' })
   @ApiResponse({ status: 400, description: 'Billet payant ou stock insuffisant' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 404, description: 'Type de billet introuvable' })
-  purchase(@CurrentUser() user: JwtPayload, @Body() dto: PurchaseTicketDto) {
-    return this.ticketsService.purchase(user.sub, dto);
+  purchase(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: PurchaseTicketDto,
+    @Headers('idempotency-key') idempotencyKey = '',
+    @Headers('x-event-access-grant') accessGrantHeader?: string,
+  ) {
+    return this.ticketsService.purchase(user.sub, dto, idempotencyKey, accessGrantHeader);
   }
 
   @Post('scan')

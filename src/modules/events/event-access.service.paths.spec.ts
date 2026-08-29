@@ -412,6 +412,22 @@ describe('EventAccessService — requestAccess', () => {
     });
     await expect(service.requestAccess(eventId, userId)).rejects.toThrow(ConflictException);
   });
+
+  it('devrait propager une erreur de persistance qui n’est pas un doublon', async () => {
+    const persistenceError = new Error('storage unavailable');
+    const service = makeService({
+      eventModel: {
+        findById: () => leanSelect({
+          status: EventStatus.PUBLISHED,
+          archivedAt: null,
+          accessPolicy: { type: EventAccessPolicyType.MANUAL_APPROVAL },
+        }),
+      },
+      requestModel: { create: jest.fn().mockRejectedValue(persistenceError) },
+    });
+
+    await expect(service.requestAccess(eventId, userId)).rejects.toBe(persistenceError);
+  });
 });
 
 describe('EventAccessService — reviewRequest (ownership)', () => {
@@ -527,6 +543,52 @@ describe('EventAccessService — buildActor', () => {
     expect(actor.email).toBeUndefined();
     expect(actor.isOnGuestList).toBe(false);
   });
+
+  it('devrait sérialiser toutes les lectures sur la session transactionnelle', async () => {
+    const session = {};
+    const sessionCalls: unknown[] = [];
+    const query = (value: unknown) => {
+      const chain = {
+        lean: () => chain,
+        select: () => chain,
+        session: (received: unknown) => {
+          sessionCalls.push(received);
+          return chain;
+        },
+        then: (resolve: (result: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+          Promise.resolve(value).then(resolve, reject),
+      };
+      return chain;
+    };
+    const service = makeService({
+      userModel: { findById: () => query({ email: 'a@b.ca', isEmailVerified: true, roles: [] }) },
+      requestModel: { findOne: () => query({ _id: 'r' }) },
+      guestModel: { findOne: () => query({ _id: 'g' }) },
+      invitationModel: { findOne: () => query({ _id: 'i' }) },
+    });
+
+    const actor = await service.buildActor(userId, eventId, undefined, session as never);
+
+    expect(actor).toMatchObject({
+      hasApprovedRequest: true,
+      isOnGuestList: true,
+      hasInvitation: true,
+    });
+    expect(sessionCalls).toEqual([session, session, session, session]);
+  });
+
+  it('devrait rejeter silencieusement un grant valide pour un autre événement', async () => {
+    const service = makeActorService({
+      user: { email: 'a@b.ca', isEmailVerified: true, roles: [] },
+    });
+    jest.spyOn(service, 'resolveAccessGrant').mockResolvedValue({
+      _id: new Types.ObjectId(),
+    } as never);
+
+    const actor = await service.buildActor(userId, eventId, 'grant-valide-autre-evenement');
+
+    expect(actor.accessGrant).toBe(false);
+  });
 });
 
 describe('EventAccessService — assertRegistrationAllowed', () => {
@@ -610,5 +672,37 @@ describe('EventAccessService — findAuthorizedEvent', () => {
     }).findAuthorizedEvent(eventId, userId);
     expect(event).toMatchObject({ title: 'Legacy' });
     expect(event).not.toHaveProperty('visibility');
+  });
+});
+
+describe('EventAccessService — getMyRequest', () => {
+  const eventId = new Types.ObjectId().toString();
+  const userId = new Types.ObjectId().toString();
+  const manualEvent = {
+    status: EventStatus.PUBLISHED,
+    archivedAt: null,
+    accessPolicy: { type: EventAccessPolicyType.MANUAL_APPROVAL },
+  };
+
+  function serviceFor(event: unknown, request: unknown) {
+    return makeService({
+      eventModel: { findById: () => leanSelect(event) },
+      requestModel: { findOne: () => leanSelect(request) },
+    });
+  }
+
+  it("retourne 'none' sans demande et le statut réel lorsqu'elle existe", async () => {
+    await expect(serviceFor(manualEvent, null).getMyRequest(eventId, userId)).resolves.toEqual({ status: 'none' });
+    await expect(serviceFor(manualEvent, { status: EventAccessRequestStatus.PENDING }).getMyRequest(eventId, userId))
+      .resolves.toMatchObject({ status: 'pending' });
+  });
+
+  it('masque un événement introuvable ou non publié', async () => {
+    await expect(serviceFor(null, null).getMyRequest(eventId, userId)).rejects.toThrow(NotFoundException);
+  });
+
+  it("refuse lorsque l'approbation manuelle n'est pas active", async () => {
+    await expect(serviceFor({ ...manualEvent, accessPolicy: { type: EventAccessPolicyType.OPEN } }, null)
+      .getMyRequest(eventId, userId)).rejects.toThrow(BadRequestException);
   });
 });

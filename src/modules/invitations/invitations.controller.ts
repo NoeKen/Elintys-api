@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import { InvitationsService } from './invitations.service';
 import { CreateInvitationDto } from './dto/create-invitation.dto';
+import { QueryEventInvitationsDto } from './dto/query-event-invitations.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Throttle } from '@nestjs/throttler';
@@ -21,6 +22,11 @@ export class InvitationsController {
   @Get('me')
   findMine(@CurrentUser() user: JwtPayload) {
     return this.invitationsService.getMyInvitations(user.sub);
+  }
+
+  @Get('received')
+  findReceived(@CurrentUser() user: JwtPayload, @Query() query: QueryEventInvitationsDto) {
+    return this.invitationsService.findReceived(user.sub, { page: query.page ?? 1, limit: query.limit ?? 25 });
   }
 
   @Public()

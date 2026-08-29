@@ -4,6 +4,7 @@ import { TicketTypesController, TicketsController } from './tickets.controller';
 import { TicketsService } from './tickets.service';
 import { TicketType, TicketTypeSchema, TicketPurchase, TicketPurchaseSchema } from './ticket.schema';
 import { EventsModule } from '../events/events.module';
+import { ConsistencyModule } from '../../shared/consistency/consistency.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { EventsModule } from '../events/events.module';
       { name: TicketPurchase.name, schema: TicketPurchaseSchema },
     ]),
     EventsModule,
+    ConsistencyModule,
   ],
   controllers: [TicketTypesController, TicketsController],
   providers: [TicketsService],

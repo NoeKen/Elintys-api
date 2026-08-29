@@ -480,6 +480,29 @@ describe('EventsService', () => {
       // Act & Assert
       await expect(service.findBySlug('slug-inexistant')).rejects.toThrow(NotFoundException);
     });
+
+    it('expose les domaines autorisés uniquement pour la politique email_domain', async () => {
+      const event = mockEvent({
+        slug: 'rencontre-privee',
+        status: EventStatus.PUBLISHED,
+        accessPolicy: {
+          type: EventAccessPolicyType.EMAIL_DOMAIN,
+          allowedDomains: ['elintys.ca'],
+          requiresAuthentication: true,
+        },
+      });
+      eventModel.findOne.mockReturnValue(makeChainable(event));
+      eventModel.find.mockReturnValue(makeChainable([]));
+
+      const result = await service.findBySlug('rencontre-privee');
+
+      expect(result.accessPolicy).toMatchObject({
+        type: EventAccessPolicyType.EMAIL_DOMAIN,
+        allowedDomains: ['elintys.ca'],
+        requiresAuthentication: true,
+      });
+      expect(JSON.stringify(result)).not.toMatch(/codeHash/);
+    });
   });
 
   // ── findByOrganizer ──

@@ -39,6 +39,22 @@ export interface PaginatedOrganizerInvitationsDto {
   limit: number;
 }
 
+export interface ReceivedInvitationDto extends OrganizerInvitationDto {
+  event?: {
+    _id: string;
+    title: string;
+    slug: string;
+    startDate?: string;
+  };
+}
+
+export interface PaginatedReceivedInvitationsDto {
+  data: ReceivedInvitationDto[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
 @Injectable()
 export class InvitationsService {
   private readonly logger = new Logger(InvitationsService.name);
@@ -120,11 +136,11 @@ export class InvitationsService {
     return this.invitationModel
       .find({ invitedBy: new Types.ObjectId(invitedById) })
       .lean()
-      .select('-token -tokenHash')
+      .select('-token -tokenHash -tokenPrefix')
       .exec();
   }
 
-  async acceptInvitation(token: string): Promise<InvitationDocument> {
+  async acceptInvitation(token: string): Promise<Record<string, unknown>> {
     const invitation = await this.invitationModel
       .findOneAndUpdate(
         {
@@ -144,7 +160,10 @@ export class InvitationsService {
     if (!invitation) {
       throw new NotFoundException(ErrorCodes.INVITATION_NOT_FOUND);
     }
-    return invitation;
+    const serialized = typeof invitation.toObject === 'function'
+      ? invitation.toObject()
+      : invitation;
+    return this.toSafeInvitation(serialized as unknown as Record<string, unknown>);
   }
 
   async markConverted(token: string, userId: string): Promise<void> {
@@ -211,6 +230,57 @@ export class InvitationsService {
     return { data, total, page, limit };
   }
 
+  async findReceived(
+    userId: string,
+    options: { page: number; limit: number },
+  ): Promise<PaginatedReceivedInvitationsDto> {
+    const user = await this.userModel.findById(userId).lean().select('email isEmailVerified');
+    if (!user?.isEmailVerified) throw new ForbiddenException('VERIFIED_EMAIL_REQUIRED');
+
+    const filter = { email: user.email.toLowerCase(), type: InvitationType.PARTICIPANT };
+    const [invitations, total] = await Promise.all([
+      this.invitationModel
+        .find(filter)
+        .lean()
+        .select('-tokenHash -token -tokenPrefix -__v')
+        .populate('eventId', 'title slug startDate')
+        .sort({ createdAt: -1 })
+        .skip((options.page - 1) * options.limit)
+        .limit(options.limit)
+        .exec(),
+      this.invitationModel.countDocuments(filter),
+    ]);
+
+    const data = invitations.map((inv) => {
+      const event = inv.eventId && typeof inv.eventId === 'object'
+        ? inv.eventId as unknown as { _id: Types.ObjectId; title: string; slug: string; startDate?: Date }
+        : undefined;
+      return {
+        _id: String(inv._id),
+        email: inv.email,
+        name: inv.name,
+        type: inv.type,
+        status: inv.status,
+        maxUses: inv.maxUses,
+        useCount: inv.useCount,
+        expiresAt: inv.expiresAt instanceof Date ? inv.expiresAt.toISOString() : String(inv.expiresAt),
+        createdAt: (inv as unknown as { createdAt: Date }).createdAt instanceof Date
+          ? (inv as unknown as { createdAt: Date }).createdAt.toISOString()
+          : String((inv as unknown as { createdAt: unknown }).createdAt),
+        ...(event ? {
+          event: {
+            _id: String(event._id),
+            title: event.title,
+            slug: event.slug,
+            ...(event.startDate ? { startDate: event.startDate.toISOString() } : {}),
+          },
+        } : {}),
+      };
+    });
+
+    return { data, total, page: options.page, limit: options.limit };
+  }
+
   private hashToken(token: string): string {
     return createHash('sha256').update(token).digest('hex');
   }
@@ -252,7 +322,7 @@ export class InvitationsService {
   }
 
   private toSafeInvitation(invitation: Record<string, unknown>): Record<string, unknown> {
-    const { token: _legacy, tokenHash: _hash, ...safe } = invitation;
+    const { token: _legacy, tokenHash: _hash, tokenPrefix: _prefix, ...safe } = invitation;
     return safe;
   }
 }

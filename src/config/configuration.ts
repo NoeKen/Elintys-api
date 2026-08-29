@@ -40,6 +40,8 @@ export default () => {
     stripe: {
       secretKey: process.env.STRIPE_SECRET_KEY,
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+      // Fail closed: paid checkout is unsafe until stock is reserved before payment.
+      checkoutEnabled: process.env.PAID_CHECKOUT_ENABLED === 'true',
     },
     resend: {
       apiKey: process.env.RESEND_API_KEY,

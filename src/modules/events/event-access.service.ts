@@ -10,7 +10,7 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import * as bcrypt from 'bcrypt';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { User, UserDocument } from '../auth/user.schema';
 import { Guest, GuestDocument } from '../guests/guest.schema';
 import {
@@ -140,7 +140,7 @@ export class EventAccessService {
     return { authorized: true, accessGrant };
   }
 
-  async resolveAccessGrant(token: string): Promise<Event> {
+  async resolveAccessGrant(token: string, session?: ClientSession): Promise<Event> {
     try {
       const secret = this.configService.getOrThrow<string>('jwt.secret');
       const payload = await this.jwtService.verifyAsync<AccessGrantPayload>(token, {
@@ -148,10 +148,12 @@ export class EventAccessService {
         audience: 'elintys-event-access',
       });
       if (payload.purpose !== 'event-access') throw new Error('invalid purpose');
-      const event = await this.eventModel
+      const eventQuery = this.eventModel
         .findOne({ _id: payload.eventId, status: EventStatus.PUBLISHED, archivedAt: null })
         .lean()
         .select('-__v -accessPolicy.codeHash');
+      if (session) eventQuery.session(session);
+      const event = await eventQuery;
       if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
       return this.toPublicEvent(event);
     } catch (error) {
@@ -244,27 +246,57 @@ export class EventAccessService {
     return updated;
   }
 
-  async buildActor(userId: string, eventId: string, accessGrant?: string): Promise<EventActor> {
-    const user = await this.userModel.findById(userId).lean().select('email isEmailVerified roles');
-    const [request, guest, invitation] = await Promise.all([
-      this.requestModel.findOne({ eventId: new Types.ObjectId(eventId), userId: new Types.ObjectId(userId), status: EventAccessRequestStatus.APPROVED }).lean().select('_id'),
-      user?.email
-        ? this.guestModel.findOne({ event: new Types.ObjectId(eventId), email: user.email.toLowerCase() }).lean().select('_id')
-        : null,
-      user?.email
-        ? this.invitationModel.findOne({
+  async buildActor(
+    userId: string,
+    eventId: string,
+    accessGrant?: string,
+    session?: ClientSession,
+  ): Promise<EventActor> {
+    const userQuery = this.userModel.findById(userId).lean().select('email isEmailVerified roles');
+    if (session) userQuery.session(session);
+    const user = await userQuery;
+
+    const requestQuery = this.requestModel
+      .findOne({
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(userId),
+        status: EventAccessRequestStatus.APPROVED,
+      })
+      .lean()
+      .select('_id');
+    if (session) requestQuery.session(session);
+
+    const guestQuery = user?.email
+      ? this.guestModel
+          .findOne({ event: new Types.ObjectId(eventId), email: user.email.toLowerCase() })
+          .lean()
+          .select('_id')
+      : null;
+    if (session && guestQuery) guestQuery.session(session);
+
+    const invitationQuery = user?.email
+      ? this.invitationModel
+          .findOne({
             eventId: new Types.ObjectId(eventId),
             email: user.email.toLowerCase(),
             type: InvitationType.PARTICIPANT,
             status: InvitationStatus.ACCEPTED,
             expiresAt: { $gt: new Date() },
-          }).lean().select('_id')
-        : null,
-    ]);
+          })
+          .lean()
+          .select('_id')
+      : null;
+    if (session && invitationQuery) invitationQuery.session(session);
+
+    // MongoDB interdit les opérations parallèles sur une même transaction.
+    // Hors transaction, on conserve les lectures concurrentes pour la latence.
+    const [request, guest, invitation] = session
+      ? [await requestQuery, guestQuery ? await guestQuery : null, invitationQuery ? await invitationQuery : null]
+      : await Promise.all([requestQuery, guestQuery, invitationQuery]);
     let accessGrantValid = false;
     if (accessGrant) {
       try {
-        const resolved = await this.resolveAccessGrant(accessGrant);
+        const resolved = await this.resolveAccessGrant(accessGrant, session);
         accessGrantValid = String((resolved as Event & { _id: unknown })._id) === eventId;
       } catch { accessGrantValid = false; }
     }
@@ -278,6 +310,27 @@ export class EventAccessService {
       isOnGuestList: Boolean(guest),
       hasInvitation: Boolean(invitation),
     };
+  }
+
+  async getMyRequest(
+    eventId: string,
+    userId: string,
+  ): Promise<{ status: string; requestedAt?: Date; reviewedAt?: Date }> {
+    const [event, request] = await Promise.all([
+      this.eventModel.findById(eventId).lean().select('accessPolicy status archivedAt'),
+      this.requestModel
+        .findOne({ eventId: new Types.ObjectId(eventId), userId: new Types.ObjectId(userId) })
+        .lean()
+        .select('status requestedAt reviewedAt'),
+    ]);
+    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) {
+      throw new NotFoundException('EVENT_NOT_FOUND');
+    }
+    if (event.accessPolicy?.type !== EventAccessPolicyType.MANUAL_APPROVAL) {
+      throw new BadRequestException('MANUAL_APPROVAL_NOT_ACTIVE');
+    }
+    if (!request) return { status: 'none' };
+    return { status: request.status, requestedAt: request.requestedAt, reviewedAt: request.reviewedAt };
   }
 
   assertRegistrationAllowed(actor: EventActor, event: Event): void {

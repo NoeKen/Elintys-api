@@ -23,6 +23,7 @@ import { InvitationsModule } from './modules/invitations/invitations.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { HealthModule } from './modules/health/health.module';
+import { EventRegistrationModule } from './modules/event-registration/event-registration.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { HealthModule } from './modules/health/health.module';
     NotificationsModule,
     WaitlistModule,
     HealthModule,
+    EventRegistrationModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ElintysThrottlerGuard }],
 })

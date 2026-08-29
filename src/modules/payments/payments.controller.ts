@@ -2,13 +2,14 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
   Post,
   Req,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiHeader, ApiOperation, ApiParam, ApiResponse } from '@nestjs/swagger';
 import { Request } from 'express';
 import { RawBodyRequest } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
@@ -26,6 +27,7 @@ export class PaymentsController {
   @Post('checkout')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Créer une session de paiement Stripe Checkout' })
+  @ApiHeader({ name: 'X-Event-Access-Grant', required: false, description: "Jeton d'accès court terme" })
   @ApiResponse({ status: 201, description: 'URL de la session Stripe retournée' })
   @ApiResponse({ status: 400, description: 'Billet gratuit ou stock insuffisant' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
@@ -33,8 +35,9 @@ export class PaymentsController {
   createCheckoutSession(
     @Body() dto: CreateCheckoutSessionDto,
     @CurrentUser() user: JwtPayload,
+    @Headers('x-event-access-grant') accessGrantHeader?: string,
   ): Promise<{ sessionUrl: string }> {
-    return this.paymentsService.createCheckoutSession(dto, user.sub);
+    return this.paymentsService.createCheckoutSession(dto, user.sub, accessGrantHeader);
   }
 
   @Public()

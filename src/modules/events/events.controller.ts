@@ -185,6 +185,11 @@ export class EventsController {
     return this.eventAccessService.requestAccess(id, user.sub, request.headers['x-request-id'] as string | undefined);
   }
 
+  @Get(':id/access/my-request')
+  getMyAccessRequest(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
+    return this.eventAccessService.getMyRequest(id, user.sub);
+  }
+
   @Get(':id/access/requests')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   listAccessRequests(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {

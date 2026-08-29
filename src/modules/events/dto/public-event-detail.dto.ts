@@ -94,6 +94,7 @@ export interface PublicEventDetail {
     type: EventAccessPolicyType;
     requiresAuthentication?: boolean;
     hasAccessCode?: boolean;
+    allowedDomains?: string[];
   };
   admissionModes: AdmissionMode[];
   organizer?: { name: string };

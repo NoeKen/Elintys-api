@@ -26,6 +26,7 @@ const mockInvitationModel = {
   findOne: jest.fn(),
   find: jest.fn(),
   findOneAndUpdate: jest.fn(),
+  countDocuments: jest.fn(),
 };
 
 const mockInvitedById = new Types.ObjectId().toString();
@@ -33,19 +34,28 @@ const mockInvitedById = new Types.ObjectId().toString();
 describe('InvitationsService', () => {
   let service: InvitationsService;
   const eventModel = { findById: jest.fn() };
+  const userModel = { findById: jest.fn() };
 
   beforeEach(async () => {
     testingModule = await Test.createTestingModule({
       providers: [
         InvitationsService,
         { provide: getModelToken(Invitation.name), useValue: mockInvitationModel },
-        { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue({ lean: jest.fn().mockReturnThis(), select: jest.fn().mockResolvedValue({ fullName: 'Test User' }) }) } },
+        { provide: getModelToken(User.name), useValue: userModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: EmailsService, useValue: { sendInvitationEmail: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
     service = testingModule.get<InvitationsService>(InvitationsService);
+    userModel.findById.mockReturnValue({
+      lean: jest.fn().mockReturnThis(),
+      select: jest.fn().mockResolvedValue({
+        fullName: 'Test User',
+        email: 'participant@example.com',
+        isEmailVerified: true,
+      }),
+    });
   });
 
   afterEach(() => jest.clearAllMocks());
@@ -286,19 +296,23 @@ describe('InvitationsService', () => {
       const mockInvitation = {
         _id: new Types.ObjectId(),
         token: 'valid-token',
+        tokenHash: 'hash-secret',
+        tokenPrefix: 'prefix',
         status: 'pending',
         expiresAt: new Date(Date.now() + 86400000),
-        save: jest.fn().mockResolvedValueOnce({
-          status: 'accepted',
-          acceptedAt: new Date(),
-        }),
+        toObject() {
+          return { ...this };
+        },
       };
       mockInvitationModel.findOneAndUpdate.mockReturnValue({
         exec: jest.fn().mockResolvedValueOnce(mockInvitation),
       });
 
       const result = await service.acceptInvitation('valid-token');
-      expect(result).toBe(mockInvitation);
+      expect(result).toMatchObject({ _id: mockInvitation._id, status: 'pending' });
+      expect(result).not.toHaveProperty('token');
+      expect(result).not.toHaveProperty('tokenHash');
+      expect(result).not.toHaveProperty('tokenPrefix');
       expect(mockInvitationModel.findOneAndUpdate).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'pending' }),
         expect.objectContaining({ $inc: { useCount: 1 } }),
@@ -318,6 +332,74 @@ describe('InvitationsService', () => {
 
       const result = await service.getMyInvitations(mockInvitedById);
       expect(result).toHaveLength(2);
+      expect(mockInvitationModel.find().select).toHaveBeenCalledWith(
+        '-token -tokenHash -tokenPrefix',
+      );
+    });
+  });
+
+  describe('findReceived', () => {
+    const now = new Date();
+
+    function receivedQuery(data: unknown[]) {
+      return {
+        lean: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        populate: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        skip: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue(data),
+      };
+    }
+
+    it('retourne les invitations reçues avec une projection événement sûre', async () => {
+      mockInvitationModel.find.mockReturnValue(receivedQuery([{
+        _id: new Types.ObjectId(),
+        email: 'participant@example.com',
+        name: 'Invitation',
+        type: 'participant',
+        status: 'accepted',
+        maxUses: 1,
+        useCount: 1,
+        expiresAt: now,
+        createdAt: now,
+        eventId: { _id: new Types.ObjectId(), title: 'Gala', slug: 'gala', startDate: now },
+        tokenHash: 'secret',
+        token: 'legacy-secret',
+        tokenPrefix: 'prefix',
+      }]));
+      mockInvitationModel.countDocuments.mockResolvedValue(1);
+
+      const result = await service.findReceived(mockInvitedById, { page: 1, limit: 25 });
+
+      expect(result.data[0]).toMatchObject({ event: { title: 'Gala', slug: 'gala' } });
+      expect(result.data[0]).not.toHaveProperty('tokenHash');
+      expect(result.data[0]).not.toHaveProperty('token');
+      expect(result.data[0]).not.toHaveProperty('tokenPrefix');
+    });
+
+    it("utilise le courriel vérifié courant comme identité", async () => {
+      userModel.findById.mockReturnValue({
+        lean: jest.fn().mockReturnThis(),
+        select: jest.fn().mockResolvedValue({ email: 'PARTICIPANT@EXAMPLE.COM', isEmailVerified: true }),
+      });
+      mockInvitationModel.find.mockReturnValue(receivedQuery([]));
+      mockInvitationModel.countDocuments.mockResolvedValue(0);
+
+      await service.findReceived(mockInvitedById, { page: 1, limit: 25 });
+
+      expect(mockInvitationModel.find).toHaveBeenCalledWith(expect.objectContaining({ email: 'participant@example.com' }));
+    });
+
+    it("refuse un compte dont le courriel n'est pas vérifié", async () => {
+      userModel.findById.mockReturnValue({
+        lean: jest.fn().mockReturnThis(),
+        select: jest.fn().mockResolvedValue({ email: 'participant@example.com', isEmailVerified: false }),
+      });
+
+      await expect(service.findReceived(mockInvitedById, { page: 1, limit: 25 })).rejects.toThrow(ForbiddenException);
+      expect(mockInvitationModel.find).not.toHaveBeenCalled();
     });
   });
 });
