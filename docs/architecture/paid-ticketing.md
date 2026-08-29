@@ -24,10 +24,16 @@ Ticketing Domain  (src/modules/tickets/)
 Payment abstraction  (src/modules/payments/providers/)
     │
     ├── PaymentProvider          contrat minimal
+    ├── PayPalPaymentProvider    Orders v2, Sandbox (Vague 6)
     ├── TestPaymentProvider      simulation déterministe, dev uniquement
-    ├── StripePaymentProvider    adaptateur réel, inactif en Vague 5
+    ├── StripePaymentProvider    adaptateur réel, inactif
+    ├── (futurs fournisseurs)    aucun impact sur le domaine
     └── PaymentProviderRegistry  sélection SERVEUR du fournisseur
 ```
+
+Le cœur reste **provider-agnostic** : ajouter un fournisseur consiste à écrire
+un adaptateur et à l'enregistrer. Aucune règle de stock, de réservation,
+d'admission ou d'idempotence n'est dupliquée par fournisseur.
 
 **Stripe n'est pas le domaine.** Le domaine Ticketing possède la commande, la
 capacité et l'admission. Le fournisseur de paiement est un adaptateur
@@ -232,11 +238,68 @@ plusieurs fois, dans le désordre, ou en retard.
 
 ```typescript
 interface PaymentProvider {
-  readonly name: 'test' | 'stripe';
+  readonly name: 'test' | 'stripe' | 'paypal';
   createPayment(input): Promise<PaymentHandle>;   // à la création de la commande
   getPaymentStatus(reference): Promise<Status>;   // issue faisant autorité
   cancelPayment(reference): Promise<void>;        // annulation / expiration
+
+  // Vague 6 — OPTIONNEL : fournisseurs à règlement en deux temps.
+  confirmPayment?(input): Promise<PaymentHandle>; // capture déclenchée serveur
 }
+```
+
+### Règlement en un temps ou en deux temps
+
+| Fournisseur | Approbation | Règlement |
+|---|---|---|
+| TestPaymentProvider | — | immédiat, déterministe |
+| StripePaymentProvider | hébergée | à la complétion de la session |
+| **PayPalPaymentProvider** | hébergée | **capture explicite déclenchée par le serveur** |
+
+`confirmPayment` est optionnel : les fournisseurs en une étape ne l'implémentent
+pas et ne changent pas. Le domaine appelle `confirmPayment` quand il existe,
+sinon `getPaymentStatus` — sans jamais savoir de quel fournisseur il s'agit.
+
+**Ordre de sécurité imposé par le domaine** : une capture n'est jamais
+déclenchée sur une commande close ou dont la réservation a expiré. Ces cas se
+contentent de lire l'état, puis appliquent la politique de règlement tardif.
+
+### Vérification du montant réglé
+
+Un fournisseur qui rapporte un montant réglé voit ce montant comparé au
+TicketOrder avant toute finalisation. Divergence de montant ou de devise :
+aucune admission, aucun stock consommé, `requiresManualReview` et erreur stable
+`TICKET_ORDER_SETTLEMENT_MISMATCH`.
+
+### PayPal — spécificités d'adaptation
+
+- **API retenue** : Orders v2 (`intent: CAPTURE`), flux Checkout moderne.
+  Payments v1 n'est pas utilisée.
+- **`APPROVED` n'est pas un paiement** : les fonds ne bougent qu'à la capture.
+  L'état est donc traduit en `PENDING`, jamais en succès.
+- **Trois identifiants distincts** : Order ID, Capture ID, Webhook Event ID.
+  Sur un événement `PAYMENT.CAPTURE.*`, `resource.id` est le **Capture ID** et
+  l'Order ID vit dans `supplementary_data.related_ids`.
+- **Idempotence fournisseur** : `PayPal-Request-Id` sur création et capture,
+  `invoice_id` = TicketOrder pour interdire un second paiement de la commande.
+  Ces mécanismes complètent — jamais ne remplacent — les contraintes MongoDB.
+- **Sandbox uniquement** : `assertSandbox()` refuse toute opération hors
+  sandbox, en plus du refus de démarrage sur `PAYPAL_ENV=live`.
+
+### Webhooks
+
+Un webhook n'est jamais réputé authentique parce que son corps est plausible :
+l'API officielle `/v1/notifications/verify-webhook-signature` fait autorité,
+avec le `webhook_id` **configuré côté serveur**.
+
+Une fois authentifié, l'événement est dédupliqué par un index unique sur son
+identifiant (collection `paypal_webhook_events`), avec bail de traitement pour
+les livraisons concurrentes. Le payload n'est jamais traité comme preuve : le
+serveur relit l'état chez le fournisseur.
+
+```
+livraison at-least-once  +  déduplication persistante  +  transitions
+conditionnelles du domaine  =  UN SEUL effet métier
 ```
 
 Contrat volontairement minimal : trois opérations, dérivées des trois moments
@@ -279,6 +342,7 @@ encodés dans la référence, donc deux instances API calculent le même statut.
 | `POST /ticket-orders/:id/sync-payment` | JWT (propriétaire) | demander l'issue au fournisseur |
 | `POST /ticket-orders/:id/cancel` | JWT (propriétaire) | annuler et libérer |
 | `POST /ticket-orders-maintenance/expire` | JWT + rôle `admin` | balayage d'exploitation |
+| `POST /payments/paypal/webhook` | signature PayPal vérifiée | notifications fournisseur |
 
 Champs **jamais** acceptés du client : `buyerId`, `participantId`,
 `paymentStatus`, `paid`, `sold`, `reserved`, `status`, `totalAmount`.
@@ -303,4 +367,4 @@ Aucun microservice, aucun broker, aucun RPC interne n'a été introduit.
 
 ---
 
-*Fin du document — domaine Ticketing payant, Vague 5.*
+*Fin du document — domaine Ticketing payant, Vagues 5 et 6.*
