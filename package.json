@@ -24,7 +24,8 @@
     "qa:provision": "ts-node src/scripts/provision-qa-users.ts",
     "backup:dev": "ts-node src/scripts/backup-dev-database.ts",
     "invitation-index:migrate": "ts-node src/scripts/migrate-invitation-token-index.ts",
-    "invitation-dedup:migrate": "ts-node src/scripts/migrate-invitation-dedup-index.ts"
+    "invitation-dedup:migrate": "ts-node src/scripts/migrate-invitation-dedup-index.ts",
+    "sprint3-wave4:migrate": "ts-node src/scripts/migrate-sprint3-wave4-indexes.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",
