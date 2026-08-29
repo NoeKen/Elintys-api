@@ -68,6 +68,7 @@ describe('TicketsService', () => {
     price: 150,
     quantity: 100,
     sold: 0,
+    reserved: 0,
     isFree: false,
     event: { toString: () => eventId },
     toObject: jest.fn().mockReturnThis(),
@@ -94,6 +95,7 @@ describe('TicketsService', () => {
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
       findOneAndUpdate: jest.fn(),
+      findOneAndDelete: jest.fn(),
       create: jest.fn(),
     };
 
@@ -116,6 +118,8 @@ describe('TicketsService', () => {
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
     ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType()));
     ticketTypeModel.find.mockReturnValue(makeChainable([mockTicketType()]));
+    ticketTypeModel.findOneAndUpdate.mockReturnValue(makeChainable(mockTicketType()));
+    ticketTypeModel.findOneAndDelete.mockResolvedValue(mockTicketType());
 
     testingModule = await Test.createTestingModule({
       providers: [
@@ -220,7 +224,7 @@ describe('TicketsService', () => {
     it('met à jour et retourne le type de billet', async () => {
       const dto = { name: 'VIP Platinum' };
       const updated = mockTicketType(dto);
-      ticketTypeModel.findByIdAndUpdate.mockReturnValue(makeChainable(updated));
+      ticketTypeModel.findOneAndUpdate.mockReturnValue(makeChainable(updated));
 
       const result = await service.updateTicketType(ticketTypeId, organizerId, dto as never);
 
@@ -247,17 +251,41 @@ describe('TicketsService', () => {
       await expect(
         service.updateTicketType(ticketTypeId, organizerId, { quantity: 7 }),
       ).rejects.toThrow('TICKET_QUANTITY_BELOW_SOLD');
-      expect(ticketTypeModel.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(ticketTypeModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuse de réduire la capacité sous le stock réservé', async () => {
+      ticketTypeModel.findById.mockReturnValue(
+        makeChainable(mockTicketType({ sold: 2, reserved: 6 })),
+      );
+
+      await expect(
+        service.updateTicketType(ticketTypeId, organizerId, { quantity: 7 }),
+      ).rejects.toThrow('TICKET_QUANTITY_BELOW_SOLD');
+      expect(ticketTypeModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('ferme la race entre validation et mise à jour de capacité', async () => {
+      ticketTypeModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+
+      await expect(
+        service.updateTicketType(ticketTypeId, organizerId, { quantity: 10 }),
+      ).rejects.toThrow('TICKET_QUANTITY_BELOW_SOLD');
+      expect(ticketTypeModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ $expr: expect.any(Object) }),
+        expect.objectContaining({ quantity: 10 }),
+        expect.objectContaining({ new: true, runValidators: true }),
+      );
     });
   });
 
   // ── removeTicketType ──
   describe('removeTicketType', () => {
     it('supprime le type de billet', async () => {
-      ticketTypeModel.findByIdAndDelete.mockResolvedValue({});
-
       await expect(service.removeTicketType(ticketTypeId, organizerId)).resolves.toBeUndefined();
-      expect(ticketTypeModel.findByIdAndDelete).toHaveBeenCalledWith(ticketTypeId);
+      expect(ticketTypeModel.findOneAndDelete).toHaveBeenCalledWith(
+        expect.objectContaining({ $expr: expect.any(Object) }),
+      );
     });
 
     it("lève NotFoundException si le type de billet n'existe pas", async () => {
@@ -277,6 +305,25 @@ describe('TicketsService', () => {
         'TICKET_TYPE_HAS_SALES',
       );
       expect(ticketTypeModel.findByIdAndDelete).not.toHaveBeenCalled();
+    });
+
+    it('refuse de supprimer un type ayant une réservation active', async () => {
+      ticketTypeModel.findById.mockReturnValue(
+        makeChainable(mockTicketType({ sold: 0, reserved: 1 })),
+      );
+
+      await expect(service.removeTicketType(ticketTypeId, organizerId)).rejects.toThrow(
+        'TICKET_TYPE_HAS_SALES',
+      );
+      expect(ticketTypeModel.findOneAndDelete).not.toHaveBeenCalled();
+    });
+
+    it('refuse la suppression si une réservation gagne la course après la lecture', async () => {
+      ticketTypeModel.findOneAndDelete.mockResolvedValue(null);
+
+      await expect(service.removeTicketType(ticketTypeId, organizerId)).rejects.toThrow(
+        'TICKET_TYPE_HAS_SALES',
+      );
     });
   });
 
@@ -358,6 +405,22 @@ describe('TicketsService', () => {
       expect(ticketPurchaseModel.create).not.toHaveBeenCalled();
     });
 
+    it('inclut le stock réservé par une commande payante dans le garde de capacité', async () => {
+      ticketTypeModel.findById.mockReturnValue(
+        makeChainable(mockTicketType({ isFree: true, quantity: 10, sold: 4, reserved: 5 })),
+      );
+      ticketTypeModel.findOneAndUpdate.mockResolvedValue(null);
+
+      await expect(service.purchase(buyerId, dto as never, IDEM_KEY)).rejects.toBeInstanceOf(
+        InsufficientCapacityError,
+      );
+      expect(ticketTypeModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ $expr: expect.objectContaining({ $lte: expect.any(Array) }) }),
+        { $inc: { sold: 2 } },
+        expect.objectContaining({ session: mockSession }),
+      );
+    });
+
     it('lève BadRequestException si le billet est payant', async () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(mockTicketType({ isFree: false })));
 
@@ -369,6 +432,7 @@ describe('TicketsService', () => {
       ticketTypeModel.findById.mockReturnValue(makeChainable(
         mockTicketType({ isFree: true, quantity: 1, sold: 1 }),
       ));
+      ticketTypeModel.findOneAndUpdate.mockResolvedValue(null);
 
       await expect(service.purchase(buyerId, { ...dto, quantity: 2 } as never, IDEM_KEY))
         .rejects.toBeInstanceOf(InsufficientCapacityError);

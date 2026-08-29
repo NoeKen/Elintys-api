@@ -74,6 +74,7 @@ describe('PaymentsService', () => {
     isFree:   false,
     quantity: 100,
     sold:     0,
+    reserved: 0,
     event:    new Types.ObjectId(eventId),
     ...overrides,
   });
@@ -253,6 +254,17 @@ describe('PaymentsService', () => {
 
       await expect(service.createCheckoutSession({ ...dto, quantity: 2 } as never, buyerId))
         .rejects.toThrow(BadRequestException);
+    });
+
+    it('considère aussi les réservations actives dans la disponibilité historique', async () => {
+      ticketTypeModel.findById.mockReturnValue(
+        makeChainable(mockTicketType({ quantity: 10, sold: 3, reserved: 6 })),
+      );
+
+      await expect(service.createCheckoutSession(dto as never, buyerId)).rejects.toThrow(
+        BadRequestException,
+      );
+      expect(mockStripeCheckoutSessionsCreate).not.toHaveBeenCalled();
     });
 
     it("lève NotFoundException si le type de billet n'existe pas", async () => {
