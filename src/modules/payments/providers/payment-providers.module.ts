@@ -7,6 +7,10 @@ import {
   StripePaymentProvider,
 } from './stripe-payment.provider';
 import { TestPaymentProvider } from './test-payment.provider';
+import { PayPalHttpClient } from './paypal/paypal-http.client';
+import { PayPalOrdersApi } from './paypal/paypal-orders.api';
+import { PayPalPaymentProvider } from './paypal/paypal-payment.provider';
+import { PayPalWebhookVerifier } from './paypal/paypal-webhook.verifier';
 
 /**
  * Module d'adaptateurs de paiement.
@@ -24,8 +28,18 @@ import { TestPaymentProvider } from './test-payment.provider';
     },
     TestPaymentProvider,
     StripePaymentProvider,
+    PayPalHttpClient,
+    PayPalOrdersApi,
+    PayPalPaymentProvider,
+    PayPalWebhookVerifier,
     PaymentProviderRegistry,
   ],
-  exports: [PaymentProviderRegistry, TestPaymentProvider, StripePaymentProvider],
+  exports: [
+    PaymentProviderRegistry,
+    TestPaymentProvider,
+    StripePaymentProvider,
+    PayPalPaymentProvider,
+    PayPalWebhookVerifier,
+  ],
 })
 export class PaymentProvidersModule {}

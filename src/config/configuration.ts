@@ -4,6 +4,7 @@ import {
   resolvePaidTicketHoldMinutes,
   resolveTestPaymentProviderEnabled,
 } from './ticketing-environment';
+import { resolvePayPalConfig } from './paypal-environment';
 
 export default () => {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
@@ -61,6 +62,22 @@ export default () => {
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY,
     },
+    /**
+     * PayPal — Vague 6. Sandbox uniquement.
+     * `resolvePayPalConfig` lève au démarrage si la configuration est
+     * incomplète ou si un mode live est détecté hors production.
+     */
+    paypal: resolvePayPalConfig(
+      {
+        enabled: process.env.PAYPAL_PROVIDER_ENABLED,
+        environment: process.env.PAYPAL_ENV,
+        clientId: process.env.PAYPAL_CLIENT_ID,
+        clientSecret: process.env.PAYPAL_CLIENT_SECRET,
+        webhookId: process.env.PAYPAL_WEBHOOK_ID,
+      },
+      elintysEnv,
+      nodeEnv,
+    ),
     ticketing: {
       /**
        * Durée de la réservation temporaire de stock d'une commande payante.
