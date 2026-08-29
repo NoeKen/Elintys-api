@@ -175,6 +175,9 @@ JWT_SECRET=
 JWT_REFRESH_SECRET=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
+PAID_CHECKOUT_ENABLED=false     # Fail-closed — paiement participant fermé
+PAID_TICKET_HOLD_MINUTES=15     # Réservation temporaire de stock (Vague 5)
+TEST_PAYMENT_PROVIDER_ENABLED=false  # dev uniquement — refus de démarrage hors ELINTYS_ENV=dev
 RESEND_API_KEY=
 CLOUDINARY_CLOUD_NAME=
 CLOUDINARY_API_KEY=

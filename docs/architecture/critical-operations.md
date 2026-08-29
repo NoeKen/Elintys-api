@@ -296,4 +296,19 @@ Si des transactions traversent plusieurs services, introduire **uniquement si n�
 
 ---
 
+## Domaines consommateurs
+
+| Domaine | Invariant possédé | Document |
+|---|---|---|
+| Tickets (gratuit) | `sold <= quantity` | ce document |
+| EventRegistration | un participant = une inscription active | ce document |
+| Payments (Stripe historique) | une PaymentIntent = une finalisation | ce document |
+| **Ticketing payant (Vague 5)** | **`sold + reserved <= quantity`** | [`paid-ticketing.md`](./paid-ticketing.md) |
+
+La Vague 5 consomme le socle sans le modifier : `IdempotencyService`,
+`TransactionService`, `CriticalOperationLogger` et les erreurs normalisées sont
+réutilisés tels quels. Aucun second système d'idempotence n'a été introduit.
+
+---
+
 *Fin du document architecture — raccordement domaines Vague 4 validé.*
