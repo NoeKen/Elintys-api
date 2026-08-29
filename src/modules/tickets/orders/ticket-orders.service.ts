@@ -42,8 +42,18 @@ import {
   PaymentProvider,
   ProviderPaymentStatus,
 } from '../../payments/providers/payment-provider.interface';
+
 import { ErrorCodes } from '../../../shared/constants/error-codes';
 import { generateQRCode } from '../../../shared/utils/qr-code';
+
+/** Issue normalisée d'un règlement, quel que soit le fournisseur. */
+export interface ProviderSettlement {
+  status: ProviderPaymentStatus;
+  /** Référence de capture/charge, si le fournisseur en distingue une. */
+  settlementReference: string | null;
+  settledAmountMinorUnits: number | null;
+  settledCurrency: string | null;
+}
 
 /** Nombre maximal de commandes traitées par un balayage d'expiration. */
 export const EXPIRY_SWEEP_DEFAULT_LIMIT = 100;
@@ -98,6 +108,7 @@ interface LeanOrder {
     reference: string | null;
     status: ProviderPaymentStatus;
     checkoutUrl: string | null;
+    settlementReference: string | null;
     lastSyncedAt: Date | null;
   };
   expiresAt: Date;
@@ -421,23 +432,32 @@ export class TicketOrdersService {
     }
 
     const provider = this.providerRegistry.resolveByName(order.payment.provider);
-    const providerStatus = await provider.getPaymentStatus(order.payment.reference);
 
+    // ORDRE CRITIQUE : on ne déclenche JAMAIS un règlement (capture) sur une
+    // commande déjà close ou périmée — cela prélèverait des fonds pour une
+    // capacité potentiellement revendue. Ces deux cas se contentent de LIRE
+    // l'état chez le fournisseur.
     if (isTerminalOrderStatus(order.status)) {
-      return this.handleAfterTerminal(order, providerStatus);
+      return this.handleAfterTerminal(
+        order,
+        await provider.getPaymentStatus(order.payment.reference),
+      );
+    }
+    if (order.expiresAt.getTime() <= Date.now()) {
+      const observed = await provider.getPaymentStatus(order.payment.reference);
+      await this.expireOrder(orderId);
+      return this.handleAfterTerminal(await this.requireOrder(orderId), observed);
     }
 
-    // Le hold est-il déjà périmé ? L'expiration est évaluée AVANT toute
-    // finalisation : une confirmation tardive ne doit jamais ressusciter
-    // une capacité qui a pu être revendue.
-    if (order.expiresAt.getTime() <= Date.now()) {
-      await this.expireOrder(orderId);
-      return this.handleAfterTerminal(await this.requireOrder(orderId), providerStatus);
-    }
+    // La commande est vivante : le serveur peut déclencher le règlement.
+    // Appel réseau TOUJOURS hors transaction MongoDB.
+    const settlement = await this.resolveSettlement(provider, order);
+    const providerStatus = settlement.status;
 
     switch (providerStatus) {
       case ProviderPaymentStatus.SUCCEEDED:
-        await this.settleSucceeded(order);
+        await this.assertSettlementMatchesOrder(order, settlement);
+        await this.settleSucceeded(order, settlement);
         return this.toView(await this.requireOrder(orderId));
       case ProviderPaymentStatus.FAILED:
         await this.settleUnsuccessful(orderId, TicketOrderStatus.FAILED, 'PROVIDER_DECLINED');
@@ -452,6 +472,80 @@ export class TicketOrdersService {
         );
         return this.toView(await this.requireOrder(orderId));
     }
+  }
+
+  /**
+   * Obtient l'issue faisant autorité chez le fournisseur.
+   *
+   * Règlement en DEUX TEMPS (PayPal) : le fournisseur expose `confirmPayment`,
+   * et c'est le SERVEUR qui déclenche la capture. L'opération est idempotente
+   * côté fournisseur ; un second appel ne produit pas de second débit.
+   *
+   * Règlement en UN TEMPS (Stripe Checkout, TestPaymentProvider) : simple
+   * lecture de l'état.
+   *
+   * Dans les deux cas, aucun statut ne provient jamais du client.
+   */
+  private async resolveSettlement(
+    provider: PaymentProvider,
+    order: LeanOrder,
+  ): Promise<ProviderSettlement> {
+    const reference = order.payment.reference as string;
+
+    if (typeof provider.confirmPayment === 'function') {
+      const handle = await provider.confirmPayment({
+        reference,
+        orderId: order._id.toString(),
+      });
+      return {
+        status: handle.status,
+        settlementReference: handle.settlementReference ?? null,
+        settledAmountMinorUnits: handle.settledAmountMinorUnits ?? null,
+        settledCurrency: handle.settledCurrency ?? null,
+      };
+    }
+
+    return {
+      status: await provider.getPaymentStatus(reference),
+      settlementReference: null,
+      settledAmountMinorUnits: null,
+      settledCurrency: null,
+    };
+  }
+
+  /**
+   * Refuse toute finalisation dont le montant réglé ne correspond pas
+   * exactement au TicketOrder.
+   *
+   * Un fournisseur qui rapporte un montant ou une devise divergents est traité
+   * comme un incident : ni admission, ni consommation de stock, escalade en
+   * revue manuelle. Les fournisseurs qui ne rapportent pas de montant réglé
+   * (règlement en un temps) ne sont pas concernés.
+   */
+  private async assertSettlementMatchesOrder(
+    order: LeanOrder,
+    settlement: ProviderSettlement,
+  ): Promise<void> {
+    if (settlement.settledAmountMinorUnits === null && settlement.settledCurrency === null) {
+      return;
+    }
+    const amountMatches = settlement.settledAmountMinorUnits === order.totalAmount;
+    const currencyMatches =
+      (settlement.settledCurrency ?? '').toLowerCase() === order.currency.toLowerCase();
+    if (amountMatches && currencyMatches) return;
+
+    await this.orderModel.updateOne(
+      { _id: order._id, requiresManualReview: false },
+      { $set: { requiresManualReview: true, failureReason: ErrorCodes.TICKET_ORDER_SETTLEMENT_MISMATCH } },
+    );
+    this.criticalLogger.logFailed(
+      'ticket-order-settlement-mismatch',
+      order._id.toString(),
+      hashSecret(order.payment.reference ?? ''),
+      0,
+      ErrorCodes.TICKET_ORDER_SETTLEMENT_MISMATCH,
+    );
+    throw new ConflictException(ErrorCodes.TICKET_ORDER_SETTLEMENT_MISMATCH);
   }
 
   /**
@@ -511,7 +605,10 @@ export class TicketOrdersService {
    * supplémentaire, ni double consommation, ni double incrément : les filtres
    * conditionnels ne correspondent plus.
    */
-  private async settleSucceeded(order: LeanOrder): Promise<void> {
+  private async settleSucceeded(
+    order: LeanOrder,
+    settlement?: ProviderSettlement,
+  ): Promise<void> {
     const orderId = order._id.toString();
     const reference = order.payment.reference ?? '';
 
@@ -530,6 +627,9 @@ export class TicketOrdersService {
               paidAt: new Date(),
               'payment.status': ProviderPaymentStatus.SUCCEEDED,
               'payment.lastSyncedAt': new Date(),
+              ...(settlement?.settlementReference
+                ? { 'payment.settlementReference': settlement.settlementReference }
+                : {}),
             },
           },
           { new: true, session },

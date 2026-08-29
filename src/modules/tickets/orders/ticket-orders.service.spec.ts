@@ -38,6 +38,7 @@ interface Harness {
     createPayment: jest.Mock;
     getPaymentStatus: jest.Mock;
     cancelPayment: jest.Mock;
+    confirmPayment?: jest.Mock;
   };
   ticketTypeId: Types.ObjectId;
   secondTicketTypeId: Types.ObjectId;
@@ -694,5 +695,155 @@ describe('TicketOrdersService — lecture et contrôle de propriété', () => {
     await expect(
       harness.service.findOne(new Types.ObjectId().toString(), BUYER_ID),
     ).rejects.toThrow(ErrorCodes.TICKET_ORDER_NOT_FOUND);
+  });
+});
+
+// ── Règlement en deux temps (PayPal — Vague 6) ──────────────────────────────
+
+/**
+ * Le fournisseur PayPal règle en DEUX temps : approbation de l'acheteur puis
+ * capture déclenchée par le serveur. Ces cas vérifient que le domaine reste
+ * correct et sûr avec un tel fournisseur, sans rien connaître de PayPal.
+ */
+function withTwoStepProvider(
+  harness: Harness,
+  result: {
+    status: ProviderPaymentStatus;
+    settlementReference?: string | null;
+    settledAmountMinorUnits?: number | null;
+    settledCurrency?: string | null;
+  },
+): jest.Mock {
+  const confirmPayment = jest.fn().mockResolvedValue({
+    provider: 'paypal',
+    reference: 'PP-ORDER-1',
+    checkoutUrl: null,
+    settlementReference: null,
+    settledAmountMinorUnits: null,
+    settledCurrency: null,
+    ...result,
+  });
+  harness.provider.confirmPayment = confirmPayment;
+  return confirmPayment;
+}
+
+describe('TicketOrdersService — règlement en deux temps', () => {
+  it('devrait déclencher la capture côté serveur et finaliser la commande', async () => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness, 2), 'key-2step');
+    const confirm = withTwoStepProvider(harness, {
+      status: ProviderPaymentStatus.SUCCEEDED,
+      settlementReference: 'CAPTURE-1',
+      settledAmountMinorUnits: 5000,
+      settledCurrency: 'CAD',
+    });
+
+    const settled = await harness.service.syncPayment(order._id, BUYER_ID);
+
+    expect(confirm).toHaveBeenCalledWith({ reference: expect.any(String), orderId: order._id });
+    expect(settled.status).toBe(TicketOrderStatus.PAID);
+    expect(inventoryOf(harness)).toMatchObject({ sold: 2, reserved: 0 });
+    expect(
+      (harness.orders.get(order._id) as { payment: { settlementReference: string } }).payment
+        .settlementReference,
+    ).toBe('CAPTURE-1');
+    assertInvariants(harness);
+  });
+
+  it('ne devrait JAMAIS capturer une commande déjà close', async () => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness), 'key-2step-closed');
+    await harness.service.cancelOrder(order._id, BUYER_ID);
+    const confirm = withTwoStepProvider(harness, { status: ProviderPaymentStatus.SUCCEEDED });
+    harness.provider.getPaymentStatus.mockResolvedValue(ProviderPaymentStatus.PENDING);
+
+    await harness.service.syncPayment(order._id, BUYER_ID);
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(harness.provider.getPaymentStatus).toHaveBeenCalled();
+  });
+
+  it('ne devrait JAMAIS capturer une commande dont la réservation a expiré', async () => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness), 'key-2step-exp');
+    const past = new Date(Date.now() - 60_000);
+    await harness.orders.updateOne(
+      { _id: new Types.ObjectId(order._id) },
+      { $set: { expiresAt: past } },
+    );
+    await harness.holds.updateOne(
+      { orderId: new Types.ObjectId(order._id) },
+      { $set: { expiresAt: past } },
+    );
+    const confirm = withTwoStepProvider(harness, { status: ProviderPaymentStatus.SUCCEEDED });
+
+    await expect(harness.service.syncPayment(order._id, BUYER_ID)).resolves.toBeDefined();
+
+    expect(confirm).not.toHaveBeenCalled();
+    expect(inventoryOf(harness)).toMatchObject({ sold: 0, reserved: 0 });
+  });
+
+  it('devrait rester idempotent sur deux captures successives', async () => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness, 2), 'key-2step-dup');
+    withTwoStepProvider(harness, {
+      status: ProviderPaymentStatus.SUCCEEDED,
+      settlementReference: 'CAPTURE-1',
+      settledAmountMinorUnits: 5000,
+      settledCurrency: 'CAD',
+    });
+
+    const first = await harness.service.syncPayment(order._id, BUYER_ID);
+    const second = await harness.service.syncPayment(order._id, BUYER_ID);
+
+    expect(second.admissionIds).toEqual(first.admissionIds);
+    expect(harness.purchases.all()).toHaveLength(2);
+    expect(inventoryOf(harness)).toMatchObject({ sold: 2, reserved: 0 });
+  });
+
+  it.each([
+    ['montant divergent', { settledAmountMinorUnits: 4999, settledCurrency: 'CAD' }],
+    ['devise divergente', { settledAmountMinorUnits: 5000, settledCurrency: 'USD' }],
+    ['montant illisible', { settledAmountMinorUnits: null, settledCurrency: 'CAD' }],
+  ])('devrait refuser de finaliser sur %s et escalader', async (_name, settlement) => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness, 2), 'key-mismatch');
+    withTwoStepProvider(harness, { status: ProviderPaymentStatus.SUCCEEDED, ...settlement });
+
+    await expect(harness.service.syncPayment(order._id, BUYER_ID)).rejects.toThrow(
+      ErrorCodes.TICKET_ORDER_SETTLEMENT_MISMATCH,
+    );
+
+    const stored = harness.orders.get(order._id) as {
+      status: string;
+      requiresManualReview: boolean;
+    };
+    expect(stored.status).toBe(TicketOrderStatus.PENDING_PAYMENT);
+    expect(stored.requiresManualReview).toBe(true);
+    expect(harness.purchases.all()).toHaveLength(0);
+    expect(inventoryOf(harness)).toMatchObject({ sold: 0, reserved: 2 });
+    assertInvariants(harness);
+  });
+
+  it('devrait finaliser sans vérification de montant pour un fournisseur en une étape', async () => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.SUCCEEDED });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness, 2), 'key-1step');
+
+    const settled = await harness.service.syncPayment(order._id, BUYER_ID);
+
+    expect(harness.provider.confirmPayment).toBeUndefined();
+    expect(settled.status).toBe(TicketOrderStatus.PAID);
+  });
+
+  it('devrait libérer la capacité lorsque la capture est refusée', async () => {
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness, 3), 'key-2step-denied');
+    withTwoStepProvider(harness, { status: ProviderPaymentStatus.FAILED });
+
+    const failed = await harness.service.syncPayment(order._id, BUYER_ID);
+
+    expect(failed.status).toBe(TicketOrderStatus.FAILED);
+    expect(inventoryOf(harness)).toMatchObject({ sold: 0, reserved: 0 });
+    assertInvariants(harness);
   });
 });
