@@ -412,6 +412,22 @@ export class TicketOrdersService {
     return { data: orders.map((order) => this.toView(order)), total, page, limit };
   }
 
+  /**
+   * Résout un TicketOrder à partir d'une référence de commande FOURNISSEUR.
+   *
+   * C'est la base Elintys qui fait autorité pour la corrélation : le
+   * `custom_id` transporté par le fournisseur n'est qu'une indication et n'est
+   * jamais cru sur parole.
+   */
+  async findIdByProviderReference(providerReference: string): Promise<string | null> {
+    if (!providerReference.trim()) return null;
+    const order = await this.orderModel
+      .findOne({ 'payment.reference': providerReference })
+      .lean<{ _id: Types.ObjectId }>()
+      .select('_id');
+    return order ? order._id.toString() : null;
+  }
+
   // ── Synchronisation du paiement ───────────────────────────────────────────
 
   /**
@@ -422,7 +438,22 @@ export class TicketOrdersService {
    * déclencheur, jamais une source de vérité.
    */
   async syncPayment(orderId: string, buyerId: string): Promise<TicketOrderView> {
-    const order = await this.requireOwnedOrder(orderId, buyerId);
+    return this.synchronize(await this.requireOwnedOrder(orderId, buyerId));
+  }
+
+  /**
+   * Synchronisation déclenchée par le SERVEUR (webhook fournisseur authentifié).
+   *
+   * Aucun contrôle de propriété : l'appelant n'est pas l'acheteur mais le
+   * fournisseur, dont l'authenticité a déjà été vérifiée en amont. La commande
+   * est résolue côté serveur, jamais fournie par le payload.
+   */
+  async syncPaymentAsServer(orderId: string): Promise<TicketOrderView> {
+    return this.synchronize(await this.requireOrder(orderId));
+  }
+
+  private async synchronize(order: LeanOrder): Promise<TicketOrderView> {
+    const orderId = order._id.toString();
 
     if (order.status === TicketOrderStatus.PAID) {
       return this.toView(order); // rejeu : aucun effet supplémentaire
