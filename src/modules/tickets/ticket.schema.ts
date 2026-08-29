@@ -29,6 +29,19 @@ export class TicketType {
   @Prop({ default: 0, min: 0 })
   sold!: number;
 
+  /**
+   * Capacité temporairement bloquée par des commandes payantes en attente
+   * de paiement (cf. TicketHold).
+   *
+   * INVARIANT CENTRAL : `sold + reserved <= quantity` à tout instant.
+   *
+   * Les documents créés avant la Vague 5 n'ont pas ce champ. Toutes les
+   * expressions du domaine utilisent `$ifNull: ['$reserved', 0]` : la
+   * correction ne dépend donc PAS du backfill de migration.
+   */
+  @Prop({ default: 0, min: 0 })
+  reserved!: number;
+
   @Prop({ default: false })
   isFree!: boolean;
 
@@ -56,6 +69,13 @@ export class TicketPurchase {
   @Prop({ type: Types.ObjectId, ref: 'TicketType', required: true })
   ticketType!: Types.ObjectId;
 
+  /**
+   * Commande de billetterie payante à l'origine de cette admission (Vague 5).
+   * `null` pour les billets gratuits et pour le chemin Stripe historique.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'TicketOrder', default: null })
+  order?: Types.ObjectId | null;
+
   @Prop({ required: true, min: 0 })
   price!: number;
 
@@ -76,3 +96,4 @@ export const TicketPurchaseSchema = SchemaFactory.createForClass(TicketPurchase)
 TicketPurchaseSchema.index({ event: 1 });
 TicketPurchaseSchema.index({ buyerId: 1 });
 TicketPurchaseSchema.index({ guestEmail: 1 });
+TicketPurchaseSchema.index({ order: 1 }, { name: 'ticket_purchases_by_order', sparse: true });

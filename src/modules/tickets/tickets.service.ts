@@ -95,11 +95,15 @@ export class TicketsService {
   }
 
   async updateTicketType(id: string, organizerId: string, dto: UpdateTicketTypeDto): Promise<TicketType> {
-    const tt = await this.ticketTypeModel.findById(id).lean().select('event sold price isFree');
+    const tt = await this.ticketTypeModel
+      .findById(id)
+      .lean()
+      .select('event sold reserved price isFree');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
     await this.assertEventOwner(tt.event.toString(), organizerId);
 
-    if (dto.quantity !== undefined && dto.quantity < tt.sold) {
+    const committed = (tt.sold ?? 0) + (tt.reserved ?? 0);
+    if (dto.quantity !== undefined && dto.quantity < committed) {
       throw new BadRequestException('TICKET_QUANTITY_BELOW_SOLD');
     }
     const nextIsFree = dto.isFree ?? tt.isFree;
@@ -108,21 +112,62 @@ export class TicketsService {
       throw new BadRequestException('PAID_TICKET_PRICE_REQUIRED');
     }
 
+    // Le filtre conditionnel ferme la race entre la lecture ci-dessus et une
+    // nouvelle réservation concurrente : la capacité ne peut jamais passer
+    // sous `sold + reserved`.
     const updated = await this.ticketTypeModel
-      .findByIdAndUpdate(id, { ...dto, price: nextPrice }, { new: true, runValidators: true })
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(id),
+          ...(dto.quantity === undefined
+            ? {}
+            : {
+                $expr: {
+                  $lte: [
+                    {
+                      $add: [
+                        { $ifNull: ['$sold', 0] },
+                        { $ifNull: ['$reserved', 0] },
+                      ],
+                    },
+                    dto.quantity,
+                  ],
+                },
+              }),
+        },
+        { ...dto, price: nextPrice },
+        { new: true, runValidators: true },
+      )
       .lean()
       .select('-__v');
-    return updated!;
+    if (!updated) throw new BadRequestException('TICKET_QUANTITY_BELOW_SOLD');
+    return updated;
   }
 
   async removeTicketType(id: string, organizerId: string): Promise<void> {
-    const tt = await this.ticketTypeModel.findById(id).lean().select('event sold');
+    const tt = await this.ticketTypeModel.findById(id).lean().select('event sold reserved');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
     await this.assertEventOwner(tt.event.toString(), organizerId);
-    if (tt.sold > 0) {
+    if ((tt.sold ?? 0) + (tt.reserved ?? 0) > 0) {
       throw new BadRequestException('TICKET_TYPE_HAS_SALES');
     }
-    await this.ticketTypeModel.findByIdAndDelete(id);
+    // Une réservation peut apparaître après le contrôle d'ownership. La
+    // suppression est donc elle aussi conditionnelle à un stock non engagé.
+    const removed = await this.ticketTypeModel.findOneAndDelete({
+      _id: new Types.ObjectId(id),
+      $expr: {
+        $eq: [
+          {
+            $add: [
+              { $ifNull: ['$sold', 0] },
+              { $ifNull: ['$reserved', 0] },
+            ],
+          },
+          0,
+        ],
+      },
+    });
+    if (!removed) throw new BadRequestException('TICKET_TYPE_HAS_SALES');
   }
 
   async findMyTickets(buyerId: string): Promise<TicketPurchase[]> {
@@ -154,7 +199,7 @@ export class TicketsService {
           .findById(dto.ticketTypeId)
           .session(session)
           .lean()
-          .select('event price isFree quantity sold');
+          .select('event price isFree quantity sold reserved');
 
         if (!tt) throw new NotFoundException('Type de billet introuvable.');
         if (!tt.isFree) {
@@ -182,7 +227,18 @@ export class TicketsService {
           {
             _id: new Types.ObjectId(dto.ticketTypeId),
             isFree: true,
-            $expr: { $lte: [{ $add: ['$sold', dto.quantity] }, '$quantity'] },
+            $expr: {
+              $lte: [
+                {
+                  $add: [
+                    { $ifNull: ['$sold', 0] },
+                    { $ifNull: ['$reserved', 0] },
+                    dto.quantity,
+                  ],
+                },
+                '$quantity',
+              ],
+            },
           },
           { $inc: { sold: dto.quantity } },
           { new: true, session },
@@ -251,7 +307,18 @@ export class TicketsService {
       {
         _id: new Types.ObjectId(opts.ticketTypeId),
         isFree: false,
-        $expr: { $lte: [{ $add: ['$sold', opts.quantity] }, '$quantity'] },
+        $expr: {
+          $lte: [
+            {
+              $add: [
+                { $ifNull: ['$sold', 0] },
+                { $ifNull: ['$reserved', 0] },
+                opts.quantity,
+              ],
+            },
+            '$quantity',
+          ],
+        },
       },
       { $inc: { sold: opts.quantity } },
       { new: true, session },

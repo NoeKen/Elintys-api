@@ -96,7 +96,7 @@ export class PaymentsService {
     const tt = await this.ticketTypeModel
       .findById(dto.ticketTypeId)
       .lean()
-      .select('name price isFree quantity sold event');
+      .select('name price isFree quantity sold reserved event');
 
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
     if (tt.isFree) {
@@ -113,7 +113,7 @@ export class PaymentsService {
     const decision = canPurchaseTicket(actor, normalizeLegacyEventAccess(event));
     if (!decision.allowed) throw new ForbiddenException(decision.reason);
 
-    const available = tt.quantity - tt.sold;
+    const available = tt.quantity - (tt.sold ?? 0) - (tt.reserved ?? 0);
     if (available < dto.quantity) {
       throw new BadRequestException(`Seulement ${available} billet(s) disponible(s).`);
     }

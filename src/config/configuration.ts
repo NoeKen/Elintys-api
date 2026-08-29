@@ -1,5 +1,9 @@
 import { resolveCookieDomain } from './cookie-domain';
 import { resolveElintysEnvironment } from './elintys-environment';
+import {
+  resolvePaidTicketHoldMinutes,
+  resolveTestPaymentProviderEnabled,
+} from './ticketing-environment';
 
 export default () => {
   const nodeEnv = process.env.NODE_ENV ?? 'development';
@@ -56,6 +60,22 @@ export default () => {
     },
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY,
+    },
+    ticketing: {
+      /**
+       * Durée de la réservation temporaire de stock d'une commande payante.
+       * Source unique de vérité — ne jamais recopier la valeur dans un service.
+       */
+      holdMinutes: resolvePaidTicketHoldMinutes(process.env.PAID_TICKET_HOLD_MINUTES),
+      /**
+       * Fournisseur de paiement simulé. Fail-closed : impossible hors dev
+       * (cf. resolveTestPaymentProviderEnabled — lève au démarrage).
+       */
+      testPaymentProviderEnabled: resolveTestPaymentProviderEnabled(
+        process.env.TEST_PAYMENT_PROVIDER_ENABLED,
+        elintysEnv,
+        nodeEnv,
+      ),
     },
     frontendUrl,
     authCookie: {

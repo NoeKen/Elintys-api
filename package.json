@@ -25,7 +25,9 @@
     "backup:dev": "ts-node src/scripts/backup-dev-database.ts",
     "invitation-index:migrate": "ts-node src/scripts/migrate-invitation-token-index.ts",
     "invitation-dedup:migrate": "ts-node src/scripts/migrate-invitation-dedup-index.ts",
-    "sprint3-wave4:migrate": "ts-node src/scripts/migrate-sprint3-wave4-indexes.ts"
+    "sprint3-wave4:migrate": "ts-node src/scripts/migrate-sprint3-wave4-indexes.ts",
+    "sprint3-wave5:migrate": "ts-node src/scripts/migrate-sprint3-wave5-indexes.ts",
+    "wave5:concurrency": "ts-node src/scripts/verify-wave5-concurrency.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",

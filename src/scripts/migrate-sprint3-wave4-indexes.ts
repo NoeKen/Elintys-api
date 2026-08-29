@@ -300,8 +300,11 @@ export async function countBlockingDuplicates(
     pipeline.push({ $match: spec.options.partialFilterExpression });
   }
   const groupId: Record<string, string> = {};
-  for (const key of Object.keys(spec.keys)) {
-    groupId[key] = `$${key}`;
+  // Les noms de champs de l'objet `_id` produit par `$group` ne peuvent pas
+  // contenir de point. Les chemins d'index imbriqués restent utilisés comme
+  // valeurs, avec des alias sûrs et déterministes comme clés de regroupement.
+  for (const [index, key] of Object.keys(spec.keys).entries()) {
+    groupId[`field${index}`] = `$${key}`;
   }
   pipeline.push({ $group: { _id: groupId, count: { $sum: 1 } } });
   pipeline.push({ $match: { count: { $gt: 1 } } });
