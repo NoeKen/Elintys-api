@@ -59,6 +59,7 @@ export interface PublicEventTicketType {
   isFree: boolean;
   quantity: number;
   sold: number;
+  reserved: number;
   description?: string;
 }
 

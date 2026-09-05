@@ -3,12 +3,18 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { PaymentProviderRegistry } from './payment-provider.registry';
 import { TestPaymentProvider } from './test-payment.provider';
 import { StripePaymentProvider } from './stripe-payment.provider';
+import { PayPalPaymentProvider } from './paypal/paypal-payment.provider';
 import { ErrorCodes } from '../../../shared/constants/error-codes';
 
-function buildRegistry(options: { paidCheckout: boolean; testProvider: boolean }): {
+function buildRegistry(options: {
+  paidCheckout: boolean;
+  testProvider: boolean;
+  paypal?: boolean;
+}): {
   registry: PaymentProviderRegistry;
   test: TestPaymentProvider;
   stripe: StripePaymentProvider;
+  paypal: PayPalPaymentProvider;
 } {
   const values: Record<string, unknown> = {
     'stripe.checkoutEnabled': options.paidCheckout,
@@ -17,7 +23,16 @@ function buildRegistry(options: { paidCheckout: boolean; testProvider: boolean }
   const config = { get: jest.fn((key: string) => values[key]) } as unknown as ConfigService;
   const test = { name: 'test' } as unknown as TestPaymentProvider;
   const stripe = { name: 'stripe' } as unknown as StripePaymentProvider;
-  return { registry: new PaymentProviderRegistry(config, test, stripe), test, stripe };
+  const paypal = {
+    name: 'paypal',
+    enabled: options.paypal === true,
+  } as unknown as PayPalPaymentProvider;
+  return {
+    registry: new PaymentProviderRegistry(config, test, stripe, paypal),
+    test,
+    stripe,
+    paypal,
+  };
 }
 
 afterEach(() => jest.clearAllMocks());
@@ -64,5 +79,65 @@ describe('PaymentProviderRegistry — résolution d\'une commande existante', ()
   it.each(['', 'paypal', 'TEST'])('devrait refuser le fournisseur inconnu %p', (name) => {
     const { registry } = buildRegistry({ paidCheckout: true, testProvider: true });
     expect(() => registry.resolveByName(name)).toThrow(ServiceUnavailableException);
+  });
+});
+
+describe('PaymentProviderRegistry — PayPal (Vague 6)', () => {
+  it('devrait choisir PayPal lorsque les DEUX drapeaux sont ouverts', () => {
+    const { registry, paypal } = buildRegistry({
+      paidCheckout: true,
+      testProvider: false,
+      paypal: true,
+    });
+    expect(registry.selectForNewOrder()).toBe(paypal);
+    expect(registry.availableProviderNames).toEqual(['paypal', 'stripe']);
+  });
+
+  it('devrait ignorer PayPal si PAID_CHECKOUT_ENABLED est fermé', () => {
+    const { registry } = buildRegistry({
+      paidCheckout: false,
+      testProvider: false,
+      paypal: true,
+    });
+    expect(() => registry.selectForNewOrder()).toThrow(ErrorCodes.PAID_CHECKOUT_NOT_READY);
+    expect(registry.availableProviderNames).toEqual([]);
+  });
+
+  it('devrait retomber sur Stripe si PAYPAL_PROVIDER_ENABLED est fermé', () => {
+    const { registry, stripe } = buildRegistry({
+      paidCheckout: true,
+      testProvider: false,
+      paypal: false,
+    });
+    expect(registry.selectForNewOrder()).toBe(stripe);
+  });
+
+  it('devrait donner la priorité au fournisseur de test uniquement en caisse fermée', () => {
+    const { registry, test } = buildRegistry({
+      paidCheckout: false,
+      testProvider: true,
+      paypal: true,
+    });
+    expect(registry.selectForNewOrder()).toBe(test);
+  });
+
+  it('devrait refuser de régler une commande PayPal si un drapeau est fermé', () => {
+    const closed = buildRegistry({ paidCheckout: false, testProvider: false, paypal: true });
+    expect(() => closed.registry.resolveByName('paypal')).toThrow(
+      ErrorCodes.PAID_CHECKOUT_NOT_READY,
+    );
+    const disabled = buildRegistry({ paidCheckout: true, testProvider: false, paypal: false });
+    expect(() => disabled.registry.resolveByName('paypal')).toThrow(
+      ErrorCodes.PAID_CHECKOUT_NOT_READY,
+    );
+  });
+
+  it('devrait résoudre PayPal par son nom quand il est autorisé', () => {
+    const { registry, paypal } = buildRegistry({
+      paidCheckout: true,
+      testProvider: false,
+      paypal: true,
+    });
+    expect(registry.resolveByName('paypal')).toBe(paypal);
   });
 });

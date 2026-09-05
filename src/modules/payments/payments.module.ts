@@ -11,6 +11,13 @@ import {
   StripePaymentFinalization,
   StripePaymentFinalizationSchema,
 } from './stripe-payment-finalization.schema';
+import { PaymentProvidersModule } from './providers/payment-providers.module';
+import { PayPalWebhookController } from './paypal-webhook.controller';
+import { PayPalWebhookService } from './providers/paypal/paypal-webhook.service';
+import {
+  PayPalWebhookEvent,
+  PayPalWebhookEventSchema,
+} from './providers/paypal/paypal-webhook-event.schema';
 
 @Module({
   imports: [
@@ -18,13 +25,15 @@ import {
     EmailsModule,
     EventsModule,
     ConsistencyModule,
+    PaymentProvidersModule,
     MongooseModule.forFeature([
       { name: Event.name, schema: EventSchema },
       { name: StripePaymentFinalization.name, schema: StripePaymentFinalizationSchema },
+      { name: PayPalWebhookEvent.name, schema: PayPalWebhookEventSchema },
     ]),
   ],
-  controllers: [PaymentsController],
-  providers: [PaymentsService],
+  controllers: [PaymentsController, PayPalWebhookController],
+  providers: [PaymentsService, PayPalWebhookService],
   exports: [PaymentsService],
 })
 export class PaymentsModule {}

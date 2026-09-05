@@ -442,6 +442,7 @@ describe('EventsService', () => {
         isFree: false,
         quantity: 100,
         sold: 10,
+        reserved: 7,
       }]));
 
       const result = await service.findBySlug(slug);
@@ -451,6 +452,7 @@ describe('EventsService', () => {
       expect(result.venue?.name).toBe('Maison Elintys');
       expect(result.providers).toHaveLength(1);
       expect(result.ticketTypes).toHaveLength(1);
+      expect(result.ticketTypes[0]).toMatchObject({ sold: 10, reserved: 7 });
       expect(result.relatedEvents).toHaveLength(1);
       expect(serialized).not.toMatch(/codeHash|allowedDomains|creationProgress|contactEmail|onlineUrl|note interne|prive@/);
       expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({

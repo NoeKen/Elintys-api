@@ -38,7 +38,7 @@ export const TicketOrderLineSchema = SchemaFactory.createForClass(TicketOrderLin
 
 @Schema({ _id: false })
 export class TicketOrderPayment {
-  /** Nom du fournisseur ayant créé le paiement ('test' | 'stripe'). */
+  /** Nom du fournisseur ayant créé le paiement ('test' | 'stripe' | 'paypal'). */
   @Prop({ required: true })
   provider!: string;
 
@@ -56,6 +56,16 @@ export class TicketOrderPayment {
   /** URL de paiement hébergée par le fournisseur, si applicable. */
   @Prop({ type: String, default: null })
   checkoutUrl!: string | null;
+
+  /**
+   * Référence de RÈGLEMENT du fournisseur (capture PayPal, charge…), distincte
+   * de `reference` qui identifie la commande côté fournisseur.
+   *
+   * Contrainte d'unicité en base : un même règlement ne peut jamais finaliser
+   * deux TicketOrder (cf. index `ticket_orders_unique_settlement_reference`).
+   */
+  @Prop({ type: String, default: null })
+  settlementReference!: string | null;
 
   @Prop({ type: Date, default: null })
   lastSyncedAt!: Date | null;
@@ -177,6 +187,19 @@ TicketOrderSchema.index({ event: 1, status: 1 }, { name: 'ticket_orders_by_event
  * Partiel car la référence est null entre la création de la commande et la
  * création du paiement.
  */
+/**
+ * Contrainte DB : UNE référence de règlement (capture) = UNE commande.
+ * Empêche qu'une même capture PayPal soit imputée à deux commandes.
+ */
+TicketOrderSchema.index(
+  { 'payment.settlementReference': 1 },
+  {
+    unique: true,
+    name: 'ticket_orders_unique_settlement_reference',
+    partialFilterExpression: { 'payment.settlementReference': { $type: 'string' } },
+  },
+);
+
 TicketOrderSchema.index(
   { 'payment.reference': 1 },
   {

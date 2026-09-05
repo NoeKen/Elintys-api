@@ -68,9 +68,15 @@ class Cleanup {
 }
 
 async function main(): Promise<void> {
-  const primary = await NestFactory.createApplicationContext(AppModule, { logger: false });
+  const primary = await NestFactory.createApplicationContext(AppModule, {
+    logger: false,
+    abortOnError: false,
+  });
   // Deuxième contexte applicatif = deuxième « instance API » logique.
-  const secondary = await NestFactory.createApplicationContext(AppModule, { logger: false });
+  const secondary = await NestFactory.createApplicationContext(AppModule, {
+    logger: false,
+    abortOnError: false,
+  });
 
   const connection = primary.get<Connection>(getConnectionToken());
   assertEnvironmentGuards(process.env.ELINTYS_ENV, connection.db?.databaseName);
@@ -583,7 +589,7 @@ async function backdate(connection: Connection, orderId: string): Promise<void> 
 /* istanbul ignore next -- CLI entrypoint */
 if (require.main === module) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(error instanceof Error ? (error.stack ?? error.message) : String(error));
     process.exit(1);
   });
 }

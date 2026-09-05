@@ -25,6 +25,7 @@
 export const PAYMENT_PROVIDER_TOKENS = {
   TEST: 'test',
   STRIPE: 'stripe',
+  PAYPAL: 'paypal',
 } as const;
 
 export type PaymentProviderName =
@@ -70,6 +71,22 @@ export interface PaymentHandle {
   status: ProviderPaymentStatus;
   /** URL de paiement hébergée, si le fournisseur en expose une. */
   checkoutUrl: string | null;
+
+  /**
+   * Champs de RÈGLEMENT — Vague 6, tous optionnels.
+   *
+   * Certains fournisseurs distinguent l'autorisation du règlement effectif
+   * (PayPal : order puis capture). Ces champs décrivent le règlement lorsqu'il
+   * existe, sans imposer cette notion aux fournisseurs qui règlent en une
+   * étape (Stripe Checkout, TestPaymentProvider).
+   */
+
+  /** Référence du règlement (capture, charge…), distincte de `reference`. */
+  settlementReference?: string | null;
+  /** Montant réellement réglé, en unités mineures. Vérifié par le domaine. */
+  settledAmountMinorUnits?: number | null;
+  /** Devise du règlement, en ISO-4217. Vérifiée par le domaine. */
+  settledCurrency?: string | null;
 }
 
 export interface PaymentProvider {
@@ -85,4 +102,16 @@ export interface PaymentProvider {
    * Doit être idempotente : une deuxième annulation ne doit pas échouer.
    */
   cancelPayment(reference: string): Promise<void>;
+
+  /**
+   * RÈGLEMENT EN DEUX TEMPS — optionnel (Vague 6).
+   *
+   * Implémenté uniquement par les fournisseurs qui séparent l'approbation de
+   * l'acheteur du transfert effectif des fonds. Le serveur — jamais le client —
+   * déclenche cette étape et vérifie le montant réglé.
+   *
+   * Doit être IDEMPOTENT : un second appel pour un règlement déjà effectué
+   * renvoie le même résultat sans créer de second débit.
+   */
+  confirmPayment?(input: { reference: string; orderId: string }): Promise<PaymentHandle>;
 }
