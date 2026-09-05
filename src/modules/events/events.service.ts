@@ -357,7 +357,7 @@ export class EventsService {
           .find({ event: eventId })
           .sort({ price: 1, _id: 1 })
           .lean()
-          .select('name price isFree quantity sold description')
+          .select('name price isFree quantity sold reserved description')
         : [],
       relatedFilter
         ? this.eventModel
@@ -507,6 +507,7 @@ export class EventsService {
       isFree: ticket.isFree,
       quantity: ticket.quantity,
       sold: ticket.sold,
+      reserved: ticket.reserved ?? 0,
       ...(ticket.description ? { description: ticket.description } : {}),
     };
   }
