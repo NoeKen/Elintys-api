@@ -90,10 +90,13 @@ export class EmailsService {
     eventTitle: string;
     requestUrl: string;
   }): Promise<void> {
+    const organizerName = this.escapeHtml(opts.organizerName);
+    const vendorName = this.escapeHtml(opts.vendorName);
+    const eventTitle = this.escapeHtml(opts.eventTitle);
     const html = this.baseTemplate(`
       <h2 style="color:#0D1E35;margin:0 0 16px;">Nouvelle demande de collaboration</h2>
-      <p style="color:#444;">Bonjour ${opts.vendorName},</p>
-      <p style="color:#444;"><strong>${opts.organizerName}</strong> vous a envoyé une demande pour l'événement <strong>${opts.eventTitle}</strong>.</p>
+      <p style="color:#444;">Bonjour ${vendorName},</p>
+      <p style="color:#444;"><strong>${organizerName}</strong> vous a envoyé une demande pour l'événement <strong>${eventTitle}</strong>.</p>
       ${this.ctaButton(opts.requestUrl, 'Voir la demande')}
     `);
 

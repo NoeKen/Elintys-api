@@ -97,6 +97,25 @@ describe('EmailsService', () => {
     });
   });
 
+  describe('sendNewRequest', () => {
+    it('échappe les champs utilisateur interpolés dans le HTML', async () => {
+      mockResendSend.mockResolvedValue({ data: { id: 'email-id-request' }, error: null });
+
+      await service.sendNewRequest('vendor@exemple.ca', {
+        organizerName: '<img src=x onerror=alert(1)>',
+        vendorName: '<script>alert(2)</script>',
+        eventTitle: 'Gala <b>privé</b>',
+        requestUrl: 'http://localhost:3000/tableau-de-bord/prestataire/demandes',
+      });
+
+      const callArg = mockResendSend.mock.calls[0][0] as { html: string };
+      expect(callArg.html).not.toContain('<script>');
+      expect(callArg.html).not.toContain('<img');
+      expect(callArg.html).toContain('&lt;script&gt;alert(2)&lt;/script&gt;');
+      expect(callArg.html).toContain('Gala &lt;b&gt;privé&lt;/b&gt;');
+    });
+  });
+
   // ── sendPasswordReset ──
   describe('sendPasswordReset', () => {
     it('envoie un courriel de réinitialisation avec le lien correct', async () => {
