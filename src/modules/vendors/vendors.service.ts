@@ -133,7 +133,69 @@ export class VendorsService {
       externalContact: dto.externalContact ?? null,
       status: VendorRequestStatus.PENDING,
     });
+
+    this.announceNewRequest(String(req._id), eventId, organizerId, dto).catch(() => undefined);
+
     return req.toObject();
+  }
+
+  /**
+   * Prévient le prestataire qu'une demande l'attend.
+   *
+   * Best-effort : jamais attendu par `createRequest`, pour qu'une panne de
+   * Resend ou de la messagerie interne n'empêche pas la création de la demande.
+   * Un contact externe n'a pas de compte Elintys — il reçoit donc le courriel
+   * mais aucune notification in-app.
+   */
+  private async announceNewRequest(
+    requestId: string,
+    eventId: string,
+    organizerId: string,
+    dto: CreateVendorRequestDto,
+  ): Promise<void> {
+    const [organizer, event] = await Promise.all([
+      this.userModel.findById(organizerId).lean().select('fullName'),
+      this.eventModel.findById(eventId).lean().select('title'),
+    ]);
+    if (!organizer || !event) return;
+
+    const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
+    const requestsPath = '/tableau-de-bord/prestataire/demandes';
+
+    if (!dto.vendorId) {
+      const email = dto.externalContact?.email;
+      if (!email) return;
+      await this.emailsService.sendNewRequest(email, {
+        organizerName: organizer.fullName,
+        vendorName: dto.externalContact?.name ?? '',
+        eventTitle: event.title,
+        requestUrl: `${frontendUrl}/inscription?redirect=${encodeURIComponent(requestsPath)}`,
+      });
+      return;
+    }
+
+    const vendor = await this.vendorModel.findById(dto.vendorId).lean().select('user businessName');
+    if (!vendor) return;
+    const vendorUserId = vendor.user.toString();
+
+    await this.notificationsService
+      .create(vendorUserId, NotificationType.VENDOR_REQUEST_RECEIVED, {
+        requestId,
+        eventId,
+        eventTitle: event.title,
+        organizerName: organizer.fullName,
+      })
+      .catch(() => undefined);
+
+    const vendorUser = await this.userModel.findById(vendorUserId).lean().select('email');
+    if (!vendorUser?.email) return;
+
+    await this.emailsService.sendNewRequest(vendorUser.email, {
+      organizerName: organizer.fullName,
+      vendorName: vendor.businessName,
+      eventTitle: event.title,
+      requestUrl: `${frontendUrl}${requestsPath}`,
+    });
   }
 
   async listRequestsByEvent(eventId: string, organizerId: string): Promise<VendorRequest[]> {

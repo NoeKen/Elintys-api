@@ -10,6 +10,10 @@ import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
 import { VendorPriceTier } from './dto/query-vendor.dto';
+import { NotificationType } from '../notifications/notification.schema';
+
+/** Laisse se résoudre les envois « fire-and-forget » déclenchés par le service. */
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -32,8 +36,11 @@ describe('VendorsService', () => {
   let service: VendorsService;
   let vendorModel: Record<string, jest.Mock>;
   let vendorRequestModel: Record<string, jest.Mock>;
+  let notificationsService: Record<string, jest.Mock>;
+  let emailsService: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
+  const vendorUserId = new Types.ObjectId().toString();
   const vendorId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
   const requestId = new Types.ObjectId().toString();
@@ -90,6 +97,12 @@ describe('VendorsService', () => {
     vendorRequestModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockRequest()));
     vendorRequestModel.findByIdAndDelete.mockResolvedValue(null);
 
+    notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+    emailsService = {
+      sendRequestAccepted: jest.fn().mockResolvedValue(undefined),
+      sendNewRequest: jest.fn().mockResolvedValue(undefined),
+    };
+
     testingModule = await Test.createTestingModule({
       providers: [
         VendorsService,
@@ -107,8 +120,8 @@ describe('VendorsService', () => {
             ),
           },
         },
-        { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
-        { provide: EmailsService, useValue: { sendRequestAccepted: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: notificationsService },
+        { provide: EmailsService, useValue: emailsService },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
@@ -262,6 +275,73 @@ describe('VendorsService', () => {
         expect.objectContaining({ source: VendorRequestSource.MANUAL }),
       );
       expect(result).toBeDefined();
+    });
+
+    it('devrait notifier et envoyer un courriel au prestataire plateforme', async () => {
+      const dto = { vendorId, source: VendorRequestSource.PLATFORM, message: 'Bonjour' };
+      vendorRequestModel.create.mockResolvedValue(mockRequest());
+      vendorModel.findById.mockReturnValue(
+        makeChainable(mockVendor({ user: { toString: () => vendorUserId } })),
+      );
+
+      await service.createRequest(eventId, userId, dto);
+      await flushAsync();
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        vendorUserId,
+        NotificationType.VENDOR_REQUEST_RECEIVED,
+        expect.objectContaining({ requestId, eventTitle: 'Test Event' }),
+      );
+      expect(emailsService.sendNewRequest).toHaveBeenCalledWith(
+        'org@test.com',
+        expect.objectContaining({ vendorName: 'Photo Pro', eventTitle: 'Test Event' }),
+      );
+    });
+
+    it('devrait envoyer un courriel au contact externe sans créer de notification', async () => {
+      const externalContact = { name: 'Jean Photo', email: 'jean@example.com' };
+      const dto = { source: VendorRequestSource.MANUAL, externalContact };
+      vendorRequestModel.create.mockResolvedValue(mockRequest({ vendor: undefined, source: VendorRequestSource.MANUAL }));
+
+      await service.createRequest(eventId, userId, dto);
+      await flushAsync();
+
+      expect(emailsService.sendNewRequest).toHaveBeenCalledWith(
+        'jean@example.com',
+        expect.objectContaining({ vendorName: 'Jean Photo' }),
+      );
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('devrait ignorer l’envoi quand le contact externe n’a pas de courriel', async () => {
+      const dto = { source: VendorRequestSource.MANUAL, externalContact: { name: 'Sans courriel' } };
+      vendorRequestModel.create.mockResolvedValue(mockRequest({ vendor: undefined, source: VendorRequestSource.MANUAL }));
+
+      await service.createRequest(eventId, userId, dto);
+      await flushAsync();
+
+      expect(emailsService.sendNewRequest).not.toHaveBeenCalled();
+    });
+
+    it('devrait retourner la demande même si le courriel échoue', async () => {
+      const dto = { vendorId, source: VendorRequestSource.PLATFORM };
+      vendorRequestModel.create.mockResolvedValue(mockRequest());
+      emailsService.sendNewRequest.mockRejectedValueOnce(new Error('resend down'));
+
+      await expect(service.createRequest(eventId, userId, dto)).resolves.toBeDefined();
+      await flushAsync();
+    });
+
+    it('ne devrait ni notifier ni envoyer de courriel pour une demande en double', async () => {
+      const dto = { vendorId, source: VendorRequestSource.PLATFORM };
+      vendorRequestModel.findOne.mockReturnValue(makeChainable(mockRequest()));
+
+      await service.createRequest(eventId, userId, dto);
+      await flushAsync();
+
+      expect(vendorRequestModel.create).not.toHaveBeenCalled();
+      expect(emailsService.sendNewRequest).not.toHaveBeenCalled();
+      expect(notificationsService.create).not.toHaveBeenCalled();
     });
   });
 

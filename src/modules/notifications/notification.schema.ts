@@ -5,6 +5,7 @@ export type NotificationDocument = HydratedDocument<Notification>;
 
 export enum NotificationType {
   VENDOR_RESPONDED = 'VENDOR_RESPONDED',
+  VENDOR_REQUEST_RECEIVED = 'VENDOR_REQUEST_RECEIVED',
   TICKET_SOLD = 'TICKET_SOLD',
   VENUE_CONFIRMED = 'VENUE_CONFIRMED',
   INVITATION_ACCEPTED = 'INVITATION_ACCEPTED',
