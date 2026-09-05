@@ -38,7 +38,7 @@ export const TicketOrderLineSchema = SchemaFactory.createForClass(TicketOrderLin
 
 @Schema({ _id: false })
 export class TicketOrderPayment {
-  /** Nom du fournisseur ayant créé le paiement ('test' | 'stripe'). */
+  /** Nom du fournisseur ayant créé le paiement ('test' | 'stripe' | 'paypal'). */
   @Prop({ required: true })
   provider!: string;
 

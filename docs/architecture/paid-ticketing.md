@@ -284,7 +284,7 @@ aucune admission, aucun stock consommé, `requiresManualReview` et erreur stable
   `invoice_id` = TicketOrder pour interdire un second paiement de la commande.
   Ces mécanismes complètent — jamais ne remplacent — les contraintes MongoDB.
 - **Sandbox uniquement** : `assertSandbox()` refuse toute opération hors
-  sandbox, en plus du refus de démarrage sur `PAYPAL_ENV=live`.
+  sandbox, avec refus de démarrage absolu sur `PAYPAL_ENV=live` pendant la Vague 6.
 
 ### Webhooks
 

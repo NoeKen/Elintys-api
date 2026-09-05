@@ -1,6 +1,5 @@
 import {
   describePayPalConfig,
-  PAYPAL_LIVE_BASE_URL,
   PAYPAL_SANDBOX_BASE_URL,
   resolvePayPalConfig,
 } from './paypal-environment';
@@ -74,7 +73,7 @@ describe('resolvePayPalConfig — sandbox', () => {
   });
 });
 
-describe('resolvePayPalConfig — refus du mode live', () => {
+describe('resolvePayPalConfig — refus absolu du mode live', () => {
   it.each([
     ['dev', 'development'],
     ['dev', 'production'],
@@ -82,22 +81,23 @@ describe('resolvePayPalConfig — refus du mode live', () => {
   ])('devrait refuser live avec ELINTYS_ENV=%s et NODE_ENV=%s', (elintysEnv, nodeEnv) => {
     expect(() =>
       resolvePayPalConfig({ enabled: 'true', environment: 'live', ...CREDS }, elintysEnv, nodeEnv),
-    ).toThrow('PAYPAL_ENV=live is refused');
+    ).toThrow('PAYPAL_ENV=live is disabled');
   });
 
   it('devrait refuser live même lorsque le fournisseur est désactivé', () => {
     expect(() =>
       resolvePayPalConfig({ enabled: 'false', environment: 'live', ...CREDS }, 'dev', 'development'),
-    ).toThrow('PAYPAL_ENV=live is refused');
+    ).toThrow('PAYPAL_ENV=live is disabled');
   });
 
-  it("n'autorise live que sur un hôte de production explicite", () => {
-    const config = resolvePayPalConfig(
-      { enabled: 'true', environment: 'live', ...CREDS },
-      'prod',
-      'production',
-    );
-    expect(config.baseUrl).toBe(PAYPAL_LIVE_BASE_URL);
+  it('devrait refuser live même sur un hôte de production explicite', () => {
+    expect(() =>
+      resolvePayPalConfig(
+        { enabled: 'true', environment: 'live', ...CREDS },
+        'prod',
+        'production',
+      ),
+    ).toThrow('sandbox-only');
   });
 });
 

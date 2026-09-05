@@ -38,6 +38,7 @@ import { PayPalWebhookVerifier } from './paypal/paypal-webhook.verifier';
     PaymentProviderRegistry,
     TestPaymentProvider,
     StripePaymentProvider,
+    PayPalHttpClient,
     PayPalPaymentProvider,
     PayPalWebhookVerifier,
   ],

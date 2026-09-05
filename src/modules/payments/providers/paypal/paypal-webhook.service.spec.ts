@@ -50,11 +50,17 @@ class FakeEventModel {
   }
 
   updateOne(
-    filter: { eventId: string },
+    filter: { eventId: string; processingToken?: string; status?: string },
     update: { $set: Record<string, unknown> },
   ): Promise<{ modifiedCount: number }> {
     const row = this.rows.get(filter.eventId);
     if (!row) return Promise.resolve({ modifiedCount: 0 });
+    if (filter.processingToken !== undefined && row.processingToken !== filter.processingToken) {
+      return Promise.resolve({ modifiedCount: 0 });
+    }
+    if (filter.status !== undefined && row.status !== filter.status) {
+      return Promise.resolve({ modifiedCount: 0 });
+    }
     Object.assign(row, update.$set);
     return Promise.resolve({ modifiedCount: 1 });
   }
@@ -175,6 +181,35 @@ describe('PayPalWebhookService — traitement', () => {
     // PayPal rejoue : l'événement précédemment en échec doit être repris.
     failing.ticketOrders.syncPaymentAsServer.mockResolvedValue({});
     await expect(failing.service.handle(captureEvent())).resolves.toBe('processed');
+  });
+
+  it("empêche un ancien propriétaire de bail d'écraser le résultat d'une reprise", async () => {
+    const { service, model, ticketOrders } = build();
+    let rejectFirst!: (error: Error) => void;
+    const firstSync = new Promise((_resolve, reject) => {
+      rejectFirst = reject;
+    });
+    ticketOrders.syncPaymentAsServer
+      .mockImplementationOnce(() => firstSync)
+      .mockResolvedValueOnce({});
+
+    const staleWorker = service.handle(captureEvent());
+    await Promise.resolve();
+    await Promise.resolve();
+    const row = model.rows.get('WH-1');
+    expect(row).toBeDefined();
+    row!.leaseExpiresAt = new Date(Date.now() - 1);
+
+    await expect(service.handle(captureEvent())).resolves.toBe('processed');
+    expect(row).toMatchObject({ status: PayPalWebhookEventStatus.PROCESSED });
+
+    rejectFirst(new Error('stale worker failed'));
+    await expect(staleWorker).resolves.toBe('failed');
+    expect(row).toMatchObject({
+      status: PayPalWebhookEventStatus.PROCESSED,
+      failureCode: null,
+      ticketOrderId: 'ticket-order-1',
+    });
   });
 
   it('ne devrait jamais traiter le payload comme preuve de paiement', async () => {

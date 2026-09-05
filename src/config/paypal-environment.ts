@@ -7,19 +7,18 @@
  *    démarrage plutôt que de laisser l'API tourner « à moitié branchée » sur
  *    un fournisseur de paiement.
  *
- * 2. SANDBOX SEULEMENT — `PAYPAL_ENV=live` est REFUSÉ hors d'un environnement
- *    de production explicite. Aucun argent réel ne peut circuler depuis un
- *    poste de développement, même par erreur de copier-coller.
+ * 2. SANDBOX SEULEMENT — `PAYPAL_ENV=live` est REFUSÉ dans tous les
+ *    environnements pendant la Vague 6. Aucun endpoint de paiement réel ne
+ *    peut être sélectionné par configuration.
  *
  * 3. AUCUN SECRET EN CLAIR — ce module ne journalise jamais `clientSecret` ni
  *    `webhookId`. Les messages d'erreur ne citent que des NOMS de variables.
  */
 
-export type PayPalEnvironment = 'sandbox' | 'live';
+export type PayPalEnvironment = 'sandbox';
 
 /** Hôtes officiels de l'API PayPal REST (Orders v2). */
 export const PAYPAL_SANDBOX_BASE_URL = 'https://api-m.sandbox.paypal.com';
-export const PAYPAL_LIVE_BASE_URL = 'https://api-m.paypal.com';
 
 export interface PayPalConfig {
   /** Le fournisseur PayPal peut-il être sélectionné ? */
@@ -44,8 +43,11 @@ export const PAYPAL_DISABLED: PayPalConfig = Object.freeze({
 
 function parseEnvironment(raw: string | undefined): PayPalEnvironment {
   const value = (raw ?? 'sandbox').trim().toLowerCase();
-  if (value === 'sandbox' || value === 'live') return value;
-  throw new Error("PAYPAL_ENV must be either 'sandbox' or 'live'.");
+  if (value === 'sandbox') return value;
+  if (value === 'live') {
+    throw new Error('PAYPAL_ENV=live is disabled: Sprint 3 Wave 6 is sandbox-only.');
+  }
+  throw new Error("PAYPAL_ENV must be 'sandbox'.");
 }
 
 /**
@@ -61,21 +63,10 @@ export function resolvePayPalConfig(
     clientSecret: string | undefined;
     webhookId: string | undefined;
   },
-  elintysEnv: string,
-  nodeEnv: string,
+  _elintysEnv: string,
+  _nodeEnv: string,
 ): PayPalConfig {
   const environment = parseEnvironment(raw.environment);
-  const isProductionHost = elintysEnv === 'prod' && nodeEnv === 'production';
-
-  // Garde n°1 — le mode live est impossible hors production, activé ou non.
-  // On lève même lorsque le fournisseur est désactivé : une variable live
-  // traînant dans un .env de développement est une erreur de configuration
-  // qui doit être corrigée, pas ignorée silencieusement.
-  if (environment === 'live' && !isProductionHost) {
-    throw new Error(
-      "PAYPAL_ENV=live is refused outside a production host (requires ELINTYS_ENV=prod and NODE_ENV=production).",
-    );
-  }
 
   const enabled = raw.enabled === 'true';
   if (!enabled) return PAYPAL_DISABLED;
@@ -100,7 +91,7 @@ export function resolvePayPalConfig(
   return {
     enabled: true,
     environment,
-    baseUrl: environment === 'live' ? PAYPAL_LIVE_BASE_URL : PAYPAL_SANDBOX_BASE_URL,
+    baseUrl: PAYPAL_SANDBOX_BASE_URL,
     clientId: raw.clientId!.trim(),
     clientSecret: raw.clientSecret!.trim(),
     webhookId: raw.webhookId!.trim(),

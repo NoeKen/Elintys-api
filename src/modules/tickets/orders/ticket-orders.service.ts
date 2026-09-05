@@ -49,6 +49,8 @@ import { generateQRCode } from '../../../shared/utils/qr-code';
 /** Issue normalisée d'un règlement, quel que soit le fournisseur. */
 export interface ProviderSettlement {
   status: ProviderPaymentStatus;
+  /** Les détails du règlement sont obligatoires pour un flux en deux temps. */
+  verificationRequired: boolean;
   /** Référence de capture/charge, si le fournisseur en distingue une. */
   settlementReference: string | null;
   settledAmountMinorUnits: number | null;
@@ -485,6 +487,14 @@ export class TicketOrdersService {
     const settlement = await this.resolveSettlement(provider, order);
     const providerStatus = settlement.status;
 
+    // Le hold peut expirer pendant l'appel réseau. Une réponse de capture
+    // arrivée après l'échéance ne doit jamais ressusciter la commande, même si
+    // aucun sweep concurrent n'a encore exécuté la transition EXPIRED.
+    if (order.expiresAt.getTime() <= Date.now()) {
+      await this.expireOrder(orderId);
+      return this.handleAfterTerminal(await this.requireOrder(orderId), providerStatus);
+    }
+
     switch (providerStatus) {
       case ProviderPaymentStatus.SUCCEEDED:
         await this.assertSettlementMatchesOrder(order, settlement);
@@ -530,6 +540,7 @@ export class TicketOrdersService {
       });
       return {
         status: handle.status,
+        verificationRequired: true,
         settlementReference: handle.settlementReference ?? null,
         settledAmountMinorUnits: handle.settledAmountMinorUnits ?? null,
         settledCurrency: handle.settledCurrency ?? null,
@@ -538,6 +549,7 @@ export class TicketOrdersService {
 
     return {
       status: await provider.getPaymentStatus(reference),
+      verificationRequired: false,
       settlementReference: null,
       settledAmountMinorUnits: null,
       settledCurrency: null,
@@ -557,13 +569,14 @@ export class TicketOrdersService {
     order: LeanOrder,
     settlement: ProviderSettlement,
   ): Promise<void> {
-    if (settlement.settledAmountMinorUnits === null && settlement.settledCurrency === null) {
+    if (!settlement.verificationRequired) {
       return;
     }
+    const referencePresent = Boolean(settlement.settlementReference?.trim());
     const amountMatches = settlement.settledAmountMinorUnits === order.totalAmount;
     const currencyMatches =
       (settlement.settledCurrency ?? '').toLowerCase() === order.currency.toLowerCase();
-    if (amountMatches && currencyMatches) return;
+    if (referencePresent && amountMatches && currencyMatches) return;
 
     await this.orderModel.updateOne(
       { _id: order._id, requiresManualReview: false },

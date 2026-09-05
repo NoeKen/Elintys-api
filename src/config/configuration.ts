@@ -65,7 +65,7 @@ export default () => {
     /**
      * PayPal — Vague 6. Sandbox uniquement.
      * `resolvePayPalConfig` lève au démarrage si la configuration est
-     * incomplète ou si un mode live est détecté hors production.
+     * incomplète ou si un mode live est détecté, quel que soit l'environnement.
      */
     paypal: resolvePayPalConfig(
       {

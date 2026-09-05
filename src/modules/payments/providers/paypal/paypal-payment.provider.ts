@@ -25,7 +25,7 @@ export const PAYPAL_APPROVAL_URL_MISSING = 'PAYPAL_APPROVAL_URL_MISSING';
  * ----------------------------
  * `assertSandbox()` refuse toute opération si l'environnement résolu n'est pas
  * `sandbox`. C'est un garde-fou de vague, en plus de celui de la configuration
- * (qui refuse déjà `PAYPAL_ENV=live` hors production). Aucun paiement réel
+ * (qui refuse `PAYPAL_ENV=live` dans tous les environnements). Aucun paiement réel
  * n'est atteignable tant que ce garde est en place.
  *
  * SÉMANTIQUE DES ÉTATS
@@ -72,8 +72,8 @@ export class PayPalPaymentProvider implements PaymentProvider {
     }
     // Sans URL d'approbation, l'acheteur ne peut rien faire : on échoue tôt
     // plutôt que de laisser une commande bloquée en attente.
-    if (!snapshot.approvalUrl) {
-      this.logger.error('PayPal a créé une commande sans lien d\'approbation');
+    if (!snapshot.approvalUrl || !isTrustedSandboxApprovalUrl(snapshot.approvalUrl)) {
+      this.logger.error("PayPal n'a pas fourni de lien d'approbation Sandbox valide");
       throw new ServiceUnavailableException(PAYPAL_APPROVAL_URL_MISSING);
     }
 
@@ -150,6 +150,16 @@ export class PayPalPaymentProvider implements PaymentProvider {
       settledAmountMinorUnits,
       settledCurrency: snapshot.amount?.currencyCode ?? null,
     };
+  }
+}
+
+/** La Vague 6 ne redirige que vers l'interface acheteur PayPal Sandbox. */
+export function isTrustedSandboxApprovalUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && /(^|\.)sandbox\.paypal\.com$/.test(url.hostname);
+  } catch {
+    return false;
   }
 }
 

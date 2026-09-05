@@ -70,6 +70,10 @@ export class PayPalWebhookEvent {
   @Prop({ type: Date, default: null })
   leaseExpiresAt!: Date | null;
 
+  /** Jeton opaque du propriétaire courant du bail, renouvelé à chaque reprise. */
+  @Prop({ type: String, default: null })
+  processingToken!: string | null;
+
   @Prop({ type: Date, default: null })
   processedAt!: Date | null;
 

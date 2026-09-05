@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { randomUUID } from 'node:crypto';
 import { Model } from 'mongoose';
 import {
   PayPalWebhookEvent,
@@ -74,14 +75,20 @@ export class PayPalWebhookService {
     const identifiers = extractIdentifiers(event);
 
     // Déduplication AVANT tout effet : l'index unique désigne le gagnant.
-    const claimed = await this.claim(event, identifiers);
-    if (!claimed) {
+    const processingToken = await this.claim(event, identifiers);
+    if (!processingToken) {
       this.logger.logReplay('paypal-webhook', event.eventId, event.eventId);
       return 'duplicate';
     }
 
     if (!isHandledEventType(event.eventType)) {
-      await this.close(event.eventId, PayPalWebhookEventStatus.IGNORED, null, null);
+      await this.close(
+        event.eventId,
+        processingToken,
+        PayPalWebhookEventStatus.IGNORED,
+        null,
+        null,
+      );
       return 'ignored';
     }
 
@@ -90,6 +97,7 @@ export class PayPalWebhookService {
     if (!ticketOrderId) {
       await this.close(
         event.eventId,
+        processingToken,
         PayPalWebhookEventStatus.IGNORED,
         null,
         'TICKET_ORDER_NOT_RESOLVED',
@@ -101,13 +109,20 @@ export class PayPalWebhookService {
       // La synchronisation relit l'état chez PayPal et applique la transition.
       // Le payload du webhook n'est JAMAIS traité comme une preuve de paiement.
       await this.ticketOrders.syncPaymentAsServer(ticketOrderId);
-      await this.close(event.eventId, PayPalWebhookEventStatus.PROCESSED, ticketOrderId, null);
+      await this.close(
+        event.eventId,
+        processingToken,
+        PayPalWebhookEventStatus.PROCESSED,
+        ticketOrderId,
+        null,
+      );
       return 'processed';
     } catch (error: unknown) {
       const failureCode = error instanceof Error ? error.constructor.name : 'UNKNOWN_ERROR';
       // FAILED et non PROCESSED : PayPal rejouera, et le rejeu pourra reprendre.
       await this.close(
         event.eventId,
+        processingToken,
         PayPalWebhookEventStatus.FAILED,
         ticketOrderId,
         failureCode,
@@ -128,7 +143,8 @@ export class PayPalWebhookService {
   private async claim(
     event: VerifiedWebhookEvent,
     identifiers: WebhookIdentifiers,
-  ): Promise<boolean> {
+  ): Promise<string | null> {
+    const processingToken = randomUUID();
     try {
       await this.eventModel.create({
         eventId: event.eventId,
@@ -138,9 +154,10 @@ export class PayPalWebhookService {
         providerCaptureId: identifiers.providerCaptureId,
         ticketOrderId: null,
         leaseExpiresAt: new Date(Date.now() + WEBHOOK_LEASE_MS),
+        processingToken,
         expiresAt: new Date(Date.now() + WEBHOOK_EVENT_RETENTION_MS),
       });
-      return true;
+      return processingToken;
     } catch (error: unknown) {
       if ((error as { code?: number } | null)?.code !== 11000) throw error;
 
@@ -163,21 +180,27 @@ export class PayPalWebhookService {
             status: PayPalWebhookEventStatus.RECEIVED,
             failureCode: null,
             leaseExpiresAt: new Date(now.getTime() + WEBHOOK_LEASE_MS),
+            processingToken,
           },
         },
       );
-      return reclaimed !== null;
+      return reclaimed === null ? null : processingToken;
     }
   }
 
   private async close(
     eventId: string,
+    processingToken: string,
     status: PayPalWebhookEventStatus,
     ticketOrderId: string | null,
     failureCode: string | null,
   ): Promise<void> {
     await this.eventModel.updateOne(
-      { eventId },
+      {
+        eventId,
+        processingToken,
+        status: PayPalWebhookEventStatus.RECEIVED,
+      },
       { $set: { status, ticketOrderId, failureCode, processedAt: new Date() } },
     );
   }

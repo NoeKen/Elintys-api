@@ -66,9 +66,9 @@ PAYPAL_WEBHOOK_ID=WH-<identifiant du webhook>
 
 | Situation | Comportement |
 |---|---|
-| `PAYPAL_ENV=live` hors `ELINTYS_ENV=prod` + `NODE_ENV=production` | **refus de démarrage**, activé ou non |
+| `PAYPAL_ENV=live` dans tout environnement | **refus de démarrage**, activé ou non ; la Vague 6 est Sandbox-only |
 | `PAYPAL_PROVIDER_ENABLED=true` sans les trois credentials | **refus de démarrage**, avec le nom des variables manquantes |
-| `PAYPAL_ENV` autre que `sandbox`/`live` | **refus de démarrage** |
+| `PAYPAL_ENV` autre que `sandbox` | **refus de démarrage** |
 
 ### Ce qui ferme le paiement sans empêcher le démarrage
 

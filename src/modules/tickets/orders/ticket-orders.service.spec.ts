@@ -16,6 +16,7 @@ import { IdempotencyService } from '../../../shared/consistency/idempotency/idem
 import { TransactionService } from '../../../shared/consistency/transactions/transaction.service';
 import { PaymentProviderRegistry } from '../../payments/providers/payment-provider.registry';
 import {
+  PaymentHandle,
   PaymentProvider,
   ProviderPaymentStatus,
 } from '../../payments/providers/payment-provider.interface';
@@ -805,6 +806,11 @@ describe('TicketOrdersService — règlement en deux temps', () => {
     ['montant divergent', { settledAmountMinorUnits: 4999, settledCurrency: 'CAD' }],
     ['devise divergente', { settledAmountMinorUnits: 5000, settledCurrency: 'USD' }],
     ['montant illisible', { settledAmountMinorUnits: null, settledCurrency: 'CAD' }],
+    ['détails absents', { settledAmountMinorUnits: null, settledCurrency: null }],
+    [
+      'référence de capture absente',
+      { settlementReference: null, settledAmountMinorUnits: 5000, settledCurrency: 'CAD' },
+    ],
   ])('devrait refuser de finaliser sur %s et escalader', async (_name, settlement) => {
     const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
     const order = await harness.service.createOrder(BUYER_ID, lines(harness, 2), 'key-mismatch');
@@ -844,6 +850,52 @@ describe('TicketOrdersService — règlement en deux temps', () => {
 
     expect(failed.status).toBe(TicketOrderStatus.FAILED);
     expect(inventoryOf(harness)).toMatchObject({ sold: 0, reserved: 0 });
+    assertInvariants(harness);
+  });
+
+  it("devrait refuser l'admission si le hold expire pendant l'appel de capture", async () => {
+    jest.useFakeTimers({ now: new Date('2026-09-04T12:00:00Z') });
+    const harness = buildHarness({ providerStatus: ProviderPaymentStatus.PENDING });
+    const order = await harness.service.createOrder(BUYER_ID, lines(harness), 'key-capture-race');
+    let resolveCapture!: (value: PaymentHandle) => void;
+    let markCaptureStarted!: () => void;
+    const captureStarted = new Promise<void>((resolve) => {
+      markCaptureStarted = resolve;
+    });
+    harness.provider.confirmPayment = jest.fn().mockImplementation(() => {
+      markCaptureStarted();
+      return new Promise<PaymentHandle>((resolve) => {
+        resolveCapture = resolve;
+      });
+    });
+
+    const synchronization = harness.service.syncPayment(order._id, BUYER_ID);
+    await captureStarted;
+    jest.setSystemTime(new Date(new Date(order.expiresAt).getTime() + 1));
+
+    resolveCapture({
+      provider: 'paypal',
+      reference: 'PP-ORDER-1',
+      status: ProviderPaymentStatus.SUCCEEDED,
+      checkoutUrl: null,
+      settlementReference: 'CAPTURE-LATE',
+      settledAmountMinorUnits: 5000,
+      settledCurrency: 'CAD',
+    });
+
+    try {
+      await expect(synchronization).rejects.toThrow(
+        ErrorCodes.TICKET_ORDER_LATE_PAYMENT_REQUIRES_REVIEW,
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+    expect(harness.purchases.all()).toHaveLength(0);
+    expect(inventoryOf(harness)).toMatchObject({ sold: 0, reserved: 0 });
+    expect(harness.orders.get(order._id)).toMatchObject({
+      status: TicketOrderStatus.EXPIRED,
+      requiresManualReview: true,
+    });
     assertInvariants(harness);
   });
 });

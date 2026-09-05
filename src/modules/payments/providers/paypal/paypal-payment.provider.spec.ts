@@ -1,6 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import {
   mapSnapshotToStatus,
+  isTrustedSandboxApprovalUrl,
   PAYPAL_APPROVAL_URL_MISSING,
   PAYPAL_LIVE_MODE_REFUSED,
   PayPalPaymentProvider,
@@ -102,10 +103,25 @@ describe('PayPalPaymentProvider — création', () => {
   it.each([
     ['sans identifiant', snapshot({ orderId: '' })],
     ['sans lien d\'approbation', snapshot({ approvalUrl: null })],
+    [
+      'avec lien live',
+      snapshot({ approvalUrl: 'https://www.paypal.com/checkoutnow?token=PP-ORDER-1' }),
+    ],
+    ['avec lien tiers', snapshot({ approvalUrl: 'https://evil.example/checkout' })],
   ])('devrait échouer tôt : commande %s', async (_name, value) => {
     const { provider, orders } = build();
     orders.createOrder.mockResolvedValue(value);
     await expect(provider.createPayment(CREATE_INPUT)).rejects.toThrow(PAYPAL_APPROVAL_URL_MISSING);
+  });
+
+  it('devrait accepter uniquement une URL HTTPS PayPal Sandbox', () => {
+    expect(
+      isTrustedSandboxApprovalUrl(
+        'https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1',
+      ),
+    ).toBe(true);
+    expect(isTrustedSandboxApprovalUrl('https://www.paypal.com/checkoutnow')).toBe(false);
+    expect(isTrustedSandboxApprovalUrl('http://www.sandbox.paypal.com/checkoutnow')).toBe(false);
   });
 });
 
