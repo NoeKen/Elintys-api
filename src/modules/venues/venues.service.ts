@@ -280,7 +280,11 @@ export class VenuesService {
 
     return this.venueBookingModel
       .find({ venue: venueProfile._id })
-      .populate('event', 'title startDate')
+      .populate('event', 'title startDate slug')
+      // Même raison que côté prestataire : l'écran affiche le nom de
+      // l'organisateur, il doit donc être peuplé.
+      .populate('organizer', 'fullName')
+      .sort({ createdAt: -1 })
       .lean()
       .select('-__v');
   }

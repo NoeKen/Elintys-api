@@ -342,7 +342,11 @@ export class VendorsService {
 
     return this.vendorRequestModel
       .find({ vendor: vendorProfile._id })
-      .populate('event', 'title startDate')
+      .populate('event', 'title startDate slug')
+      // `organizer` doit être peuplé : sans cela l'écran prestataire affiche
+      // un nom vide en lisant `.fullName` sur un ObjectId.
+      .populate('organizer', 'fullName')
+      .sort({ createdAt: -1 })
       .lean()
       .select('-__v');
   }
