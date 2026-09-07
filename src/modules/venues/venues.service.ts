@@ -248,7 +248,14 @@ export class VenuesService {
    * dépend d'une autre collection et ne peut pas entrer dans le filtre.
    */
   async cancelBooking(bookingId: string, userId: string, roles: string[] = []): Promise<VenueBooking> {
-    const booking = await this.venueBookingModel.findById(bookingId).lean().select('event');
+    // Capture le début logique de l'opération avant toute lecture. Une réponse
+    // créée après cet instant ne doit pas pouvoir être immédiatement écrasée
+    // par cette même requête d'annulation concurrente.
+    const operationStartedAt = new Date();
+    const booking = await this.venueBookingModel
+      .findById(bookingId)
+      .lean()
+      .select('event status respondedAt');
     if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
 
     const event = await this.eventModel.findById(booking.event.toString()).lean().select('organizer');
@@ -257,11 +264,30 @@ export class VenuesService {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
+    if (
+      booking.status !== VenueBookingStatus.PENDING &&
+      booking.status !== VenueBookingStatus.CONFIRMED
+    ) {
+      throw new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+
+    const statusGuard =
+      booking.status === VenueBookingStatus.PENDING
+        ? { status: VenueBookingStatus.PENDING }
+        : {
+            status: VenueBookingStatus.CONFIRMED,
+            $or: [
+              { respondedAt: { $lt: operationStartedAt } },
+              { respondedAt: null },
+              { respondedAt: { $exists: false } },
+            ],
+          };
+
     const updated = await this.venueBookingModel
       .findOneAndUpdate(
         {
           _id: new Types.ObjectId(bookingId),
-          status: { $in: [VenueBookingStatus.PENDING, VenueBookingStatus.CONFIRMED] },
+          ...statusGuard,
         },
         { status: VenueBookingStatus.CANCELLED, respondedAt: new Date() },
         { new: true },

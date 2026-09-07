@@ -293,9 +293,12 @@ describe('VenuesService', () => {
   });
 
   describe('cancelBooking', () => {
-    it('annule via une transition conditionnelle sur les états annulables', async () => {
+    it('annule via une transition conditionnelle sur l’état observé', async () => {
       venueBookingModel.findById.mockReturnValue(
-        makeChainable({ event: new Types.ObjectId(eventId) }),
+        makeChainable({
+          event: new Types.ObjectId(eventId),
+          status: VenueBookingStatus.PENDING,
+        }),
       );
       venueBookingModel.findOneAndUpdate.mockReturnValue(
         makeChainable(mockBooking({ status: VenueBookingStatus.CANCELLED })),
@@ -305,19 +308,38 @@ describe('VenuesService', () => {
 
       expect(result.status).toBe(VenueBookingStatus.CANCELLED);
       const [filter] = venueBookingModel.findOneAndUpdate.mock.calls[0] as [
-        { status: { $in: string[] } },
+        { status: string },
       ];
-      // L'état attendu est dans le filtre : la course « annuler pendant que le
-      // gestionnaire répond » ne peut pas avoir deux gagnants.
-      expect(filter.status.$in).toEqual([
-        VenueBookingStatus.PENDING,
-        VenueBookingStatus.CONFIRMED,
-      ]);
+      expect(filter.status).toBe(VenueBookingStatus.PENDING);
+    });
+
+    it('n’écrase pas une confirmation concurrente postérieure au début de l’annulation', async () => {
+      const respondedAt = new Date(Date.now() + 1_000);
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({
+          event: new Types.ObjectId(eventId),
+          status: VenueBookingStatus.CONFIRMED,
+          respondedAt,
+        }),
+      );
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+
+      await expect(service.cancelBooking(bookingId, userId)).rejects.toThrow(ConflictException);
+
+      const [filter] = venueBookingModel.findOneAndUpdate.mock.calls[0] as [
+        { status: string; $or: Array<Record<string, unknown>> },
+      ];
+      expect(filter.status).toBe(VenueBookingStatus.CONFIRMED);
+      expect(filter.$or).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ respondedAt: expect.objectContaining({ $lt: expect.any(Date) }) }),
+        ]),
+      );
     });
 
     it('refuse l’annulation d’une réservation liée à l’événement d’un tiers', async () => {
       venueBookingModel.findById.mockReturnValue(
-        makeChainable({ event: new Types.ObjectId(eventId) }),
+        makeChainable({ event: new Types.ObjectId(eventId), status: VenueBookingStatus.PENDING }),
       );
 
       await expect(service.cancelBooking(bookingId, new Types.ObjectId().toString()))
@@ -327,7 +349,7 @@ describe('VenuesService', () => {
 
     it('lève ConflictException si la réservation a changé d’état entre-temps', async () => {
       venueBookingModel.findById.mockReturnValue(
-        makeChainable({ event: new Types.ObjectId(eventId) }),
+        makeChainable({ event: new Types.ObjectId(eventId), status: VenueBookingStatus.PENDING }),
       );
       venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
 

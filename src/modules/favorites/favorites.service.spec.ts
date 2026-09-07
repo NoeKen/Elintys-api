@@ -4,7 +4,7 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { FavoritesService } from './favorites.service';
 import { Favorite, FavoriteTargetType } from './favorite.schema';
-import { Event } from '../events/event.schema';
+import { Event, EventStatus } from '../events/event.schema';
 import { VendorProfile } from '../vendors/vendor.schema';
 import { VenueProfile } from '../venues/venue.schema';
 import { ErrorCodes } from '../../shared/constants/error-codes';
@@ -137,6 +137,37 @@ describe('FavoritesService', () => {
       expect(expected.exists).toHaveBeenCalled();
     });
 
+    it('ne permet pas aux favoris de contourner la visibilité des événements', async () => {
+      favoriteModel.create.mockResolvedValue(mockFavorite());
+
+      await service.add(userId, {
+        targetType: FavoriteTargetType.EVENT,
+        targetId: eventTargetId,
+      });
+
+      expect(eventModel.exists).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: EventStatus.PUBLISHED,
+          archivedAt: null,
+          $or: expect.any(Array),
+        }),
+      );
+    });
+
+    it.each([
+      [FavoriteTargetType.VENDOR, vendorTargetId, 'vendorModel'],
+      [FavoriteTargetType.VENUE, venueTargetId, 'venueModel'],
+    ])('exige une cible active pour %s', async (targetType, targetId, modelName) => {
+      favoriteModel.create.mockResolvedValue(mockFavorite({ targetType }));
+
+      await service.add(userId, { targetType, targetId });
+
+      const model = modelName === 'vendorModel' ? vendorModel : venueModel;
+      expect(model.exists).toHaveBeenCalledWith(
+        expect.objectContaining({ isActive: true }),
+      );
+    });
+
     it('traduit une violation d’index unique en conflit métier', async () => {
       // L'index {user, targetType, targetId} est l'autorité : deux clics
       // concurrents ne doivent produire ni doublon ni 500.
@@ -204,6 +235,9 @@ describe('FavoritesService', () => {
       expect(favorite.target?.label).toBe('Gala annuel');
       expect(favorite.target?.href).toBe('/evenements/gala-annuel');
       expect(favorite.target?.imageUrl).toBe('https://cdn/cover.jpg');
+      expect(eventModel.find).toHaveBeenCalledWith(
+        expect.objectContaining({ status: EventStatus.PUBLISHED, archivedAt: null }),
+      );
     });
 
     it("n'invente pas de lien pour un événement sans slug", async () => {

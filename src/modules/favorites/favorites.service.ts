@@ -6,7 +6,13 @@ import { CreateFavoriteDto } from './dto/create-favorite.dto';
 import { FavoriteTargetView, FavoriteView } from './favorite-view';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
-import { Event, EventDocument } from '../events/event.schema';
+import {
+  Event,
+  EventDiscoverability,
+  EventDocument,
+  EventStatus,
+  EventVisibility,
+} from '../events/event.schema';
 import { VendorProfile, VendorProfileDocument } from '../vendors/vendor.schema';
 import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
 
@@ -39,12 +45,36 @@ export class FavoritesService {
   private async targetExists(targetType: FavoriteTargetType, targetId: Types.ObjectId): Promise<boolean> {
     switch (targetType) {
       case FavoriteTargetType.EVENT:
-        return (await this.eventModel.exists({ _id: targetId })) !== null;
+        return (await this.eventModel.exists(this.publicEventFilter(targetId))) !== null;
       case FavoriteTargetType.VENDOR:
-        return (await this.vendorModel.exists({ _id: targetId })) !== null;
+        return (await this.vendorModel.exists({ _id: targetId, isActive: true })) !== null;
       case FavoriteTargetType.VENUE:
-        return (await this.venueModel.exists({ _id: targetId })) !== null;
+        return (await this.venueModel.exists({ _id: targetId, isActive: true })) !== null;
     }
+  }
+
+  /**
+   * Les favoris ne sont pas un canal d'accès alternatif. Sans ce filtre, un
+   * ObjectId deviné permettait d'enregistrer puis de relire le titre et le slug
+   * d'un brouillon ou d'un événement privé.
+   */
+  private publicEventFilter(targetId: Types.ObjectId | Types.ObjectId[]) {
+    return {
+      _id: Array.isArray(targetId) ? { $in: targetId } : targetId,
+      status: EventStatus.PUBLISHED,
+      archivedAt: null,
+      $or: [
+        {
+          discoverability: {
+            $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED],
+          },
+        },
+        {
+          discoverability: { $exists: false },
+          visibility: EventVisibility.PUBLIC,
+        },
+      ],
+    };
   }
 
   async add(userId: string, dto: CreateFavoriteDto): Promise<Favorite> {
@@ -102,7 +132,7 @@ export class FavoritesService {
     const eventIds = idsByType.get(FavoriteTargetType.EVENT);
     if (eventIds?.length) {
       const events = await this.eventModel
-        .find({ _id: { $in: eventIds } })
+        .find(this.publicEventFilter(eventIds))
         .lean()
         .select('_id title slug startDate coverImage location.city');
       for (const event of events) {
@@ -122,7 +152,7 @@ export class FavoritesService {
     const vendorIds = idsByType.get(FavoriteTargetType.VENDOR);
     if (vendorIds?.length) {
       const vendors = await this.vendorModel
-        .find({ _id: { $in: vendorIds } })
+        .find({ _id: { $in: vendorIds }, isActive: true })
         .lean()
         .select('_id businessName category photos serviceArea');
       for (const vendor of vendors) {
@@ -140,7 +170,7 @@ export class FavoritesService {
     const venueIds = idsByType.get(FavoriteTargetType.VENUE);
     if (venueIds?.length) {
       const venues = await this.venueModel
-        .find({ _id: { $in: venueIds } })
+        .find({ _id: { $in: venueIds }, isActive: true })
         .lean()
         .select('_id name photos address.city');
       for (const venue of venues) {

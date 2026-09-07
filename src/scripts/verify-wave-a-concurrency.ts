@@ -10,7 +10,7 @@ import 'dotenv/config';
  * de vrais index uniques.
  *
  * Scénarios :
- *   A. Deux scans simultanés du même billet
+ *   A. Dix scans simultanés du même billet
  *   B. Billet d'un AUTRE événement présenté au scanner
  *   C. Accepter et refuser simultanément la même demande prestataire
  *   D. Répondre et annuler simultanément la même demande prestataire
@@ -308,10 +308,11 @@ async function scenarioA(
   const qrCode = `${PREFIX}-A-${Date.now()}`;
   await insertValidPurchase(connection, cleanup, eventId, buyerId, qrCode);
 
-  const outcomes = await Promise.allSettled([
-    tickets.scan(eventId.toString(), qrCode, organizerId.toString(), ['organisateur']),
-    tickets.scan(eventId.toString(), qrCode, organizerId.toString(), ['organisateur']),
-  ]);
+  const outcomes = await Promise.allSettled(
+    Array.from({ length: 10 }, () =>
+      tickets.scan(eventId.toString(), qrCode, organizerId.toString(), ['organisateur']),
+    ),
+  );
 
   const admitted = outcomes.filter(
     (outcome) => outcome.status === 'fulfilled' && outcome.value.outcome === 'admitted',
@@ -322,8 +323,8 @@ async function scenarioA(
 
   return {
     id: 'A',
-    title: 'Deux scans simultanés du même billet : une seule admission',
-    passed: admitted === 1 && alreadyUsed === 1,
+    title: 'Dix scans simultanés du même billet : une seule admission',
+    passed: admitted === 1 && alreadyUsed === 9,
     details: { admitted, alreadyUsed },
   };
 }
@@ -469,18 +470,14 @@ async function scenarioF(
 
   const state = await connection.db!.collection('venuebookings').findOne({ _id: bookingId });
 
-  // Les deux opérations portent sur des états compatibles (pending ET
-  // confirmed sont annulables) : le point vérifié est qu'elles ne peuvent pas
-  // laisser la réservation dans un état incohérent, et qu'au moins une échoue
-  // si elles visent la même transition.
   const finalStatus = state?.status as VenueBookingStatus | undefined;
   const coherent =
     finalStatus === VenueBookingStatus.CANCELLED || finalStatus === VenueBookingStatus.CONFIRMED;
 
   return {
     id: 'F',
-    title: 'Répondre vs annuler une réservation : état final cohérent, jamais indéterminé',
-    passed: coherent && countFulfilled(outcomes) >= 1,
+    title: 'Répondre vs annuler une réservation : exactement une opération gagnante',
+    passed: coherent && countFulfilled(outcomes) === 1,
     details: { fulfilled: countFulfilled(outcomes), status: finalStatus },
   };
 }
