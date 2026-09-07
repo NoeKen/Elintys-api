@@ -1,4 +1,3 @@
-import { ServiceUnavailableException } from '@nestjs/common';
 import {
   mapSnapshotToStatus,
   isTrustedApprovalUrl,
