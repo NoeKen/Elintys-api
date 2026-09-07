@@ -4,6 +4,7 @@ import { Model } from 'mongoose';
 import { Event, EventDiscoverability, EventDocument, EventStatus, EventVisibility } from '../events/event.schema';
 import { VendorProfile, VendorProfileDocument } from '../vendors/vendor.schema';
 import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
+import { escapeRegExp } from '../../shared/utils/escape-regexp';
 
 export interface SearchResults {
   events: Event[];
@@ -13,6 +14,7 @@ export interface SearchResults {
 
 const publicEventFilter = {
   status: EventStatus.PUBLISHED,
+  archivedAt: null,
   $or: [
     { discoverability: EventDiscoverability.PUBLIC },
     { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
@@ -28,7 +30,11 @@ export class DiscoveryService {
   ) {}
 
   async search(q: string, page = 1, limit = 10): Promise<SearchResults> {
-    const regex = { $regex: q, $options: 'i' };
+    // `escapeRegExp` : le terme vient d'une route PUBLIQUE et anonyme. Sans
+    // échappement, `(a+)+$` provoque un retour arrière catastrophique — un
+    // déni de service à coût nul pour l'appelant — et les métacaractères
+    // laissent l'utilisateur réécrire le filtre.
+    const regex = { $regex: escapeRegExp(q), $options: 'i' };
     const skip = (page - 1) * limit;
 
     const [events, vendors, venues] = await Promise.all([
@@ -70,9 +76,10 @@ export class DiscoveryService {
     };
     if (q) {
       delete filter['$or'];
-      filter['$and'] = [publicEventFilter, { $or: [{ title: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }] }];
+      const term = { $regex: escapeRegExp(q), $options: 'i' };
+      filter['$and'] = [publicEventFilter, { $or: [{ title: term }, { description: term }] }];
     }
-    if (city) filter['location.city'] = { $regex: city, $options: 'i' };
+    if (city) filter['location.city'] = { $regex: escapeRegExp(city), $options: 'i' };
     const [data, total] = await Promise.all([
       this.eventModel.find(filter).sort({ startDate: 1 }).skip((page - 1) * limit).limit(limit).lean().select('title startDate location status slug coverImage'),
       this.eventModel.countDocuments(filter),
@@ -82,7 +89,10 @@ export class DiscoveryService {
 
   async findVendors(q?: string, category?: string, page = 1, limit = 12): Promise<{ data: VendorProfile[]; total: number }> {
     const filter: Record<string, unknown> = { isActive: true };
-    if (q) filter['$or'] = [{ businessName: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }];
+    if (q) {
+      const term = { $regex: escapeRegExp(q), $options: 'i' };
+      filter['$or'] = [{ businessName: term }, { description: term }];
+    }
     if (category) filter['category'] = category;
     const [data, total] = await Promise.all([
       this.vendorModel.find(filter).skip((page - 1) * limit).limit(limit).lean().select('businessName category serviceArea rating reviewCount'),
@@ -93,8 +103,11 @@ export class DiscoveryService {
 
   async findVenues(q?: string, city?: string, page = 1, limit = 12): Promise<{ data: VenueProfile[]; total: number }> {
     const filter: Record<string, unknown> = { isActive: true };
-    if (q) filter['$or'] = [{ name: { $regex: q, $options: 'i' } }, { 'address.city': { $regex: q, $options: 'i' } }];
-    if (city) filter['address.city'] = { $regex: city, $options: 'i' };
+    if (q) {
+      const term = { $regex: escapeRegExp(q), $options: 'i' };
+      filter['$or'] = [{ name: term }, { 'address.city': term }];
+    }
+    if (city) filter['address.city'] = { $regex: escapeRegExp(city), $options: 'i' };
     const [data, total] = await Promise.all([
       this.venueModel.find(filter).skip((page - 1) * limit).limit(limit).lean().select('name address capacity rating reviewCount pricePerDay'),
       this.venueModel.countDocuments(filter),

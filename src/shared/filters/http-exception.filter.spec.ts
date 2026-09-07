@@ -1,5 +1,6 @@
 import {
   ArgumentsHost,
+  ConflictException,
   HttpException,
   HttpStatus,
   Logger,
@@ -39,8 +40,30 @@ describe('AllExceptionsFilter', () => {
         statusCode: HttpStatus.NOT_FOUND,
         message: 'Introuvable',
         requestId: 'req-123',
+        path: '/events',
       }),
     );
+    expect(json.mock.calls[0][0].path).not.toContain('private=value');
+  });
+
+  it('conserve un code métier explicite sans exposer le payload brut', () => {
+    new AllExceptionsFilter().catch(
+      new ConflictException({
+        code: 'EMAIL_TAKEN',
+        message: 'Adresse déjà utilisée.',
+        internalDebug: 'ne doit pas sortir',
+      }),
+      host,
+    );
+
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        statusCode: HttpStatus.CONFLICT,
+        code: 'EMAIL_TAKEN',
+        message: 'Adresse déjà utilisée.',
+      }),
+    );
+    expect(json.mock.calls[0][0]).not.toHaveProperty('internalDebug');
   });
 
   it("journalise les erreurs serveur sans message, query string ou données d'entrée", () => {

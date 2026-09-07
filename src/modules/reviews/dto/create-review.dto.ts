@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, IsMongoId, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsMongoId, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty } from '@nestjs/swagger';
@@ -23,6 +23,7 @@ export class CreateReviewDto {
   @ApiProperty({ example: 'Excellent événement, organisation impeccable!', maxLength: 2000 })
   @Transform(trimValue)
   @IsString()
+  @MinLength(1)
   @MaxLength(2000)
   comment!: string;
 }

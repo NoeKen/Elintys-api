@@ -166,6 +166,19 @@ describe('EventsService', () => {
       );
     });
 
+    it('utilise une projection publique explicite sans références internes', async () => {
+      await service.findAll({ page: 1, limit: 10 });
+
+      const chain = eventModel.find.mock.results[0].value as Record<string, jest.Mock>;
+      const projection = chain.select.mock.calls[0][0] as string;
+      expect(projection).toBe(
+        '_id title slug startDate createdAt location coverImage eventType status',
+      );
+      expect(projection).not.toContain('organizer');
+      expect(projection).not.toContain('venueProfile');
+      expect(projection).not.toContain('accessPolicy');
+    });
+
     it('filtre par ville si fourni', async () => {
       eventModel.find.mockReturnValue(makeChainable([]));
       eventModel.countDocuments.mockResolvedValue(0);

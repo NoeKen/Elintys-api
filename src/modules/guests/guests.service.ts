@@ -1,6 +1,8 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { canManageEvent } from '../events/event-access.policy';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 import { Guest, GuestDocument } from './guest.schema';
 import { Event, EventDocument } from '../events/event.schema';
 import { CreateGuestDto } from './dto/create-guest.dto';
@@ -15,14 +17,25 @@ export class GuestsService {
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
   ) {}
 
-  private async assertEventOwner(eventId: string, userId: string): Promise<void> {
+  /**
+   * `canManageEvent` porte la politique du produit — propriétaire OU admin.
+   * La comparaison directe refusait un ADMIN que le contrôleur annonçait.
+   * `roles` vaut `[]` par défaut : appelant sans rôles ⇒ propriétaire strict.
+   */
+  private async assertCanManage(
+    eventId: string,
+    userId: string,
+    roles: string[] = [],
+  ): Promise<void> {
     const event = await this.eventModel.findById(eventId).lean().select('organizer');
-    if (!event) throw new NotFoundException('Événement introuvable.');
-    if (event.organizer.toString() !== userId) throw new ForbiddenException('Accès refusé.');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId, roles }, event as never).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
   }
 
-  async create(eventId: string, userId: string, dto: CreateGuestDto): Promise<Guest> {
-    await this.assertEventOwner(eventId, userId);
+  async create(eventId: string, userId: string, dto: CreateGuestDto, roles: string[] = []): Promise<Guest> {
+    await this.assertCanManage(eventId, userId, roles);
     const guest = await this.guestModel.create({
       ...dto,
       event: new Types.ObjectId(eventId),
@@ -31,8 +44,8 @@ export class GuestsService {
     return guest.toObject();
   }
 
-  async findAll(eventId: string, userId: string, page = 1, limit = 50): Promise<PaginatedResult<Guest>> {
-    await this.assertEventOwner(eventId, userId);
+  async findAll(eventId: string, userId: string, page = 1, limit = 50, roles: string[] = []): Promise<PaginatedResult<Guest>> {
+    await this.assertCanManage(eventId, userId, roles);
     const skip = (page - 1) * limit;
     const filter = { event: new Types.ObjectId(eventId) };
 
@@ -43,21 +56,34 @@ export class GuestsService {
     return { data, total, page, limit };
   }
 
-  async update(id: string, eventId: string, userId: string, dto: UpdateGuestDto): Promise<Guest> {
-    await this.assertEventOwner(eventId, userId);
-    const guest = await this.guestModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
-    if (!guest) throw new NotFoundException('Invité introuvable.');
+  async update(id: string, eventId: string, userId: string, dto: UpdateGuestDto, roles: string[] = []): Promise<Guest> {
+    await this.assertCanManage(eventId, userId, roles);
+    // L'identifiant d'événement fait partie du filtre d'écriture. Sans lui, le
+    // propriétaire de A pouvait modifier un invité de B en combinant eventId=A
+    // avec le guestId de B.
+    const guest = await this.guestModel
+      .findOneAndUpdate(
+        { _id: id, event: new Types.ObjectId(eventId) },
+        dto,
+        { new: true, runValidators: true },
+      )
+      .lean()
+      .select('-__v');
+    if (!guest) throw new NotFoundException(ErrorCodes.GUEST_NOT_FOUND);
     return guest;
   }
 
-  async remove(id: string, eventId: string, userId: string): Promise<void> {
-    await this.assertEventOwner(eventId, userId);
-    const result = await this.guestModel.findByIdAndDelete(id);
-    if (!result) throw new NotFoundException('Invité introuvable.');
+  async remove(id: string, eventId: string, userId: string, roles: string[] = []): Promise<void> {
+    await this.assertCanManage(eventId, userId, roles);
+    const result = await this.guestModel.findOneAndDelete({
+      _id: id,
+      event: new Types.ObjectId(eventId),
+    });
+    if (!result) throw new NotFoundException(ErrorCodes.GUEST_NOT_FOUND);
   }
 
-  async bulkCreate(eventId: string, userId: string, dto: BulkCreateGuestDto): Promise<{ created: number }> {
-    await this.assertEventOwner(eventId, userId);
+  async bulkCreate(eventId: string, userId: string, dto: BulkCreateGuestDto, roles: string[] = []): Promise<{ created: number }> {
+    await this.assertCanManage(eventId, userId, roles);
     const docs = dto.guests.map((g) => ({
       ...g,
       event: new Types.ObjectId(eventId),

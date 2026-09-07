@@ -23,6 +23,7 @@ import {
   MediaStorage,
 } from '../media/media-storage.interface';
 import { Event, EventDocument } from './event.schema';
+import { canManageEvent } from './event-access.policy';
 import { getMediaRootPrefix } from '../media/media-environment';
 
 export interface EventMediaState {
@@ -57,8 +58,9 @@ export class EventMediaService {
     eventId: string,
     organizerId: string,
     file: Express.Multer.File | undefined,
+    roles: string[] = [],
   ): Promise<EventMediaState> {
-    const event = await this.findOwnedMedia(eventId, organizerId);
+    const event = await this.findOwnedMedia(eventId, organizerId, roles);
     const validated = await this.imageValidation.validateAndNormalize(file);
     const publicId = this.createPublicId(eventId, 'cover');
     const uploaded = await this.mediaStorage.uploadImage({
@@ -103,8 +105,9 @@ export class EventMediaService {
   async deleteCover(
     eventId: string,
     organizerId: string,
+    roles: string[] = [],
   ): Promise<EventMediaState> {
-    const event = await this.findOwnedMedia(eventId, organizerId);
+    const event = await this.findOwnedMedia(eventId, organizerId, roles);
     if (!event.coverImage) return this.toMediaState(event);
 
     const updated = await this.eventModel
@@ -133,8 +136,9 @@ export class EventMediaService {
     eventId: string,
     organizerId: string,
     files: Express.Multer.File[] | undefined,
+    roles: string[] = [],
   ): Promise<EventMediaState> {
-    const event = await this.findOwnedMedia(eventId, organizerId);
+    const event = await this.findOwnedMedia(eventId, organizerId, roles);
     if (!files?.length) throw new BadRequestException('MEDIA_FILES_REQUIRED');
 
     const currentCount = event.gallery?.length ?? 0;
@@ -211,8 +215,9 @@ export class EventMediaService {
     eventId: string,
     organizerId: string,
     publicId: string,
+    roles: string[] = [],
   ): Promise<EventMediaState> {
-    const event = await this.findOwnedMedia(eventId, organizerId);
+    const event = await this.findOwnedMedia(eventId, organizerId, roles);
     const target = (event.gallery ?? []).find(
       (image) => image.publicId === publicId,
     );
@@ -261,6 +266,7 @@ export class EventMediaService {
   private async findOwnedMedia(
     eventId: string,
     organizerId: string,
+    roles: string[] = [],
   ): Promise<EventMediaSnapshot> {
     if (!Types.ObjectId.isValid(eventId)) {
       throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
@@ -270,7 +276,7 @@ export class EventMediaService {
       .lean<EventMediaSnapshot>()
       .select('organizer coverImage gallery');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
+    if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
     return event;

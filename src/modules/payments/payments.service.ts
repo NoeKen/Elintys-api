@@ -16,6 +16,7 @@ import { TicketsService } from '../tickets/tickets.service';
 import { EmailsService } from '../emails/emails.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { Event, EventDocument } from '../events/event.schema';
+import { canManageEvent } from '../events/event-access.policy';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EventAccessService } from '../events/event-access.service';
 import { canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
@@ -174,7 +175,11 @@ export class PaymentsService {
     }
   }
 
-  async refundTicket(purchaseId: string, organizerId: string): Promise<TicketPurchase> {
+  async refundTicket(
+    purchaseId: string,
+    organizerId: string,
+    roles: string[] = [],
+  ): Promise<TicketPurchase> {
     const purchase = await this.ticketPurchaseModel
       .findById(purchaseId)
       .lean()
@@ -182,7 +187,8 @@ export class PaymentsService {
     if (!purchase) throw new NotFoundException(ErrorCodes.TICKET_NOT_FOUND);
 
     const event = await this.eventModel.findById(purchase.event).lean().select('organizer');
-    if (!event || event.organizer.toString() !== organizerId) {
+    // `canManageEvent` : propriétaire OU admin, comme partout ailleurs.
+    if (!event || !canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     }
 

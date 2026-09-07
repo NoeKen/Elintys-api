@@ -40,7 +40,7 @@ export class TicketTypesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateTicketTypeDto,
   ) {
-    return this.ticketsService.createTicketType(eventId, user.sub, dto);
+    return this.ticketsService.createTicketType(eventId, user.sub, dto, user.roles);
   }
 
   @Public()
@@ -54,13 +54,13 @@ export class TicketTypesController {
   }
 
   @Get('events/:eventId/manage')
-  @Roles(Role.ORGANISATEUR)
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: "Lister les types de billets pour la gestion organisateur" })
   findManagedTypes(
     @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.ticketsService.findManagedTicketTypes(eventId, user.sub);
+    return this.ticketsService.findManagedTicketTypes(eventId, user.sub, user.roles);
   }
 
   @Put(':id')
@@ -76,7 +76,7 @@ export class TicketTypesController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateTicketTypeDto,
   ) {
-    return this.ticketsService.updateTicketType(id, user.sub, dto);
+    return this.ticketsService.updateTicketType(id, user.sub, dto, user.roles);
   }
 
   @Delete(':id')
@@ -89,7 +89,7 @@ export class TicketTypesController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Type de billet introuvable' })
   removeType(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.ticketsService.removeTicketType(id, user.sub);
+    return this.ticketsService.removeTicketType(id, user.sub, user.roles);
   }
 }
 

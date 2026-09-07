@@ -188,7 +188,13 @@ export class EventsService {
     if (category) filter.eventType = category;
 
     const [data, total] = await Promise.all([
-      this.eventModel.find(filter).sort(PAGINATION_SORT).skip(skip).limit(limit).lean().select('-__v'),
+      this.eventModel
+        .find(filter)
+        .sort(PAGINATION_SORT)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .select('_id title slug startDate createdAt location coverImage eventType status'),
       this.eventModel.countDocuments(filter),
     ]);
 
@@ -230,21 +236,44 @@ export class EventsService {
     };
   }
 
-  async findOne(id: string, organizerId: string): Promise<Event> {
-    const event = await this.eventModel.findById(id).lean().select('-__v');
-    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
+  /**
+   * Autorisation de gestion d'un événement.
+   *
+   * `canManageEvent` porte la politique du produit : propriétaire OU admin.
+   * Elle était déjà appliquée sur les demandes d'accès, les invitations, la
+   * configuration d'accès et le scan ; les autres routes comparaient
+   * directement les identifiants et refusaient donc un ADMIN que le
+   * contrôleur annonçait pourtant.
+   *
+   * `roles` vaut `[]` par défaut : un appelant qui ne le transmet pas obtient
+   * exactement l'ancien comportement, propriétaire strict.
+   */
+  private assertCanManage(
+    event: { organizer: unknown },
+    userId: string,
+    roles: string[],
+  ): void {
+    if (!canManageEvent({ userId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
+  }
+
+  async findOne(id: string, organizerId: string, roles: string[] = []): Promise<Event> {
+    const event = await this.eventModel.findById(id).lean().select('-__v');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    this.assertCanManage(event, organizerId, roles);
     return this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(event));
   }
 
-  async update(id: string, organizerId: string, dto: UpdateEventDto): Promise<Event> {
+  async update(
+    id: string,
+    organizerId: string,
+    dto: UpdateEventDto,
+    roles: string[] = [],
+  ): Promise<Event> {
     const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
-      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
-    }
+    this.assertCanManage(event, organizerId, roles);
 
     const { accessPolicy, ...dtoWithoutAccessPolicy } = dto;
     const preparedPolicy = accessPolicy
@@ -276,35 +305,33 @@ export class EventsService {
     return this.eventAccessService.toSafeEvent(updated!);
   }
 
-  async remove(id: string, organizerId: string): Promise<void> {
+  async remove(id: string, organizerId: string, roles: string[] = []): Promise<void> {
     const event = await this.eventModel
       .findById(id)
       .lean()
       .select('organizer coverImage gallery');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
-      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
-    }
+    this.assertCanManage(event, organizerId, roles);
     await this.eventModel.findByIdAndDelete(id);
     await this.eventMediaService.cleanupAfterEventDeletion(id, event);
   }
 
-  async publish(id: string, organizerId: string): Promise<Event> {
+  async publish(id: string, organizerId: string, roles: string[] = []): Promise<Event> {
     const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    this.assertCanManage(event, organizerId, roles);
     if (event.archivedAt) throw new ConflictException('EVENT_ARCHIVED');
     const readiness = await this.getPublishReadinessForEvent(event);
     if (!readiness.publishable) {
       throw new ConflictException({ code: 'EVENT_NOT_PUBLISHABLE', ...readiness });
     }
-    return this.update(id, organizerId, { status: EventStatus.PUBLISHED } as UpdateEventDto);
+    return this.update(id, organizerId, { status: EventStatus.PUBLISHED } as UpdateEventDto, roles);
   }
 
-  async getPublishReadiness(id: string, organizerId: string) {
+  async getPublishReadiness(id: string, organizerId: string, roles: string[] = []) {
     const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    this.assertCanManage(event, organizerId, roles);
     return this.getPublishReadinessForEvent(event);
   }
 
@@ -316,8 +343,8 @@ export class EventsService {
     return validateEventPublishability(normalizeLegacyEventAccess(event), { freeTicketTypes, paidTicketTypes });
   }
 
-  async cancel(id: string, organizerId: string): Promise<Event> {
-    return this.update(id, organizerId, { status: EventStatus.CANCELLED } as UpdateEventDto);
+  async cancel(id: string, organizerId: string, roles: string[] = []): Promise<Event> {
+    return this.update(id, organizerId, { status: EventStatus.CANCELLED } as UpdateEventDto, roles);
   }
 
   async findBySlug(slug: string): Promise<PublicEventDetail> {
@@ -638,20 +665,23 @@ export class EventsService {
     };
   }
 
-  async archive(id: string, organizerId: string): Promise<Event> {
-    return this.setArchivedAt(id, organizerId, new Date());
+  async archive(id: string, organizerId: string, roles: string[] = []): Promise<Event> {
+    return this.setArchivedAt(id, organizerId, new Date(), roles);
   }
 
-  async restore(id: string, organizerId: string): Promise<Event> {
-    return this.setArchivedAt(id, organizerId, null);
+  async restore(id: string, organizerId: string, roles: string[] = []): Promise<Event> {
+    return this.setArchivedAt(id, organizerId, null, roles);
   }
 
-  private async setArchivedAt(id: string, organizerId: string, archivedAt: Date | null): Promise<Event> {
+  private async setArchivedAt(
+    id: string,
+    organizerId: string,
+    archivedAt: Date | null,
+    roles: string[] = [],
+  ): Promise<Event> {
     const event = await this.eventModel.findById(id).lean().select('organizer');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (!canManageEvent({ userId: organizerId }, event).allowed) {
-      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
-    }
+    this.assertCanManage(event, organizerId, roles);
     const updated = await this.eventModel
       .findByIdAndUpdate(id, { archivedAt }, { new: true, runValidators: true })
       .lean()

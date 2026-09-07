@@ -4,6 +4,13 @@ import { ApiTags, ApiOperation, ApiResponse, ApiQuery } from '@nestjs/swagger';
 import { DiscoveryService } from './discovery.service';
 import { Public } from '../../shared/decorators/public.decorator';
 import { THROTTLE_TIERS } from '../../config/throttle.config';
+import {
+  FeaturedDiscoveryDto,
+  QueryDiscoveryEventsDto,
+  QueryDiscoveryVendorsDto,
+  QueryDiscoveryVenuesDto,
+  SearchDiscoveryDto,
+} from './dto/query-discovery.dto';
 
 @ApiTags('Discovery')
 @Public()
@@ -21,24 +28,19 @@ export class DiscoveryController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 10 })
   @ApiResponse({ status: 200, description: 'Résultats de recherche paginés' })
-  search(
-    @Query('q') q: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.discoveryService.search(
-      q ?? '',
-      page ? parseInt(page, 10) : 1,
-      limit ? parseInt(limit, 10) : 10,
-    );
+  search(@Query() query: SearchDiscoveryDto) {
+    // Le DTO valide et borne : `page`/`limit` sont des entiers dans une plage
+    // fermée, `q` une chaîne bornée. `forbidNonWhitelisted` rejette au passage
+    // toute clé inattendue — un `?q[$ne]=` ne peut plus atteindre le filtre.
+    return this.discoveryService.search(query.q, query.page, query.limit);
   }
 
   @Get('featured')
   @ApiOperation({ summary: 'Événements mis en avant' })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 6 })
   @ApiResponse({ status: 200, description: 'Liste des événements mis en avant' })
-  featured(@Query('limit') limit?: string) {
-    return this.discoveryService.featuredEvents(limit ? parseInt(limit, 10) : 6);
+  featured(@Query() query: FeaturedDiscoveryDto) {
+    return this.discoveryService.featuredEvents(query.limit);
   }
 
   @Get('events')
@@ -48,13 +50,8 @@ export class DiscoveryController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
   @ApiResponse({ status: 200, description: 'Liste paginée d\'événements' })
-  findEvents(
-    @Query('q') q?: string,
-    @Query('city') city?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.discoveryService.findEvents(q, city, page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 12);
+  findEvents(@Query() query: QueryDiscoveryEventsDto) {
+    return this.discoveryService.findEvents(query.q, query.city, query.page, query.limit);
   }
 
   @Get('vendors')
@@ -64,13 +61,8 @@ export class DiscoveryController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
   @ApiResponse({ status: 200, description: 'Liste paginée de prestataires' })
-  findVendors(
-    @Query('q') q?: string,
-    @Query('category') category?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.discoveryService.findVendors(q, category, page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 12);
+  findVendors(@Query() query: QueryDiscoveryVendorsDto) {
+    return this.discoveryService.findVendors(query.q, query.category, query.page, query.limit);
   }
 
   @Get('venues')
@@ -80,12 +72,7 @@ export class DiscoveryController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
   @ApiResponse({ status: 200, description: 'Liste paginée de salles' })
-  findVenues(
-    @Query('q') q?: string,
-    @Query('city') city?: string,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.discoveryService.findVenues(q, city, page ? parseInt(page, 10) : 1, limit ? parseInt(limit, 10) : 12);
+  findVenues(@Query() query: QueryDiscoveryVenuesDto) {
+    return this.discoveryService.findVenues(query.q, query.city, query.page, query.limit);
   }
 }

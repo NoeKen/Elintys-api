@@ -75,6 +75,6 @@ export class PaymentsController {
   @ApiResponse({ status: 404, description: 'Billet introuvable' })
   @ApiResponse({ status: 503, description: 'Stripe non configuré' })
   refundTicket(@Param('purchaseId', ParseObjectIdPipe) purchaseId: string, @CurrentUser() user: JwtPayload) {
-    return this.paymentsService.refundTicket(purchaseId, user.sub);
+    return this.paymentsService.refundTicket(purchaseId, user.sub, user.roles);
   }
 }

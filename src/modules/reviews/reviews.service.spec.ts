@@ -1,9 +1,17 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { ReviewsService } from './reviews.service';
 import { Review, ReviewTargetType } from './review.schema';
+import {
+  Event,
+  EventDiscoverability,
+  EventStatus,
+} from '../events/event.schema';
+import { VendorProfile } from '../vendors/vendor.schema';
+import { VenueProfile } from '../venues/venue.schema';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -22,9 +30,14 @@ const makeChainable = (value: unknown) => {
   return chain;
 };
 
+const duplicateKeyError = () => Object.assign(new Error('E11000 duplicate key'), { code: 11000 });
+
 describe('ReviewsService', () => {
   let service: ReviewsService;
   let reviewModel: Record<string, jest.Mock>;
+  let eventModel: Record<string, jest.Mock>;
+  let vendorModel: Record<string, jest.Mock>;
+  let venueModel: Record<string, jest.Mock>;
 
   const authorId = new Types.ObjectId().toString();
   const targetId = new Types.ObjectId().toString();
@@ -37,27 +50,48 @@ describe('ReviewsService', () => {
     targetId: new Types.ObjectId(targetId),
     rating: 5,
     comment: 'Excellent événement!',
-    deleteOne: jest.fn().mockResolvedValue({}),
     toObject: jest.fn().mockReturnThis(),
     ...overrides,
   });
+
+  const dto = {
+    targetType: ReviewTargetType.EVENT,
+    targetId,
+    rating: 5,
+    comment: 'Excellent événement!',
+  };
 
   beforeEach(async () => {
     reviewModel = {
       find: jest.fn(),
       findOne: jest.fn(),
+      findById: jest.fn(),
+      findByIdAndDelete: jest.fn(),
       countDocuments: jest.fn(),
       create: jest.fn(),
     };
+    eventModel = { exists: jest.fn() };
+    vendorModel = { exists: jest.fn() };
+    venueModel = { exists: jest.fn() };
+
+    // Par défaut la cible existe : les tests qui veulent l'inverse le disent.
+    eventModel.exists.mockResolvedValue({ _id: new Types.ObjectId(targetId) });
+    vendorModel.exists.mockResolvedValue({ _id: new Types.ObjectId(targetId) });
+    venueModel.exists.mockResolvedValue({ _id: new Types.ObjectId(targetId) });
 
     reviewModel.findOne.mockReturnValue(makeChainable(null));
+    reviewModel.findById.mockReturnValue(makeChainable(mockReview()));
     reviewModel.find.mockReturnValue(makeChainable([mockReview()]));
     reviewModel.countDocuments.mockResolvedValue(1);
+    reviewModel.findByIdAndDelete.mockResolvedValue({});
 
     testingModule = await Test.createTestingModule({
       providers: [
         ReviewsService,
         { provide: getModelToken(Review.name), useValue: reviewModel },
+        { provide: getModelToken(Event.name), useValue: eventModel },
+        { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
+        { provide: getModelToken(VenueProfile.name), useValue: venueModel },
       ],
     }).compile();
 
@@ -66,77 +100,146 @@ describe('ReviewsService', () => {
 
   afterEach(() => jest.clearAllMocks());
 
-  // ── create ──
   describe('create', () => {
     it('crée un avis et le retourne', async () => {
-      const dto = {
-        targetType: ReviewTargetType.EVENT,
-        targetId,
-        rating: 5,
-        comment: 'Excellent événement!',
-      };
-      reviewModel.create.mockResolvedValue(mockReview(dto));
+      reviewModel.create.mockResolvedValue(mockReview());
 
-      const result = await service.create(authorId, dto as never);
-
-      expect(reviewModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({ rating: 5 }),
-      );
-      expect(result).toBeDefined();
+      await expect(service.create(authorId, dto)).resolves.toBeDefined();
+      expect(reviewModel.create).toHaveBeenCalled();
     });
 
-    it('lève ConflictException si l\'utilisateur a déjà laissé un avis sur cette cible', async () => {
-      reviewModel.findOne.mockReturnValue(makeChainable({ _id: reviewId }));
+    it('refuse une cible inexistante avec un 404 métier', async () => {
+      // Sans cette garde, l'API acceptait un avis sur n'importe quel ObjectId
+      // bien formé et accumulait des avis orphelins.
+      eventModel.exists.mockResolvedValue(null);
 
-      await expect(
-        service.create(authorId, {
-          targetType: ReviewTargetType.EVENT,
-          targetId,
-          rating: 4,
-          comment: 'Bien',
-        } as never),
-      ).rejects.toThrow(ConflictException);
+      await expect(service.create(authorId, dto)).rejects.toMatchObject({
+        message: ErrorCodes.REVIEW_TARGET_NOT_FOUND,
+      });
+      expect(reviewModel.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      [ReviewTargetType.EVENT, 'eventModel'],
+      [ReviewTargetType.VENDOR, 'vendorModel'],
+      [ReviewTargetType.VENUE, 'venueModel'],
+    ])('vérifie la cible dans la bonne collection pour %s', async (targetType) => {
+      reviewModel.create.mockResolvedValue(mockReview({ targetType }));
+
+      await service.create(authorId, { ...dto, targetType });
+
+      const expected = { eventModel, vendorModel, venueModel }[
+        { event: 'eventModel', vendor: 'vendorModel', venue: 'venueModel' }[targetType] as
+          | 'eventModel'
+          | 'vendorModel'
+          | 'venueModel'
+      ];
+      expect(expected.exists).toHaveBeenCalled();
+    });
+
+    it('ne permet un avis que sur un événement publié et découvrable', async () => {
+      reviewModel.create.mockResolvedValue(mockReview());
+
+      await service.create(authorId, dto);
+
+      expect(eventModel.exists).toHaveBeenCalledWith({
+        _id: expect.any(Types.ObjectId),
+        status: EventStatus.PUBLISHED,
+        archivedAt: null,
+        $or: expect.arrayContaining([
+          { discoverability: { $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED] } },
+        ]),
+      });
+    });
+
+    it.each([ReviewTargetType.VENDOR, ReviewTargetType.VENUE])(
+      'ne permet un avis que sur une cible active pour %s',
+      async (targetType) => {
+        reviewModel.create.mockResolvedValue(mockReview({ targetType }));
+
+        await service.create(authorId, { ...dto, targetType });
+
+        const model = targetType === ReviewTargetType.VENDOR ? vendorModel : venueModel;
+        expect(model.exists).toHaveBeenCalledWith({
+          _id: expect.any(Types.ObjectId),
+          isActive: true,
+        });
+      },
+    );
+
+    it('traduit une violation d’index unique en conflit métier', async () => {
+      // L'index {author, targetType, targetId} est l'autorité : deux
+      // soumissions concurrentes ne peuvent pas créer deux avis.
+      reviewModel.create.mockRejectedValue(duplicateKeyError());
+
+      await expect(service.create(authorId, dto)).rejects.toThrow(ConflictException);
+    });
+
+    it('ne masque pas une erreur non liée à l’unicité', async () => {
+      reviewModel.create.mockRejectedValue(new Error('connexion perdue'));
+
+      await expect(service.create(authorId, dto)).rejects.toThrow('connexion perdue');
     });
   });
 
-  // ── findForTarget ──
   describe('findForTarget', () => {
     it('retourne les avis paginés pour une cible', async () => {
       const result = await service.findForTarget(ReviewTargetType.EVENT, targetId, 1, 20);
 
-      expect(result.data).toHaveLength(1);
       expect(result.total).toBe(1);
-      expect(reviewModel.find).toHaveBeenCalledWith(
-        expect.objectContaining({ targetType: ReviewTargetType.EVENT }),
-      );
+      expect(result.data).toHaveLength(1);
     });
 
-    it('retourne une liste vide si aucun avis pour cette cible', async () => {
+    it('retourne une liste vide si aucun avis', async () => {
       reviewModel.find.mockReturnValue(makeChainable([]));
       reviewModel.countDocuments.mockResolvedValue(0);
 
-      const otherTargetId = new Types.ObjectId().toString();
-      const result = await service.findForTarget(ReviewTargetType.VENDOR, otherTargetId, 1, 20);
+      const result = await service.findForTarget(ReviewTargetType.VENUE, targetId);
 
-      expect(result.data).toHaveLength(0);
+      expect(result.data).toEqual([]);
       expect(result.total).toBe(0);
+    });
+
+    it("n'expose pas le document brut de l'auteur", async () => {
+      await service.findForTarget(ReviewTargetType.EVENT, targetId);
+
+      const chain = reviewModel.find.mock.results[0].value as Record<string, jest.Mock>;
+      expect(chain.populate).toHaveBeenCalledWith('author', 'fullName -_id');
+      const projection = chain.select.mock.calls[0][0] as string;
+      expect(projection).not.toContain('-__v');
+    });
+
+    it('ne divulgue aucun avis si la cible n’est plus publiquement visible', async () => {
+      eventModel.exists.mockResolvedValue(null);
+
+      await expect(
+        service.findForTarget(ReviewTargetType.EVENT, targetId),
+      ).rejects.toMatchObject({ message: ErrorCodes.REVIEW_TARGET_NOT_FOUND });
+      expect(reviewModel.find).not.toHaveBeenCalled();
     });
   });
 
-  // ── remove ──
   describe('remove', () => {
-    it('supprime l\'avis si l\'auteur correspond', async () => {
-      const review = mockReview();
-      reviewModel.findOne.mockResolvedValue(review);
-
+    it("supprime l'avis de son auteur", async () => {
       await expect(service.remove(reviewId, authorId)).resolves.toBeUndefined();
-      expect(review.deleteOne).toHaveBeenCalled();
+      expect(reviewModel.findByIdAndDelete).toHaveBeenCalledWith(reviewId);
     });
 
-    it('lève NotFoundException si l\'avis est introuvable ou n\'appartient pas à l\'auteur', async () => {
-      reviewModel.findOne.mockResolvedValue(null);
+    it('lève NotFoundException si l’avis n’existe pas', async () => {
+      reviewModel.findById.mockReturnValue(makeChainable(null));
 
-      await expect(service.remove('id-inexistant', authorId)).rejects.toThrow(NotFoundException);
+      await expect(service.remove(reviewId, authorId)).rejects.toThrow(NotFoundException);
+    });
+
+    it('lève ForbiddenException sur l’avis d’un autre auteur', async () => {
+      // Auparavant les deux cas partageaient un 404 « introuvable ou accès
+      // refusé » : les avis étant publics, distinguer ne divulgue rien.
+      reviewModel.findById.mockReturnValue(
+        makeChainable({ author: { toString: () => new Types.ObjectId().toString() } }),
+      );
+
+      await expect(service.remove(reviewId, authorId)).rejects.toThrow(ForbiddenException);
+      expect(reviewModel.findByIdAndDelete).not.toHaveBeenCalled();
     });
   });
 });

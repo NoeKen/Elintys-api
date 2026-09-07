@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ReviewsController } from './reviews.controller';
 import { ReviewsService } from './reviews.service';
+import { ReviewTargetType } from './review.schema';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -45,18 +46,24 @@ describe('ReviewsController', () => {
 
   // ── GET /reviews/:targetType/:targetId ──
   describe('findForTarget', () => {
-    it('délègue à reviewsService.findForTarget avec les paramètres par défaut', async () => {
+    it('délègue le type validé et la pagination par défaut', async () => {
       mockReviewsService.findForTarget.mockResolvedValue({ data: [], total: 0 });
 
-      await controller.findForTarget('event', 'target-id', undefined, undefined);
+      await controller.findForTarget(
+        { targetType: ReviewTargetType.EVENT, targetId: 'target-id' },
+        { page: 1, limit: 20 },
+      );
 
       expect(mockReviewsService.findForTarget).toHaveBeenCalledWith('event', 'target-id', 1, 20);
     });
 
-    it('passe les valeurs de page et limit parsées', async () => {
+    it('transmet la pagination demandée', async () => {
       mockReviewsService.findForTarget.mockResolvedValue({ data: [], total: 0 });
 
-      await controller.findForTarget('vendor', 'vendor-id', '2', '10');
+      await controller.findForTarget(
+        { targetType: ReviewTargetType.VENDOR, targetId: 'vendor-id' },
+        { page: 2, limit: 10 },
+      );
 
       expect(mockReviewsService.findForTarget).toHaveBeenCalledWith('vendor', 'vendor-id', 2, 10);
     });

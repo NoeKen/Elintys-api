@@ -9,6 +9,7 @@ import { QueryVendorDto, VendorPriceTier } from './dto/query-vendor.dto';
 import { CreateVendorRequestDto } from './dto/create-request.dto';
 import { RespondVendorRequestDto } from './dto/respond-request.dto';
 import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
+import { canManageEvent } from '../events/event-access.policy';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -17,6 +18,20 @@ import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
+
+/**
+ * Projection des routes PUBLIQUES.
+ *
+ * `select('-__v')` renvoyait tout le document, dont `user` — l'identifiant
+ * interne du compte propriétaire — sur un catalogue anonyme. Les endpoints
+ * `/discovery/vendors` appliquaient déjà une projection propre : les deux
+ * surfaces sont désormais alignées.
+ *
+ * `contactEmail` reste exposé : c'est la raison d'être d'un annuaire de
+ * prestataires, et la fiche publique l'affiche.
+ */
+const PUBLIC_VENDOR_FIELDS =
+  '_id businessName category description photos priceRange serviceArea contactEmail rating reviewCount isActive isPremium';
 
 @Injectable()
 export class VendorsService {
@@ -75,7 +90,13 @@ export class VendorsService {
     if (price) filter['priceRange.min'] = this.getPriceTierFilter(price);
 
     const [data, total] = await Promise.all([
-      this.vendorModel.find(filter).skip(skip).limit(limit).sort({ rating: -1 }).lean().select('-__v'),
+      this.vendorModel
+        .find(filter)
+        .skip(skip)
+        .limit(limit)
+        .sort({ rating: -1 })
+        .lean()
+        .select(PUBLIC_VENDOR_FIELDS),
       this.vendorModel.countDocuments(filter),
     ]);
 
@@ -96,7 +117,10 @@ export class VendorsService {
   }
 
   async findOne(id: string): Promise<VendorProfile> {
-    const vendor = await this.vendorModel.findById(id).lean().select('-__v');
+    const vendor = await this.vendorModel
+      .findOne({ _id: id, isActive: true })
+      .lean()
+      .select(PUBLIC_VENDOR_FIELDS);
     if (!vendor) throw new NotFoundException(ErrorCodes.VENDOR_NOT_FOUND);
     return vendor;
   }
@@ -122,13 +146,13 @@ export class VendorsService {
 
   // ── VendorRequest methods ──
 
-  async createRequest(eventId: string, organizerId: string, dto: CreateVendorRequestDto): Promise<VendorRequest> {
+  async createRequest(eventId: string, organizerId: string, dto: CreateVendorRequestDto, roles: string[] = []): Promise<VendorRequest> {
     const event = await this.eventModel
       .findById(eventId)
       .lean()
       .select('organizer');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
+    if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
@@ -225,13 +249,13 @@ export class VendorsService {
     });
   }
 
-  async listRequestsByEvent(eventId: string, organizerId: string): Promise<VendorRequest[]> {
+  async listRequestsByEvent(eventId: string, organizerId: string, roles: string[] = []): Promise<VendorRequest[]> {
     const event = await this.eventModel
       .findById(eventId)
       .lean()
       .select('organizer');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
+    if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
@@ -358,11 +382,14 @@ export class VendorsService {
    * prestataire répond » a exactement un gagnant. Si l'annulation perd, la
    * demande n'est plus PENDING et l'appelant reçoit un conflit stable.
    */
-  async cancelRequest(requestId: string, organizerId: string): Promise<void> {
+  async cancelRequest(requestId: string, organizerId: string, roles: string[] = []): Promise<void> {
+    // Un admin peut annuler la demande de n'importe quel organisateur : le
+    // filtre ne restreint donc l'organisateur que pour un non-admin.
+    const isAdmin = roles.includes('admin');
     const deleted = await this.vendorRequestModel
       .findOneAndDelete({
         _id: new Types.ObjectId(requestId),
-        organizer: new Types.ObjectId(organizerId),
+        ...(isAdmin ? {} : { organizer: new Types.ObjectId(organizerId) }),
         status: VendorRequestStatus.PENDING,
       })
       .lean()
@@ -375,7 +402,7 @@ export class VendorsService {
       .lean()
       .select('organizer status');
     if (!current) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
-    if (current.organizer.toString() !== organizerId) {
+    if (!isAdmin && current.organizer.toString() !== organizerId) {
       throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     }
     throw new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
