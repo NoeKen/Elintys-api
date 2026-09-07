@@ -1,4 +1,5 @@
 import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { CreateReviewDto } from './dto/create-review.dto';
@@ -31,7 +32,7 @@ export class ReviewsController {
   @ApiResponse({ status: 200, description: 'Liste paginée d\'avis' })
   findForTarget(
     @Param('targetType') targetType: string,
-    @Param('targetId') targetId: string,
+    @Param('targetId', ParseObjectIdPipe) targetId: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
@@ -51,7 +52,7 @@ export class ReviewsController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Avis introuvable' })
-  remove(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  remove(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.reviewsService.remove(id, user.sub);
   }
 }

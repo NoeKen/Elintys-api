@@ -15,6 +15,7 @@ import { RawBodyRequest } from '@nestjs/common';
 import { PaymentsService } from './payments.service';
 import { CreateCheckoutSessionDto } from './dto/create-checkout-session.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
@@ -73,7 +74,7 @@ export class PaymentsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Billet introuvable' })
   @ApiResponse({ status: 503, description: 'Stripe non configuré' })
-  refundTicket(@Param('purchaseId') purchaseId: string, @CurrentUser() user: JwtPayload) {
+  refundTicket(@Param('purchaseId', ParseObjectIdPipe) purchaseId: string, @CurrentUser() user: JwtPayload) {
     return this.paymentsService.refundTicket(purchaseId, user.sub);
   }
 }

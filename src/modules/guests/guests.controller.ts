@@ -5,6 +5,7 @@ import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateGuestDto } from './dto/update-guest.dto';
 import { BulkCreateGuestDto } from './dto/bulk-create-guest.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
 @ApiTags('Guests')
@@ -22,7 +23,7 @@ export class GuestsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   create(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateGuestDto,
   ) {
@@ -34,7 +35,7 @@ export class GuestsController {
   @ApiParam({ name: 'eventId', description: 'MongoDB ObjectId de l\'événement' })
   @ApiResponse({ status: 201, description: 'Invités ajoutés' })
   bulkCreate(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: BulkCreateGuestDto,
   ) {
@@ -50,7 +51,7 @@ export class GuestsController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   findAll(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
@@ -72,8 +73,8 @@ export class GuestsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Invité introuvable' })
   update(
-    @Param('eventId') eventId: string,
-    @Param('id') id: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateGuestDto,
   ) {
@@ -90,8 +91,8 @@ export class GuestsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Invité introuvable' })
   remove(
-    @Param('eventId') eventId: string,
-    @Param('id') id: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
+    @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
   ) {
     return this.guestsService.remove(id, eventId, user.sub);
