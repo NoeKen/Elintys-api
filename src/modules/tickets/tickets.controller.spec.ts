@@ -51,7 +51,7 @@ describe('TicketTypesController', () => {
 
       await controller.createType('event-id', mockUser, dto);
 
-      expect(mockTicketsService.createTicketType).toHaveBeenCalledWith('event-id', mockUser.sub, dto);
+      expect(mockTicketsService.createTicketType).toHaveBeenCalledWith('event-id', mockUser.sub, dto, mockUser.roles);
     });
   });
 
@@ -75,6 +75,7 @@ describe('TicketTypesController', () => {
       expect(mockTicketsService.findManagedTicketTypes).toHaveBeenCalledWith(
         'event-id',
         mockUser.sub,
+        mockUser.roles,
       );
     });
   });
@@ -87,7 +88,7 @@ describe('TicketTypesController', () => {
 
       await controller.updateType('tt-id', mockUser, dto);
 
-      expect(mockTicketsService.updateTicketType).toHaveBeenCalledWith('tt-id', mockUser.sub, dto);
+      expect(mockTicketsService.updateTicketType).toHaveBeenCalledWith('tt-id', mockUser.sub, dto, mockUser.roles);
     });
   });
 
@@ -98,7 +99,7 @@ describe('TicketTypesController', () => {
 
       await controller.removeType('tt-id', mockUser);
 
-      expect(mockTicketsService.removeTicketType).toHaveBeenCalledWith('tt-id', mockUser.sub);
+      expect(mockTicketsService.removeTicketType).toHaveBeenCalledWith('tt-id', mockUser.sub, mockUser.roles);
     });
   });
 });

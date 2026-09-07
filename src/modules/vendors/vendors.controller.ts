@@ -18,7 +18,9 @@ export class VendorsController {
   constructor(private readonly vendorsService: VendorsService) {}
 
   @Post()
-  @Roles(Role.PRESTATAIRE, Role.ADMIN)
+  // Route strictement personnelle (identité = user.sub) : ADMIN n'y apporterait
+  // aucune capacité. On ne l'annonce donc pas.
+  @Roles(Role.PRESTATAIRE)
   @ApiOperation({ summary: 'Créer un profil prestataire' })
   @ApiResponse({ status: 201, description: 'Profil prestataire créé' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
@@ -61,7 +63,7 @@ export class VendorsController {
    * profil comme autorité.
    */
   @Put('me')
-  @Roles(Role.PRESTATAIRE, Role.ADMIN)
+  @Roles(Role.PRESTATAIRE)
   @ApiOperation({ summary: 'Mettre à jour MON profil prestataire' })
   @ApiResponse({ status: 200, description: 'Profil mis à jour' })
   @ApiResponse({ status: 400, description: 'Payload invalide (catégorie hors énumération, champ inconnu)' })
@@ -98,7 +100,7 @@ export class VendorsController {
   @ApiResponse({ status: 204, description: 'Demande annulée' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   cancelRequest(@Param('requestId', ParseObjectIdPipe) requestId: string, @CurrentUser() user: JwtPayload) {
-    return this.vendorsService.cancelRequest(requestId, user.sub);
+    return this.vendorsService.cancelRequest(requestId, user.sub, user.roles);
   }
 
   @Public()
@@ -112,7 +114,10 @@ export class VendorsController {
   }
 
   @Put(':id')
-  @Roles(Role.PRESTATAIRE, Role.ADMIN)
+  // La modération du profil d'autrui par un ADMIN n'existe nulle part dans le
+  // produit (aucun module admin, aucun rôle admin côté web). L'annoncer
+  // promettait une capacité inexistante, que le service refusait de toute façon.
+  @Roles(Role.PRESTATAIRE)
   @ApiOperation({ summary: 'Mettre à jour un profil prestataire' })
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId du prestataire' })
   @ApiResponse({ status: 200, description: 'Profil mis à jour' })
@@ -130,7 +135,7 @@ export class VendorsController {
   @ApiResponse({ status: 201, description: 'Demande créée' })
   @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
   createRequest(@Param('eventId', ParseObjectIdPipe) eventId: string, @CurrentUser() user: JwtPayload, @Body() dto: CreateVendorRequestDto) {
-    return this.vendorsService.createRequest(eventId, user.sub, dto);
+    return this.vendorsService.createRequest(eventId, user.sub, dto, user.roles);
   }
 
   @Get(':eventId/requests')
@@ -140,6 +145,6 @@ export class VendorsController {
   @ApiResponse({ status: 200, description: 'Liste des demandes' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   listRequestsByEvent(@Param('eventId', ParseObjectIdPipe) eventId: string, @CurrentUser() user: JwtPayload) {
-    return this.vendorsService.listRequestsByEvent(eventId, user.sub);
+    return this.vendorsService.listRequestsByEvent(eventId, user.sub, user.roles);
   }
 }

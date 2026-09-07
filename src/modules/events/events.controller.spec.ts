@@ -116,8 +116,8 @@ describe('EventsController', () => {
       await controller.archive('event-id', mockUser as never);
       await controller.restore('event-id', mockUser as never);
 
-      expect(mockEventsService.archive).toHaveBeenCalledWith('event-id', mockUser.sub);
-      expect(mockEventsService.restore).toHaveBeenCalledWith('event-id', mockUser.sub);
+      expect(mockEventsService.archive).toHaveBeenCalledWith('event-id', mockUser.sub, mockUser.roles);
+      expect(mockEventsService.restore).toHaveBeenCalledWith('event-id', mockUser.sub, mockUser.roles);
     });
   });
 
@@ -128,7 +128,7 @@ describe('EventsController', () => {
 
       await controller.findOne('event-id', mockUser as never);
 
-      expect(mockEventsService.findOne).toHaveBeenCalledWith('event-id', mockUser.sub);
+      expect(mockEventsService.findOne).toHaveBeenCalledWith('event-id', mockUser.sub, mockUser.roles);
     });
   });
 
@@ -140,7 +140,7 @@ describe('EventsController', () => {
 
       await controller.patch('event-id', mockUser as never, dto as never);
 
-      expect(mockEventsService.update).toHaveBeenCalledWith('event-id', mockUser.sub, dto);
+      expect(mockEventsService.update).toHaveBeenCalledWith('event-id', mockUser.sub, dto, mockUser.roles);
     });
   });
 
@@ -152,7 +152,7 @@ describe('EventsController', () => {
 
       await controller.update('event-id', mockUser as never, dto as never);
 
-      expect(mockEventsService.update).toHaveBeenCalledWith('event-id', mockUser.sub, dto);
+      expect(mockEventsService.update).toHaveBeenCalledWith('event-id', mockUser.sub, dto, mockUser.roles);
     });
   });
 
@@ -174,6 +174,7 @@ describe('EventsController', () => {
         'event-id',
         mockUser.sub,
         file,
+        mockUser.roles,
       );
     });
 
@@ -193,6 +194,7 @@ describe('EventsController', () => {
         'event-id',
         mockUser.sub,
         'Elintys/dev/events/event-id/gallery/image',
+        mockUser.roles,
       );
     });
   });
@@ -204,7 +206,7 @@ describe('EventsController', () => {
 
       await controller.remove('event-id', mockUser as never);
 
-      expect(mockEventsService.remove).toHaveBeenCalledWith('event-id', mockUser.sub);
+      expect(mockEventsService.remove).toHaveBeenCalledWith('event-id', mockUser.sub, mockUser.roles);
     });
   });
 
@@ -215,7 +217,7 @@ describe('EventsController', () => {
 
       await controller.publish('event-id', mockUser as never);
 
-      expect(mockEventsService.publish).toHaveBeenCalledWith('event-id', mockUser.sub);
+      expect(mockEventsService.publish).toHaveBeenCalledWith('event-id', mockUser.sub, mockUser.roles);
     });
   });
 
@@ -226,7 +228,7 @@ describe('EventsController', () => {
 
       await controller.cancel('event-id', mockUser as never);
 
-      expect(mockEventsService.cancel).toHaveBeenCalledWith('event-id', mockUser.sub);
+      expect(mockEventsService.cancel).toHaveBeenCalledWith('event-id', mockUser.sub, mockUser.roles);
     });
   });
 });

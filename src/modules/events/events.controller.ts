@@ -118,14 +118,14 @@ export class EventsController {
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Archiver un événement appartenant à l’utilisateur courant' })
   archive(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.archive(id, user.sub);
+    return this.eventsService.archive(id, user.sub, user.roles);
   }
 
   @Patch(':id/restore')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Restaurer un événement archivé appartenant à l’utilisateur courant' })
   restore(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.restore(id, user.sub);
+    return this.eventsService.restore(id, user.sub, user.roles);
   }
 
   @Public()
@@ -231,7 +231,7 @@ export class EventsController {
   @Get(':id/publish-readiness')
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   getPublishReadiness(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.getPublishReadiness(id, user.sub);
+    return this.eventsService.getPublishReadiness(id, user.sub, user.roles);
   }
 
   @Get(':id')
@@ -241,7 +241,7 @@ export class EventsController {
   @ApiResponse({ status: 200, description: 'Événement trouvé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   findOne(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.findOne(id, user.sub);
+    return this.eventsService.findOne(id, user.sub, user.roles);
   }
 
   @Put(':id')
@@ -257,7 +257,7 @@ export class EventsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateEventDto,
   ) {
-    return this.eventsService.update(id, user.sub, dto);
+    return this.eventsService.update(id, user.sub, dto, user.roles);
   }
 
   @Patch(':id')
@@ -273,7 +273,7 @@ export class EventsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateEventDto,
   ) {
-    return this.eventsService.update(id, user.sub, dto);
+    return this.eventsService.update(id, user.sub, dto, user.roles);
   }
 
   @Post(':eventId/cover')
@@ -299,7 +299,7 @@ export class EventsController {
     @CurrentUser() user: JwtPayload,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.eventMediaService.uploadCover(eventId, user.sub, file);
+    return this.eventMediaService.uploadCover(eventId, user.sub, file, user.roles);
   }
 
   @Delete(':eventId/cover')
@@ -309,7 +309,7 @@ export class EventsController {
     @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.eventMediaService.deleteCover(eventId, user.sub);
+    return this.eventMediaService.deleteCover(eventId, user.sub, user.roles);
   }
 
   @Post(':eventId/gallery')
@@ -344,7 +344,7 @@ export class EventsController {
     @CurrentUser() user: JwtPayload,
     @UploadedFiles() files?: Express.Multer.File[],
   ) {
-    return this.eventMediaService.uploadGallery(eventId, user.sub, files);
+    return this.eventMediaService.uploadGallery(eventId, user.sub, files, user.roles);
   }
 
   @Delete(':eventId/gallery')
@@ -359,6 +359,7 @@ export class EventsController {
       eventId,
       user.sub,
       dto.publicId,
+      user.roles,
     );
   }
 
@@ -372,7 +373,7 @@ export class EventsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   remove(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.remove(id, user.sub);
+    return this.eventsService.remove(id, user.sub, user.roles);
   }
 
   @Patch(':id/publish')
@@ -384,7 +385,7 @@ export class EventsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   publish(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.publish(id, user.sub);
+    return this.eventsService.publish(id, user.sub, user.roles);
   }
 
   @Patch(':id/cancel')
@@ -396,6 +397,6 @@ export class EventsController {
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Événement introuvable' })
   cancel(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
-    return this.eventsService.cancel(id, user.sub);
+    return this.eventsService.cancel(id, user.sub, user.roles);
   }
 }

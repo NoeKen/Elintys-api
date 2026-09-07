@@ -27,7 +27,7 @@ export class GuestsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateGuestDto,
   ) {
-    return this.guestsService.create(eventId, user.sub, dto);
+    return this.guestsService.create(eventId, user.sub, dto, user.roles);
   }
 
   @Post('bulk')
@@ -39,7 +39,7 @@ export class GuestsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: BulkCreateGuestDto,
   ) {
-    return this.guestsService.bulkCreate(eventId, user.sub, dto);
+    return this.guestsService.bulkCreate(eventId, user.sub, dto, user.roles);
   }
 
   @Get()
@@ -61,6 +61,7 @@ export class GuestsController {
       user.sub,
       page ? parseInt(page, 10) : 1,
       limit ? parseInt(limit, 10) : 50,
+      user.roles,
     );
   }
 
@@ -78,7 +79,7 @@ export class GuestsController {
     @CurrentUser() user: JwtPayload,
     @Body() dto: UpdateGuestDto,
   ) {
-    return this.guestsService.update(id, eventId, user.sub, dto);
+    return this.guestsService.update(id, eventId, user.sub, dto, user.roles);
   }
 
   @Delete(':id')
@@ -95,6 +96,6 @@ export class GuestsController {
     @Param('id', ParseObjectIdPipe) id: string,
     @CurrentUser() user: JwtPayload,
   ) {
-    return this.guestsService.remove(id, eventId, user.sub);
+    return this.guestsService.remove(id, eventId, user.sub, user.roles);
   }
 }

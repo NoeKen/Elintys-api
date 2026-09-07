@@ -25,7 +25,8 @@ export class VenuesController {
   constructor(private readonly venuesService: VenuesService) {}
 
   @Post()
-  @Roles(Role.GESTIONNAIRE_SALLE, Role.ADMIN)
+  // Route strictement personnelle : ADMIN n'y apporterait aucune capacité.
+  @Roles(Role.GESTIONNAIRE_SALLE)
   @ApiOperation({ summary: 'Créer un profil de salle' })
   @ApiResponse({ status: 201, description: 'Salle créée avec succès' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
@@ -65,7 +66,7 @@ export class VenuesController {
    * vient exclusivement de `user.sub`.
    */
   @Put('me')
-  @Roles(Role.GESTIONNAIRE_SALLE, Role.ADMIN)
+  @Roles(Role.GESTIONNAIRE_SALLE)
   @ApiOperation({ summary: 'Mettre à jour MA fiche lieu' })
   @ApiResponse({ status: 200, description: 'Fiche mise à jour' })
   @ApiResponse({ status: 400, description: 'Payload invalide' })
@@ -116,7 +117,8 @@ export class VenuesController {
   }
 
   @Put(':id')
-  @Roles(Role.GESTIONNAIRE_SALLE, Role.ADMIN)
+  // Voir vendors : aucune modération admin de fiche tierce dans le produit.
+  @Roles(Role.GESTIONNAIRE_SALLE)
   @ApiOperation({ summary: 'Mettre à jour une salle' })
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId de la salle' })
   @ApiResponse({ status: 200, description: 'Salle mise à jour' })

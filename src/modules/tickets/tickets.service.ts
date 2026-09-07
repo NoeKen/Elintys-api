@@ -63,16 +63,25 @@ export class TicketsService {
     private readonly idempotencyService: IdempotencyService,
   ) {}
 
-  private async assertEventOwner(eventId: string, organizerId: string): Promise<void> {
+  /**
+   * `canManageEvent` porte la politique du produit — propriétaire OU admin —
+   * et est déjà appliquée au scan. La comparaison directe utilisée ici
+   * refusait un ADMIN que le contrôleur annonçait pourtant.
+   */
+  private async assertEventOwner(
+    eventId: string,
+    organizerId: string,
+    roles: string[] = [],
+  ): Promise<void> {
     const event = await this.eventModel.findById(eventId).lean().select('organizer');
-    if (!event) throw new NotFoundException('Événement introuvable.');
-    if (event.organizer.toString() !== organizerId) {
-      throw new ForbiddenException('Accès refusé.');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
   }
 
-  async createTicketType(eventId: string, organizerId: string, dto: CreateTicketTypeDto): Promise<TicketType> {
-    await this.assertEventOwner(eventId, organizerId);
+  async createTicketType(eventId: string, organizerId: string, dto: CreateTicketTypeDto, roles: string[] = []): Promise<TicketType> {
+    await this.assertEventOwner(eventId, organizerId, roles);
     if (!dto.isFree && (!dto.price || dto.price <= 0)) {
       throw new BadRequestException('PAID_TICKET_PRICE_REQUIRED');
     }
@@ -95,8 +104,8 @@ export class TicketsService {
     return this.ticketTypeModel.find({ event: new Types.ObjectId(eventId) }).lean().select('-__v');
   }
 
-  async findManagedTicketTypes(eventId: string, organizerId: string): Promise<TicketType[]> {
-    await this.assertEventOwner(eventId, organizerId);
+  async findManagedTicketTypes(eventId: string, organizerId: string, roles: string[] = []): Promise<TicketType[]> {
+    await this.assertEventOwner(eventId, organizerId, roles);
     return this.ticketTypeModel
       .find({ event: new Types.ObjectId(eventId) })
       .sort({ price: 1, _id: 1 })
@@ -104,13 +113,13 @@ export class TicketsService {
       .select('-__v');
   }
 
-  async updateTicketType(id: string, organizerId: string, dto: UpdateTicketTypeDto): Promise<TicketType> {
+  async updateTicketType(id: string, organizerId: string, dto: UpdateTicketTypeDto, roles: string[] = []): Promise<TicketType> {
     const tt = await this.ticketTypeModel
       .findById(id)
       .lean()
       .select('event sold reserved price isFree');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
-    await this.assertEventOwner(tt.event.toString(), organizerId);
+    await this.assertEventOwner(tt.event.toString(), organizerId, roles);
 
     const committed = (tt.sold ?? 0) + (tt.reserved ?? 0);
     if (dto.quantity !== undefined && dto.quantity < committed) {
@@ -154,10 +163,10 @@ export class TicketsService {
     return updated;
   }
 
-  async removeTicketType(id: string, organizerId: string): Promise<void> {
+  async removeTicketType(id: string, organizerId: string, roles: string[] = []): Promise<void> {
     const tt = await this.ticketTypeModel.findById(id).lean().select('event sold reserved');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
-    await this.assertEventOwner(tt.event.toString(), organizerId);
+    await this.assertEventOwner(tt.event.toString(), organizerId, roles);
     if ((tt.sold ?? 0) + (tt.reserved ?? 0) > 0) {
       throw new BadRequestException('TICKET_TYPE_HAS_SALES');
     }

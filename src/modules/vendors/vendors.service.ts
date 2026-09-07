@@ -9,6 +9,7 @@ import { QueryVendorDto, VendorPriceTier } from './dto/query-vendor.dto';
 import { CreateVendorRequestDto } from './dto/create-request.dto';
 import { RespondVendorRequestDto } from './dto/respond-request.dto';
 import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
+import { canManageEvent } from '../events/event-access.policy';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -122,13 +123,13 @@ export class VendorsService {
 
   // ── VendorRequest methods ──
 
-  async createRequest(eventId: string, organizerId: string, dto: CreateVendorRequestDto): Promise<VendorRequest> {
+  async createRequest(eventId: string, organizerId: string, dto: CreateVendorRequestDto, roles: string[] = []): Promise<VendorRequest> {
     const event = await this.eventModel
       .findById(eventId)
       .lean()
       .select('organizer');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
+    if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
@@ -225,13 +226,13 @@ export class VendorsService {
     });
   }
 
-  async listRequestsByEvent(eventId: string, organizerId: string): Promise<VendorRequest[]> {
+  async listRequestsByEvent(eventId: string, organizerId: string, roles: string[] = []): Promise<VendorRequest[]> {
     const event = await this.eventModel
       .findById(eventId)
       .lean()
       .select('organizer');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
-    if (event.organizer.toString() !== organizerId) {
+    if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
 
@@ -358,11 +359,14 @@ export class VendorsService {
    * prestataire répond » a exactement un gagnant. Si l'annulation perd, la
    * demande n'est plus PENDING et l'appelant reçoit un conflit stable.
    */
-  async cancelRequest(requestId: string, organizerId: string): Promise<void> {
+  async cancelRequest(requestId: string, organizerId: string, roles: string[] = []): Promise<void> {
+    // Un admin peut annuler la demande de n'importe quel organisateur : le
+    // filtre ne restreint donc l'organisateur que pour un non-admin.
+    const isAdmin = roles.includes('admin');
     const deleted = await this.vendorRequestModel
       .findOneAndDelete({
         _id: new Types.ObjectId(requestId),
-        organizer: new Types.ObjectId(organizerId),
+        ...(isAdmin ? {} : { organizer: new Types.ObjectId(organizerId) }),
         status: VendorRequestStatus.PENDING,
       })
       .lean()
@@ -375,7 +379,7 @@ export class VendorsService {
       .lean()
       .select('organizer status');
     if (!current) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
-    if (current.organizer.toString() !== organizerId) {
+    if (!isAdmin && current.organizer.toString() !== organizerId) {
       throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     }
     throw new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);

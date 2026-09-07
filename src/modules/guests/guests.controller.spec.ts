@@ -40,7 +40,7 @@ describe('GuestsController', () => {
 
       await controller.create('event-id', mockUser as never, dto as never);
 
-      expect(mockGuestsService.create).toHaveBeenCalledWith('event-id', mockUser.sub, dto);
+      expect(mockGuestsService.create).toHaveBeenCalledWith('event-id', mockUser.sub, dto, mockUser.roles);
     });
   });
 
@@ -51,7 +51,7 @@ describe('GuestsController', () => {
 
       await controller.findAll('event-id', mockUser as never, undefined, undefined);
 
-      expect(mockGuestsService.findAll).toHaveBeenCalledWith('event-id', mockUser.sub, 1, 50);
+      expect(mockGuestsService.findAll).toHaveBeenCalledWith('event-id', mockUser.sub, 1, 50, mockUser.roles);
     });
 
     it('passe les valeurs de page et limit parsées', async () => {
@@ -59,7 +59,7 @@ describe('GuestsController', () => {
 
       await controller.findAll('event-id', mockUser as never, '2', '25');
 
-      expect(mockGuestsService.findAll).toHaveBeenCalledWith('event-id', mockUser.sub, 2, 25);
+      expect(mockGuestsService.findAll).toHaveBeenCalledWith('event-id', mockUser.sub, 2, 25, mockUser.roles);
     });
   });
 
@@ -71,7 +71,7 @@ describe('GuestsController', () => {
 
       await controller.update('event-id', 'guest-id', mockUser as never, dto as never);
 
-      expect(mockGuestsService.update).toHaveBeenCalledWith('guest-id', 'event-id', mockUser.sub, dto);
+      expect(mockGuestsService.update).toHaveBeenCalledWith('guest-id', 'event-id', mockUser.sub, dto, mockUser.roles);
     });
   });
 
@@ -82,7 +82,7 @@ describe('GuestsController', () => {
 
       await controller.remove('event-id', 'guest-id', mockUser as never);
 
-      expect(mockGuestsService.remove).toHaveBeenCalledWith('guest-id', 'event-id', mockUser.sub);
+      expect(mockGuestsService.remove).toHaveBeenCalledWith('guest-id', 'event-id', mockUser.sub, mockUser.roles);
     });
   });
 });
