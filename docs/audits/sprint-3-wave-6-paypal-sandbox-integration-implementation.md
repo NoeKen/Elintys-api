@@ -317,7 +317,8 @@ Je ne prétends pas avoir validé l'intégration contre le vrai PayPal.
 
 ## 14. Documentation
 
-- `docs/runbooks/paypal-sandbox-payments.md` — création de l'app Sandbox,
+- `docs/runbooks/paypal-payments.md` (renommé depuis `paypal-sandbox-payments.md`
+  lors du durcissement pré-Codex) — création de l'app,
   comptes de test, webhook, variables, démarrage local, six scénarios de test,
   kill switch, dépannage, prérequis au passage en live. **Aucun secret.**
 - `docs/architecture/paid-ticketing.md` — mis à jour : registre de fournisseurs,
