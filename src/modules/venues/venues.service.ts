@@ -32,6 +32,14 @@ import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
 import { canManageEvent } from '../events/event-access.policy';
 
+/**
+ * Projection des routes PUBLIQUES — voir VendorsService pour le raisonnement :
+ * `user`, l'identifiant interne du compte propriétaire, n'a rien à faire dans
+ * une réponse anonyme.
+ */
+const PUBLIC_VENUE_FIELDS =
+  '_id name type description address capacity photos amenities pricePerDay contactEmail contactPhone rating reviewCount isActive';
+
 @Injectable()
 export class VenuesService {
   constructor(
@@ -84,14 +92,20 @@ export class VenuesService {
     }
     if (capacity) filter.capacity = { $gte: capacity };
     const [data, total] = await Promise.all([
-      this.venueModel.find(filter).skip(skip).limit(limit).sort({ rating: -1 }).lean().select('-__v'),
+      this.venueModel
+        .find(filter)
+        .skip(skip)
+        .limit(limit)
+        .sort({ rating: -1 })
+        .lean()
+        .select(PUBLIC_VENUE_FIELDS),
       this.venueModel.countDocuments(filter),
     ]);
     return { data, total, page, limit };
   }
 
   async findOne(id: string): Promise<VenueProfile> {
-    const venue = await this.venueModel.findById(id).lean().select('-__v');
+    const venue = await this.venueModel.findById(id).lean().select(PUBLIC_VENUE_FIELDS);
     if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
     return venue;
   }

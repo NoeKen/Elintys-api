@@ -19,6 +19,20 @@ import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
 
+/**
+ * Projection des routes PUBLIQUES.
+ *
+ * `select('-__v')` renvoyait tout le document, dont `user` — l'identifiant
+ * interne du compte propriétaire — sur un catalogue anonyme. Les endpoints
+ * `/discovery/vendors` appliquaient déjà une projection propre : les deux
+ * surfaces sont désormais alignées.
+ *
+ * `contactEmail` reste exposé : c'est la raison d'être d'un annuaire de
+ * prestataires, et la fiche publique l'affiche.
+ */
+const PUBLIC_VENDOR_FIELDS =
+  '_id businessName category description photos priceRange serviceArea contactEmail contactPhone rating reviewCount isActive isPremium';
+
 @Injectable()
 export class VendorsService {
   constructor(
@@ -76,7 +90,13 @@ export class VendorsService {
     if (price) filter['priceRange.min'] = this.getPriceTierFilter(price);
 
     const [data, total] = await Promise.all([
-      this.vendorModel.find(filter).skip(skip).limit(limit).sort({ rating: -1 }).lean().select('-__v'),
+      this.vendorModel
+        .find(filter)
+        .skip(skip)
+        .limit(limit)
+        .sort({ rating: -1 })
+        .lean()
+        .select(PUBLIC_VENDOR_FIELDS),
       this.vendorModel.countDocuments(filter),
     ]);
 
@@ -97,7 +117,7 @@ export class VendorsService {
   }
 
   async findOne(id: string): Promise<VendorProfile> {
-    const vendor = await this.vendorModel.findById(id).lean().select('-__v');
+    const vendor = await this.vendorModel.findById(id).lean().select(PUBLIC_VENDOR_FIELDS);
     if (!vendor) throw new NotFoundException(ErrorCodes.VENDOR_NOT_FOUND);
     return vendor;
   }

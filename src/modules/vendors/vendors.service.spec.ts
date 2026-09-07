@@ -618,4 +618,26 @@ describe('VendorsService', () => {
       expect(path).toBeDefined();
     });
   });
+  describe('projection publique', () => {
+      it("n'expose pas l'identifiant du compte propriétaire dans le catalogue", async () => {
+      // `user` est l'ObjectId interne du compte : il n'a rien à faire dans une
+      // réponse anonyme, et les endpoints /discovery n'en exposaient déjà pas.
+      vendorModel.find.mockReturnValue(makeChainable([mockVendor()]));
+
+      await service.findAll({} as never);
+
+      const projection = vendorModel.find.mock.results[0].value.select.mock.calls[0][0] as string;
+      expect(projection).not.toContain('user');
+      expect(projection).toContain('businessName');
+    });
+
+      it("n'expose pas l'identifiant du compte sur la fiche publique", async () => {
+      vendorModel.findById.mockReturnValue(makeChainable(mockVendor()));
+
+      await service.findOne('664f1a2b3c4d5e6f7a8b9c0d');
+
+      const projection = vendorModel.findById.mock.results[0].value.select.mock.calls[0][0] as string;
+      expect(projection).not.toContain('user');
+    });
+    });
 });
