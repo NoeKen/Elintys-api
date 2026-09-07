@@ -30,45 +30,37 @@ describe('DiscoveryController', () => {
 
   // ── GET /discovery/search ──
   describe('search', () => {
-    it('délègue à discoveryService.search avec les valeurs par défaut', async () => {
+    it('délègue le DTO validé au service', async () => {
       mockDiscoveryService.search.mockResolvedValue({ events: [], vendors: [], venues: [] });
 
-      await controller.search('gala', undefined, undefined);
+      await controller.search({ q: 'gala', page: 1, limit: 10 });
 
       expect(mockDiscoveryService.search).toHaveBeenCalledWith('gala', 1, 10);
     });
 
-    it('passe les valeurs de page et limit parsées', async () => {
+    it('transmet la pagination demandée', async () => {
       mockDiscoveryService.search.mockResolvedValue({ events: [], vendors: [], venues: [] });
 
-      await controller.search('montréal', '2', '5');
+      await controller.search({ q: 'montréal', page: 2, limit: 5 });
 
       expect(mockDiscoveryService.search).toHaveBeenCalledWith('montréal', 2, 5);
-    });
-
-    it('utilise une chaîne vide si q est undefined', async () => {
-      mockDiscoveryService.search.mockResolvedValue({ events: [], vendors: [], venues: [] });
-
-      await controller.search(undefined as never, undefined, undefined);
-
-      expect(mockDiscoveryService.search).toHaveBeenCalledWith('', 1, 10);
     });
   });
 
   // ── GET /discovery/featured ──
   describe('featured', () => {
-    it('délègue à discoveryService.featuredEvents avec la limite par défaut', async () => {
+    it('délègue la limite validée', async () => {
       mockDiscoveryService.featuredEvents.mockResolvedValue([]);
 
-      await controller.featured(undefined);
+      await controller.featured({ limit: 6 });
 
       expect(mockDiscoveryService.featuredEvents).toHaveBeenCalledWith(6);
     });
 
-    it('passe la limite parsée', async () => {
+    it('transmet une limite explicite', async () => {
       mockDiscoveryService.featuredEvents.mockResolvedValue([]);
 
-      await controller.featured('3');
+      await controller.featured({ limit: 3 });
 
       expect(mockDiscoveryService.featuredEvents).toHaveBeenCalledWith(3);
     });
