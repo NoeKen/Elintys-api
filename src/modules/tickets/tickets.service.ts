@@ -18,13 +18,23 @@ import { UpdateTicketTypeDto } from './dto/update-ticket-type.dto';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
 import { Event, EventDiscoverability, EventDocument, EventStatus } from '../events/event.schema';
 import { generateQRCode } from '../../shared/utils/qr-code';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 import { EventAccessService } from '../events/event-access.service';
-import { canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
+import { canManageEvent, canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
 import { IdempotencyService } from '../../shared/consistency/idempotency/idempotency.service';
 import { InsufficientCapacityError } from '../../shared/consistency/errors/consistency.errors';
 
+/**
+ * Issue d'un scan, décidée par le SERVEUR.
+ *
+ * `outcome` est un code stable : le client ne dérive jamais l'état d'un billet
+ * en interprétant `message`, qui n'est qu'un libellé humain.
+ */
+export type ScanOutcome = 'admitted' | 'already_used';
+
 export type ScanResult = {
   purchase: TicketPurchase & { _id: Types.ObjectId };
+  outcome: ScanOutcome;
   message: string;
 };
 
@@ -349,36 +359,103 @@ export class TicketsService {
     return created;
   }
 
-  async scan(qrCode: string, organizerId: string): Promise<ScanResult> {
-    const purchase = await this.ticketPurchaseModel
-      .findOne({ qrCode })
+  /**
+   * Validation d'un billet à l'entrée.
+   *
+   * Trois propriétés tenues par cette implémentation :
+   *
+   * 1. **Autorisation d'abord.** L'appelant doit pouvoir gérer l'événement
+   *    scanné AVANT toute lecture du billet. Un organisateur ne peut donc pas
+   *    sonder l'existence d'un code QR appartenant à l'événement d'autrui.
+   *
+   * 2. **Billet lié à l'événement.** Le filtre porte `event: eventId` : un
+   *    billet de l'événement B est refusé au scanner de l'événement A, même
+   *    si son code QR est valide.
+   *
+   * 3. **Transition atomique.** `findOneAndUpdate` avec `status: VALID` dans le
+   *    filtre : deux scans simultanés du même billet ont exactement un
+   *    gagnant. L'ancienne séquence lecture → vérification → écriture laissait
+   *    passer deux admissions pour un seul billet.
+   */
+  async scan(
+    eventId: string,
+    qrCode: string,
+    userId: string,
+    roles: string[] = [],
+  ): Promise<ScanResult> {
+    await this.assertCanScanEvent(eventId, userId, roles);
+
+    const admitted = await this.ticketPurchaseModel
+      .findOneAndUpdate(
+        {
+          qrCode,
+          event: new Types.ObjectId(eventId),
+          status: TicketPurchaseStatus.VALID,
+        },
+        {
+          status: TicketPurchaseStatus.USED,
+          scannedAt: new Date(),
+          scannedBy: new Types.ObjectId(userId),
+        },
+        { new: true },
+      )
       .lean()
       .select('_id event status scannedAt ticketType buyerId');
 
-    if (!purchase) throw new NotFoundException('Code QR invalide ou introuvable.');
+    if (admitted) {
+      return {
+        purchase: admitted as TicketPurchase & { _id: Types.ObjectId },
+        outcome: 'admitted',
+        message: 'Billet scanné avec succès.',
+      };
+    }
 
-    await this.assertEventOwner(purchase.event.toString(), organizerId);
+    return this.explainFailedScan(eventId, qrCode);
+  }
+
+  /**
+   * Distingue les causes d'un scan non admis.
+   *
+   * La recherche est restreinte à l'événement autorisé : un code QR d'un autre
+   * événement est indiscernable d'un code inexistant (`QR_NOT_FOUND`). C'est
+   * volontaire — on ne confirme pas à l'organisateur A l'existence d'un billet
+   * de l'organisateur B.
+   */
+  private async explainFailedScan(eventId: string, qrCode: string): Promise<ScanResult> {
+    const purchase = await this.ticketPurchaseModel
+      .findOne({ qrCode, event: new Types.ObjectId(eventId) })
+      .lean()
+      .select('_id event status scannedAt ticketType buyerId');
+
+    if (!purchase) throw new NotFoundException(ErrorCodes.QR_NOT_FOUND);
 
     if (purchase.status === TicketPurchaseStatus.USED) {
+      // Cas métier, pas une erreur : le portier doit voir QUAND il a été utilisé.
       return {
         purchase: purchase as TicketPurchase & { _id: Types.ObjectId },
+        outcome: 'already_used',
         message: `Billet déjà utilisé le ${purchase.scannedAt?.toLocaleString('fr-CA') ?? '—'}.`,
       };
     }
 
-    if (purchase.status !== TicketPurchaseStatus.VALID) {
-      throw new BadRequestException(`Billet non valide (statut : ${purchase.status}).`);
+    if (purchase.status === TicketPurchaseStatus.CANCELLED) {
+      throw new BadRequestException(ErrorCodes.QR_CANCELLED);
     }
 
-    await this.ticketPurchaseModel.findByIdAndUpdate(purchase._id, {
-      status: TicketPurchaseStatus.USED,
-      scannedAt: new Date(),
-    });
+    throw new BadRequestException(ErrorCodes.QR_NOT_VALID);
+  }
 
-    return {
-      purchase: purchase as TicketPurchase & { _id: Types.ObjectId },
-      message: 'Billet scanné avec succès.',
-    };
+  /**
+   * Le rôle ORGANISATEUR ne suffit pas : il faut pouvoir gérer CET événement.
+   * `canManageEvent` porte la politique du produit (propriétaire ou admin) et
+   * est la même que celle appliquée partout ailleurs sur les événements.
+   */
+  private async assertCanScanEvent(eventId: string, userId: string, roles: string[]): Promise<void> {
+    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!canManageEvent({ userId, roles }, event).allowed) {
+      throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
   }
 
   async linkGuestPurchases(email: string, userId: string): Promise<void> {

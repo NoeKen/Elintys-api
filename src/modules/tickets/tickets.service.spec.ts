@@ -104,6 +104,7 @@ describe('TicketsService', () => {
       findOne: jest.fn(),
       findById: jest.fn(),
       findByIdAndUpdate: jest.fn(),
+      findOneAndUpdate: jest.fn(),
       updateMany: jest.fn(),
       create: jest.fn(),
     };
@@ -449,48 +450,143 @@ describe('TicketsService', () => {
 
   // ── scan ──
   describe('scan', () => {
-    it('marque le billet comme utilisé et retourne un message de succès', async () => {
-      ticketPurchaseModel.findOne.mockReturnValue(makeChainable(mockPurchase()));
-      ticketPurchaseModel.findByIdAndUpdate.mockResolvedValue({});
+    // La transition est conditionnelle : `findOneAndUpdate` ne retourne un
+    // document QUE si le billet était VALID et rattaché à cet événement.
+    const admitOnce = () => {
+      ticketPurchaseModel.findOneAndUpdate.mockReturnValueOnce(makeChainable(mockPurchase()));
+      ticketPurchaseModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+    };
+    const admitNever = () => {
+      ticketPurchaseModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+    };
 
-      const result = await service.scan('ABCD-EFGH-IJKL', organizerId);
+    it('admet un billet valide de cet événement et le marque utilisé atomiquement', async () => {
+      admitOnce();
 
-      expect(ticketPurchaseModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        expect.anything(),
+      const result = await service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']);
+
+      // Le filtre porte l'état attendu : c'est ce qui rend la transition sûre.
+      expect(ticketPurchaseModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          qrCode: 'ABCD-EFGH-IJKL',
+          status: TicketPurchaseStatus.VALID,
+        }),
         expect.objectContaining({ status: TicketPurchaseStatus.USED }),
+        expect.objectContaining({ new: true }),
       );
-      expect(result.message).toBe('Billet scanné avec succès.');
+      expect(result.outcome).toBe('admitted');
     });
 
-    it('retourne un message si le billet est déjà utilisé', async () => {
+    it('trace le compte qui a scanné', async () => {
+      admitOnce();
+
+      await service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']);
+
+      const [, update] = ticketPurchaseModel.findOneAndUpdate.mock.calls[0] as [
+        unknown,
+        { scannedBy?: Types.ObjectId; scannedAt?: Date },
+      ];
+      expect(update.scannedBy?.toString()).toBe(organizerId);
+      expect(update.scannedAt).toBeInstanceOf(Date);
+    });
+
+    it('lie le billet à l\'événement scanné', async () => {
+      admitOnce();
+
+      await service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']);
+
+      const [filter] = ticketPurchaseModel.findOneAndUpdate.mock.calls[0] as [
+        { event?: Types.ObjectId },
+      ];
+      expect(filter.event?.toString()).toBe(eventId);
+    });
+
+    it('retourne already_used sans réécrire quand le billet a déjà été scanné', async () => {
+      admitNever();
       ticketPurchaseModel.findOne.mockReturnValue(
         makeChainable(mockPurchase({ status: TicketPurchaseStatus.USED, scannedAt: new Date() })),
       );
 
-      const result = await service.scan('ABCD-EFGH-IJKL', organizerId);
+      const result = await service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']);
 
-      expect(ticketPurchaseModel.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(result.outcome).toBe('already_used');
       expect(result.message).toContain('déjà utilisé');
     });
 
-    it('lève BadRequestException si le billet est dans un état non valide', async () => {
+    it('lève BadRequestException pour un billet annulé', async () => {
+      admitNever();
       ticketPurchaseModel.findOne.mockReturnValue(
         makeChainable(mockPurchase({ status: TicketPurchaseStatus.CANCELLED })),
       );
 
-      await expect(service.scan('ABCD-EFGH-IJKL', organizerId)).rejects.toThrow(BadRequestException);
+      await expect(
+        service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']),
+      ).rejects.toThrow(BadRequestException);
     });
 
-    it('lève NotFoundException si le code QR est introuvable', async () => {
+    it('lève NotFoundException si le code QR est inconnu pour cet événement', async () => {
+      admitNever();
       ticketPurchaseModel.findOne.mockReturnValue(makeChainable(null));
 
-      await expect(service.scan('XXXX-YYYY-ZZZZ', organizerId)).rejects.toThrow(NotFoundException);
+      await expect(
+        service.scan(eventId, 'XXXX-YYYY-ZZZZ', organizerId, ['organisateur']),
+      ).rejects.toThrow(NotFoundException);
     });
 
-    it("lève ForbiddenException si l'organisateur ne possède pas l'événement", async () => {
-      ticketPurchaseModel.findOne.mockReturnValue(makeChainable(mockPurchase()));
+    it("refuse un billet appartenant à un AUTRE événement, sans révéler son existence", async () => {
+      // La transition ne matche pas (mauvais `event`) et la relecture est elle
+      // aussi restreinte à l'événement autorisé : le billet reste invisible.
+      admitNever();
+      ticketPurchaseModel.findOne.mockReturnValue(makeChainable(null));
 
-      await expect(service.scan('ABCD-EFGH-IJKL', 'autre-organizer')).rejects.toThrow(ForbiddenException);
+      await expect(
+        service.scan(eventId, 'BILLET-EVENEMENT-B', organizerId, ['organisateur']),
+      ).rejects.toThrow(NotFoundException);
+      const [filter] = ticketPurchaseModel.findOne.mock.calls[0] as [{ event?: Types.ObjectId }];
+      expect(filter.event?.toString()).toBe(eventId);
+    });
+
+    it("lève ForbiddenException si le scanneur ne gère pas cet événement", async () => {
+      await expect(
+        service.scan(eventId, 'ABCD-EFGH-IJKL', 'autre-organizer', ['organisateur']),
+      ).rejects.toThrow(ForbiddenException);
+      // Autorisation AVANT lecture : aucune sonde possible sur le code QR.
+      expect(ticketPurchaseModel.findOneAndUpdate).not.toHaveBeenCalled();
+      expect(ticketPurchaseModel.findOne).not.toHaveBeenCalled();
+    });
+
+    it('autorise un admin sur un événement dont il n\'est pas propriétaire', async () => {
+      admitOnce();
+      const adminId = new Types.ObjectId().toString();
+
+      const result = await service.scan(eventId, 'ABCD-EFGH-IJKL', adminId, ['admin']);
+
+      expect(result.outcome).toBe('admitted');
+    });
+
+    it("lève NotFoundException si l'événement scanné n'existe pas", async () => {
+      eventModel.findById.mockReturnValue(makeChainable(null));
+
+      await expect(
+        service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('un seul de deux scans concurrents est admis', async () => {
+      // Modélise la garantie du `findOneAndUpdate` conditionnel : le premier
+      // appel matche `status: VALID`, le second ne matche plus rien.
+      admitOnce();
+      ticketPurchaseModel.findOne.mockReturnValue(
+        makeChainable(mockPurchase({ status: TicketPurchaseStatus.USED, scannedAt: new Date() })),
+      );
+
+      const results = await Promise.all([
+        service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']),
+        service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']),
+      ]);
+
+      expect(results.filter((r) => r.outcome === 'admitted')).toHaveLength(1);
+      expect(results.filter((r) => r.outcome === 'already_used')).toHaveLength(1);
     });
   });
 
