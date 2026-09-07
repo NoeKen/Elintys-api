@@ -1,9 +1,7 @@
-import { ServiceUnavailableException } from '@nestjs/common';
 import {
   mapSnapshotToStatus,
-  isTrustedSandboxApprovalUrl,
+  isTrustedApprovalUrl,
   PAYPAL_APPROVAL_URL_MISSING,
-  PAYPAL_LIVE_MODE_REFUSED,
   PayPalPaymentProvider,
 } from './paypal-payment.provider';
 import { PayPalHttpClient } from './paypal-http.client';
@@ -24,6 +22,11 @@ function snapshot(overrides: Partial<PayPalOrderSnapshot> = {}): PayPalOrderSnap
   };
 }
 
+const APPROVAL_HOSTS = {
+  sandbox: ['sandbox.paypal.com', 'www.sandbox.paypal.com'],
+  live: ['paypal.com', 'www.paypal.com'],
+} as const;
+
 function build(environment: 'sandbox' | 'live' = 'sandbox') {
   const orders = {
     createOrder: jest.fn(),
@@ -31,7 +34,9 @@ function build(environment: 'sandbox' | 'live' = 'sandbox') {
     captureOrder: jest.fn(),
   };
   const http = {
-    config: { environment, enabled: true },
+    // L'adaptateur ne lit que `config` : il ne sait pas quel environnement
+    // l'opérateur a choisi, il applique celui qu'on lui donne.
+    config: { environment, enabled: true, approvalHosts: APPROVAL_HOSTS[environment] },
     enabled: true,
   } as unknown as PayPalHttpClient;
   return {
@@ -50,32 +55,39 @@ const CREATE_INPUT = {
 
 afterEach(() => jest.clearAllMocks());
 
-describe('PayPalPaymentProvider — garde Sandbox', () => {
-  it.each(['createPayment', 'getPaymentStatus', 'confirmPayment'] as const)(
-    'devrait refuser %s en mode live',
-    async (method) => {
-      const { provider } = build('live');
-      const call =
-        method === 'createPayment'
-          ? provider.createPayment(CREATE_INPUT)
-          : method === 'getPaymentStatus'
-            ? provider.getPaymentStatus('PP-1')
-            : provider.confirmPayment({ reference: 'PP-1', orderId: 'order-1' });
-      await expect(call).rejects.toBeInstanceOf(ServiceUnavailableException);
-      await expect(call).rejects.toThrow(PAYPAL_LIVE_MODE_REFUSED);
-    },
-  );
-
-  it('ne devrait effectuer aucun appel réseau en mode live', async () => {
+describe('PayPalPaymentProvider — indépendance vis-à-vis de l\'environnement', () => {
+  it('devrait fonctionner à l\'identique en live, avec les hôtes live', async () => {
+    // Preuve d'architecture : le MÊME adaptateur, sans modification, sert les
+    // deux environnements. Seule la configuration injectée diffère.
     const { provider, orders } = build('live');
-    await expect(provider.createPayment(CREATE_INPUT)).rejects.toThrow();
-    expect(orders.createOrder).not.toHaveBeenCalled();
+    orders.createOrder.mockResolvedValue(
+      snapshot({ approvalUrl: 'https://www.paypal.com/checkoutnow?token=PP-ORDER-1' }),
+    );
+
+    const handle = await provider.createPayment(CREATE_INPUT);
+
+    expect(handle.checkoutUrl).toBe('https://www.paypal.com/checkoutnow?token=PP-ORDER-1');
   });
 
-  it('devrait rester silencieux et sans effet sur cancelPayment en mode live', async () => {
+  it('devrait refuser une URL SANDBOX reçue en configuration live', async () => {
+    // Une confusion d'environnement est un incident : on ne suit jamais un
+    // lien qui n'appartient pas à l'environnement configuré.
     const { provider, orders } = build('live');
+    orders.createOrder.mockResolvedValue(
+      snapshot({ approvalUrl: 'https://www.sandbox.paypal.com/checkoutnow?token=X' }),
+    );
+
+    await expect(provider.createPayment(CREATE_INPUT)).rejects.toThrow(
+      PAYPAL_APPROVAL_URL_MISSING,
+    );
+  });
+
+  it('devrait annuler en best-effort quel que soit l\'environnement', async () => {
+    const { provider, orders } = build('live');
+    orders.getOrder.mockResolvedValue(snapshot());
+
     await expect(provider.cancelPayment('PP-1')).resolves.toBeUndefined();
-    expect(orders.getOrder).not.toHaveBeenCalled();
+    expect(orders.getOrder).toHaveBeenCalledWith('PP-1');
   });
 });
 
@@ -114,14 +126,38 @@ describe('PayPalPaymentProvider — création', () => {
     await expect(provider.createPayment(CREATE_INPUT)).rejects.toThrow(PAYPAL_APPROVAL_URL_MISSING);
   });
 
-  it('devrait accepter uniquement une URL HTTPS PayPal Sandbox', () => {
-    expect(
-      isTrustedSandboxApprovalUrl(
-        'https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1',
-      ),
-    ).toBe(true);
-    expect(isTrustedSandboxApprovalUrl('https://www.paypal.com/checkoutnow')).toBe(false);
-    expect(isTrustedSandboxApprovalUrl('http://www.sandbox.paypal.com/checkoutnow')).toBe(false);
+  describe('isTrustedApprovalUrl', () => {
+    it('devrait accepter une URL HTTPS de l\'environnement configuré', () => {
+      expect(
+        isTrustedApprovalUrl(
+          'https://www.sandbox.paypal.com/checkoutnow?token=PP-ORDER-1',
+          APPROVAL_HOSTS.sandbox,
+        ),
+      ).toBe(true);
+      expect(
+        isTrustedApprovalUrl('https://www.paypal.com/checkoutnow', APPROVAL_HOSTS.live),
+      ).toBe(true);
+    });
+
+    it('devrait cloisonner sandbox et live', () => {
+      expect(
+        isTrustedApprovalUrl('https://www.paypal.com/checkoutnow', APPROVAL_HOSTS.sandbox),
+      ).toBe(false);
+      expect(
+        isTrustedApprovalUrl('https://www.sandbox.paypal.com/checkoutnow', APPROVAL_HOSTS.live),
+      ).toBe(false);
+    });
+
+    it.each([
+      ['http', 'http://www.sandbox.paypal.com/checkoutnow'],
+      ['javascript', 'javascript:alert(1)'],
+      ['data', 'data:text/html,<script>alert(1)</script>'],
+      ['domaine sosie', 'https://www.sandbox.paypal.com.attacker.tld/checkoutnow'],
+      ['préfixe trompeur', 'https://fakepaypal.com/checkoutnow'],
+      ['url invalide', 'pas-une-url'],
+    ])('devrait refuser une URL %s', (_name, value) => {
+      expect(isTrustedApprovalUrl(value, APPROVAL_HOSTS.sandbox)).toBe(false);
+    });
   });
 });
 

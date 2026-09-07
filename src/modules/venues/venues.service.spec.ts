@@ -36,6 +36,7 @@ describe('VenuesService', () => {
   let service: VenuesService;
   let venueModel: Record<string, jest.Mock>;
   let venueBookingModel: Record<string, jest.Mock>;
+  let notificationsService: Record<string, jest.Mock>;
   let eventModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
@@ -71,6 +72,7 @@ describe('VenuesService', () => {
       findByIdAndUpdate: jest.fn(),
       countDocuments: jest.fn(),
       create: jest.fn(),
+      findOneAndUpdate: jest.fn(),
     };
 
     venueBookingModel = {
@@ -78,6 +80,7 @@ describe('VenuesService', () => {
       findById: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       create: jest.fn(),
+      findOneAndUpdate: jest.fn(),
     };
     eventModel = {
       findById: jest.fn().mockReturnValue(makeChainable({ title: 'Test Event', organizer: { toString: () => userId } })),
@@ -92,6 +95,8 @@ describe('VenuesService', () => {
     venueBookingModel.findById.mockReturnValue(makeChainable(mockBooking()));
     venueBookingModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockBooking()));
 
+    notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+
     testingModule = await Test.createTestingModule({
       providers: [
         VenuesService,
@@ -99,7 +104,7 @@ describe('VenuesService', () => {
         { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
         { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
         { provide: getModelToken(Event.name), useValue: eventModel },
-        { provide: NotificationsService, useValue: { create: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: notificationsService },
         { provide: EmailsService, useValue: { sendVenueBookingUpdate: jest.fn().mockResolvedValue(undefined) } },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
@@ -267,23 +272,88 @@ describe('VenuesService', () => {
     });
   });
 
+  // ── updateMyProfile (F-04) ──
+  describe('updateMyProfile', () => {
+    it('cible la fiche du user connecté, jamais un id fourni par le client', async () => {
+      venueModel.findOneAndUpdate.mockReturnValue(makeChainable(mockVenue()));
+
+      await service.updateMyProfile(userId, { name: 'Nouvelle salle' });
+
+      const [filter] = venueModel.findOneAndUpdate.mock.calls[0] as [{ user: Types.ObjectId }];
+      expect(filter.user.toString()).toBe(userId);
+    });
+
+    it('lève NotFoundException si aucune fiche n’existe encore', async () => {
+      venueModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+
+      await expect(service.updateMyProfile(userId, { name: 'X' })).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+  });
+
   describe('cancelBooking', () => {
-    it('annule la réservation lorsque l’acteur gère réellement l’événement', async () => {
-      venueBookingModel.findByIdAndUpdate.mockReturnValue(
+    it('annule via une transition conditionnelle sur l’état observé', async () => {
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({
+          event: new Types.ObjectId(eventId),
+          status: VenueBookingStatus.PENDING,
+        }),
+      );
+      venueBookingModel.findOneAndUpdate.mockReturnValue(
         makeChainable(mockBooking({ status: VenueBookingStatus.CANCELLED })),
       );
+
       const result = await service.cancelBooking(bookingId, userId);
+
       expect(result.status).toBe(VenueBookingStatus.CANCELLED);
-      expect(venueBookingModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        bookingId,
-        expect.objectContaining({ status: VenueBookingStatus.CANCELLED }),
-        { new: true },
+      const [filter] = venueBookingModel.findOneAndUpdate.mock.calls[0] as [
+        { status: string },
+      ];
+      expect(filter.status).toBe(VenueBookingStatus.PENDING);
+    });
+
+    it('n’écrase pas une confirmation concurrente postérieure au début de l’annulation', async () => {
+      const respondedAt = new Date(Date.now() + 1_000);
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({
+          event: new Types.ObjectId(eventId),
+          status: VenueBookingStatus.CONFIRMED,
+          respondedAt,
+        }),
+      );
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+
+      await expect(service.cancelBooking(bookingId, userId)).rejects.toThrow(ConflictException);
+
+      const [filter] = venueBookingModel.findOneAndUpdate.mock.calls[0] as [
+        { status: string; $or: Array<Record<string, unknown>> },
+      ];
+      expect(filter.status).toBe(VenueBookingStatus.CONFIRMED);
+      expect(filter.$or).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ respondedAt: expect.objectContaining({ $lt: expect.any(Date) }) }),
+        ]),
       );
     });
 
     it('refuse l’annulation d’une réservation liée à l’événement d’un tiers', async () => {
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({ event: new Types.ObjectId(eventId), status: VenueBookingStatus.PENDING }),
+      );
+
       await expect(service.cancelBooking(bookingId, new Types.ObjectId().toString()))
         .rejects.toThrow(ForbiddenException);
+      expect(venueBookingModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('lève ConflictException si la réservation a changé d’état entre-temps', async () => {
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({ event: new Types.ObjectId(eventId), status: VenueBookingStatus.PENDING }),
+      );
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+
+      await expect(service.cancelBooking(bookingId, userId)).rejects.toThrow(ConflictException);
     });
   });
 
@@ -306,42 +376,116 @@ describe('VenuesService', () => {
 
   // ── respondToBooking ──
   describe('respondToBooking', () => {
-    it('devrait confirmer une réservation en attente', async () => {
-      const venueProfileId = new Types.ObjectId(venueId);
-      venueBookingModel.findById.mockReturnValue(
-        makeChainable({ status: VenueBookingStatus.PENDING, venue: venueProfileId, organizer: new Types.ObjectId(userId), event: new Types.ObjectId(eventId) }),
+    const confirmDto = { status: VenueBookingStatus.CONFIRMED as VenueBookingStatus.CONFIRMED };
+    const myProfile = () =>
+      makeChainable({ _id: new Types.ObjectId(venueId), name: 'Salle Saint-Paul' });
+
+    it('confirme une réservation en attente via une transition conditionnelle', async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockBooking({ status: VenueBookingStatus.CONFIRMED })),
       );
-      venueModel.findOne.mockReturnValue(makeChainable({ _id: venueProfileId }));
-      const confirmed = mockBooking({ status: VenueBookingStatus.CONFIRMED });
-      venueBookingModel.findByIdAndUpdate.mockReturnValue(makeChainable(confirmed));
 
-      const result = await service.respondToBooking(bookingId, userId, {
-        status: VenueBookingStatus.CONFIRMED,
-      });
+      const result = await service.respondToBooking(bookingId, userId, confirmDto);
 
+      const [filter] = venueBookingModel.findOneAndUpdate.mock.calls[0] as [
+        { status: string; venue: Types.ObjectId },
+      ];
+      expect(filter.status).toBe(VenueBookingStatus.PENDING);
+      expect(filter.venue.toString()).toBe(venueId);
       expect(result).toBeDefined();
     });
 
-    it('devrait lever BadRequestException si la réservation n\'est pas en attente', async () => {
-      venueBookingModel.findById.mockReturnValue(
-        makeChainable({ status: VenueBookingStatus.CONFIRMED, venue: new Types.ObjectId(venueId) }),
-      );
+    it('enregistre responseMessage et respondedAt', async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(mockBooking()));
 
-      await expect(
-        service.respondToBooking(bookingId, userId, { status: VenueBookingStatus.CONFIRMED }),
-      ).rejects.toThrow(BadRequestException);
+      await service.respondToBooking(bookingId, userId, {
+        ...confirmDto,
+        responseMessage: 'Salle disponible',
+      });
+
+      const [, update] = venueBookingModel.findOneAndUpdate.mock.calls[0] as [
+        unknown,
+        { responseMessage?: string; respondedAt?: Date },
+      ];
+      expect(update.responseMessage).toBe('Salle disponible');
+      expect(update.respondedAt).toBeInstanceOf(Date);
     });
 
-    it('devrait lever ForbiddenException si le gestionnaire ne correspond pas', async () => {
-      const otherVenueId = new Types.ObjectId();
-      venueBookingModel.findById.mockReturnValue(
-        makeChainable({ status: VenueBookingStatus.PENDING, venue: new Types.ObjectId(venueId) }),
-      );
-      venueModel.findOne.mockReturnValue(makeChainable({ _id: otherVenueId }));
+    it("lève NotFoundException si le gestionnaire n'a pas de fiche", async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(null));
 
-      await expect(
-        service.respondToBooking(bookingId, userId, { status: VenueBookingStatus.CONFIRMED }),
-      ).rejects.toThrow(ForbiddenException);
+      await expect(service.respondToBooking(bookingId, userId, confirmDto)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('lève ForbiddenException si la réservation vise une autre salle', async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({ venue: new Types.ObjectId(), status: VenueBookingStatus.PENDING }),
+      );
+
+      await expect(service.respondToBooking(bookingId, userId, confirmDto)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it("lève ConflictException si la réservation n'est plus en attente", async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({
+          venue: new Types.ObjectId(venueId),
+          status: VenueBookingStatus.CONFIRMED,
+        }),
+      );
+
+      await expect(service.respondToBooking(bookingId, userId, confirmDto)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it("n'émet AUCUN effet de bord lorsque la transition est perdue", async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({
+          venue: new Types.ObjectId(venueId),
+          status: VenueBookingStatus.CONFIRMED,
+        }),
+      );
+
+      await expect(service.respondToBooking(bookingId, userId, confirmDto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('un seul de deux réponses concurrentes gagne', async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate
+        .mockReturnValueOnce(makeChainable(mockBooking({ status: VenueBookingStatus.CONFIRMED })))
+        .mockReturnValue(makeChainable(null));
+      venueBookingModel.findById.mockReturnValue(
+        makeChainable({
+          venue: new Types.ObjectId(venueId),
+          status: VenueBookingStatus.CONFIRMED,
+        }),
+      );
+
+      const outcomes = await Promise.allSettled([
+        service.respondToBooking(bookingId, userId, confirmDto),
+        service.respondToBooking(bookingId, userId, {
+          status: VenueBookingStatus.REFUSED as VenueBookingStatus.REFUSED,
+        }),
+      ]);
+
+      expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+      expect(outcomes.filter((o) => o.status === 'rejected')).toHaveLength(1);
+      expect(notificationsService.create).toHaveBeenCalledTimes(1);
     });
   });
 

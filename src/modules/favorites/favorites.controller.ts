@@ -14,16 +14,24 @@ export class FavoritesController {
   @Post()
   @ApiOperation({ summary: 'Ajouter un favori' })
   @ApiResponse({ status: 201, description: 'Favori ajouté' })
+  @ApiResponse({ status: 400, description: 'targetId ou targetType invalide' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  @ApiResponse({ status: 409, description: 'Déjà dans les favoris' })
+  @ApiResponse({ status: 404, description: 'Cible introuvable (FAVORITE_TARGET_NOT_FOUND)' })
+  @ApiResponse({ status: 409, description: 'Déjà dans les favoris (FAVORITE_ALREADY_EXISTS)' })
   add(@CurrentUser() user: JwtPayload, @Body() dto: CreateFavoriteDto) {
     return this.favoritesService.add(user.sub, dto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Mes favoris (filtrables par type)' })
+  @ApiOperation({
+    summary: 'Mes favoris (filtrables par type)',
+    description:
+      "Retourne des favoris ENRICHIS : chaque entrée porte un objet `target` " +
+      "(libellé métier, lien public canonique, image) ou `target: null` si la " +
+      'cible a été supprimée. Le client ne doit jamais afficher `targetId` brut.',
+  })
   @ApiQuery({ name: 'type', required: false, enum: FavoriteTargetType, description: 'Filtrer par type de cible' })
-  @ApiResponse({ status: 200, description: 'Liste de mes favoris' })
+  @ApiResponse({ status: 200, description: 'Liste enrichie de mes favoris' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   findMine(@CurrentUser() user: JwtPayload, @Query('type') type?: FavoriteTargetType) {
     return this.favoritesService.findMyFavorites(user.sub, type);
@@ -33,8 +41,9 @@ export class FavoritesController {
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Retirer un favori' })
   @ApiResponse({ status: 204, description: 'Favori retiré' })
+  @ApiResponse({ status: 400, description: 'targetId ou targetType invalide' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  @ApiResponse({ status: 404, description: 'Favori introuvable' })
+  @ApiResponse({ status: 404, description: 'Favori introuvable (FAVORITE_NOT_FOUND)' })
   remove(@CurrentUser() user: JwtPayload, @Body() dto: CreateFavoriteDto) {
     return this.favoritesService.remove(user.sub, dto);
   }

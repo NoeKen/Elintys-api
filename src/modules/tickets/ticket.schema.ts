@@ -90,6 +90,10 @@ export class TicketPurchase {
 
   @Prop()
   scannedAt?: Date;
+
+  /** Traçabilité : quel compte a validé ce billet à l'entrée. */
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  scannedBy?: Types.ObjectId | null;
 }
 
 export const TicketPurchaseSchema = SchemaFactory.createForClass(TicketPurchase);

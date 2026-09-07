@@ -7,9 +7,10 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 
 @ApiTags('Notifications')
 @Controller('notifications')
@@ -23,20 +24,28 @@ export class NotificationsController {
   }
 
   @Get('me')
+  @ApiOperation({ summary: 'Mes notifications' })
+  @ApiQuery({
+    name: 'unreadOnly',
+    required: false,
+    type: Boolean,
+    description: 'Ne retourner que les notifications non lues',
+  })
+  @ApiQuery({ name: 'page', required: false, type: Number })
   findMine(
     @CurrentUser() user: JwtPayload,
-    @Query('unread') unread?: string,
+    @Query('unreadOnly') unreadOnly?: string,
     @Query('page') page?: string,
   ) {
     return this.notificationsService.findByUser(user.sub, {
-      unreadOnly: unread === 'true',
+      unreadOnly: unreadOnly === 'true',
       page: page ? parseInt(page, 10) : 1,
     });
   }
 
   @Patch(':id/read')
   @HttpCode(HttpStatus.NO_CONTENT)
-  markRead(@Param('id') id: string, @CurrentUser() user: JwtPayload) {
+  markRead(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.notificationsService.markRead(id, user.sub);
   }
 

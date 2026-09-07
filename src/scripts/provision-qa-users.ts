@@ -8,9 +8,17 @@ import { resolveElintysEnvironment } from '../config/elintys-environment';
 /**
  * provision-qa-users.ts — Lot 0 (audit remediation)
  *
- * Crée/réinitialise DEUX comptes QA dans l'environnement **dev uniquement** :
+ * Crée/réinitialise les comptes QA dans l'environnement **dev uniquement** :
  *   - un organisateur PROPRIÉTAIRE (E2E_TEST_EMAIL)
  *   - un organisateur TIERS non-propriétaire (E2E_TEST_EMAIL_SECONDARY) pour les tests IDOR
+ *   - un PRESTATAIRE (E2E_TEST_EMAIL_VENDOR) — parcours profil + demandes
+ *   - un GESTIONNAIRE DE SALLE (E2E_TEST_EMAIL_VENUE) — parcours fiche + réservations
+ *   - un compte MULTI-RÔLES (E2E_TEST_EMAIL_MULTI) — priorité de rôle et
+ *     débordement de la navigation mobile au-delà de quatre emplacements
+ *
+ * Les deux derniers sont créés SANS profil métier : c'est précisément l'état
+ * qu'un utilisateur réel a après son onboarding, et que le parcours
+ * « créer ma fiche » doit savoir traiter (F-05).
  *
  * Sécurité :
  *   - REFUSE toute base qui n'est pas exactement `elintys-dev` (garde anti-production).
@@ -33,6 +41,8 @@ const BCRYPT_ROUNDS = 12;
 interface QaUser {
   email: string;
   fullName: string;
+  /** Premier rôle = rôle dominant attendu par la politique de priorité. */
+  roles: UserRole[];
 }
 
 async function provision(): Promise<void> {
@@ -76,9 +86,27 @@ async function provision(): Promise<void> {
     .trim()
     .toLowerCase();
 
+  const vendorEmail = (process.env.E2E_TEST_EMAIL_VENDOR ?? 'qa-prestataire@demo.elintys.com')
+    .trim()
+    .toLowerCase();
+  const venueEmail = (process.env.E2E_TEST_EMAIL_VENUE ?? 'qa-gestionnaire@demo.elintys.com')
+    .trim()
+    .toLowerCase();
+
+  const multiEmail = (process.env.E2E_TEST_EMAIL_MULTI ?? 'qa-multi@demo.elintys.com')
+    .trim()
+    .toLowerCase();
+
   const qaUsers: QaUser[] = [
-    { email: ownerEmail, fullName: 'QA Organisateur Propriétaire' },
-    { email: secondaryEmail, fullName: 'QA Organisateur Tiers' },
+    { email: ownerEmail, fullName: 'QA Organisateur Propriétaire', roles: [UserRole.ORGANISATEUR] },
+    { email: secondaryEmail, fullName: 'QA Organisateur Tiers', roles: [UserRole.ORGANISATEUR] },
+    { email: vendorEmail, fullName: 'QA Prestataire', roles: [UserRole.PRESTATAIRE] },
+    { email: venueEmail, fullName: 'QA Gestionnaire Salle', roles: [UserRole.GESTIONNAIRE_SALLE] },
+    {
+      email: multiEmail,
+      fullName: 'QA Multi Rôles',
+      roles: [UserRole.ORGANISATEUR, UserRole.PRESTATAIRE],
+    },
   ];
 
   await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 15000 });
@@ -100,11 +128,11 @@ async function provision(): Promise<void> {
       {
         $set: {
           fullName: input.fullName,
-          roles: [UserRole.ORGANISATEUR],
+          roles: input.roles,
           password: passwordHash,
           isEmailVerified: true,
           onboardingCompleted: true,
-          onboardingByRole: { [UserRole.ORGANISATEUR]: true },
+          onboardingByRole: Object.fromEntries(input.roles.map((role) => [role, true])),
         },
         $setOnInsert: {
           referralBalance: 0,
@@ -122,11 +150,13 @@ async function provision(): Promise<void> {
       { upsert: true, new: true, runValidators: true },
     );
     // Ne JAMAIS logger le mot de passe.
-    console.log(`✓ Compte QA prêt : ${input.email} [organisateur, vérifié]`);
+    console.log(`✓ Compte QA prêt : ${input.email} [${input.roles.join(', ')}, vérifié]`);
   }
 
   await mongoose.disconnect();
-  console.log(`\nProvisioning terminé sur "${REQUIRED_DEV_DB}" (2 comptes, mot de passe masqué).`);
+  console.log(
+    `\nProvisioning terminé sur "${REQUIRED_DEV_DB}" (${qaUsers.length} comptes, mot de passe masqué).`,
+  );
 }
 
 provision().catch((error: unknown) => {

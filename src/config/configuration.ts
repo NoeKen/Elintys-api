@@ -63,9 +63,13 @@ export default () => {
       apiKey: process.env.ANTHROPIC_API_KEY,
     },
     /**
-     * PayPal — Vague 6. Sandbox uniquement.
-     * `resolvePayPalConfig` lève au démarrage si la configuration est
-     * incomplète ou si un mode live est détecté, quel que soit l'environnement.
+     * PayPal — piloté par configuration.
+     *
+     * `resolvePayPalConfig` est la SOURCE DE VÉRITÉ unique : elle dérive l'hôte
+     * API et les hôtes d'approbation depuis `PAYPAL_ENV`, et lève au démarrage
+     * si la configuration est incomplète ou incohérente. `elintysEnv` et
+     * `nodeEnv` lui sont transmis pour information : ils ne décident JAMAIS de
+     * l'environnement de paiement.
      */
     paypal: resolvePayPalConfig(
       {

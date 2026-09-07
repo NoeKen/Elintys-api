@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -27,6 +28,7 @@ import { NotificationType } from '../notifications/notification.schema';
 import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
+import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
 import { canManageEvent } from '../events/event-access.policy';
 
@@ -46,8 +48,27 @@ export class VenuesService {
     const exists = await this.venueModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
     if (exists) throw new ConflictException(ErrorCodes.VENUE_PROFILE_EXISTS);
 
-    const venue = await this.venueModel.create({ ...dto, user: new Types.ObjectId(userId) });
-    return venue.toObject();
+    try {
+      const venue = await this.venueModel.create({ ...dto, user: new Types.ObjectId(userId) });
+      return venue.toObject();
+    } catch (error) {
+      // L'index unique sur `user` est l'autorité en cas de double soumission.
+      if (isDuplicateKeyError(error)) throw new ConflictException(ErrorCodes.VENUE_PROFILE_EXISTS);
+      throw error;
+    }
+  }
+
+  /**
+   * Mise à jour de la fiche du gestionnaire CONNECTÉ.
+   * L'identité vient du JWT : aucune autorité métier n'est acceptée du client.
+   */
+  async updateMyProfile(userId: string, dto: UpdateVenueDto): Promise<VenueProfile> {
+    const updated = await this.venueModel
+      .findOneAndUpdate({ user: new Types.ObjectId(userId) }, dto, { new: true, runValidators: true })
+      .lean()
+      .select('-__v');
+    if (!updated) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
+    return updated;
   }
 
   async findAll(query: QueryVenueDto): Promise<PaginatedResult<VenueProfile>> {
@@ -81,7 +102,9 @@ export class VenuesService {
     if (venue.user.toString() !== userId) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
 
     const updated = await this.venueModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
-    return updated!;
+    // Peut être null si la fiche a été supprimée entre la vérification et l'écriture.
+    if (!updated) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
+    return updated;
   }
 
   async findMyProfile(userId: string): Promise<VenueProfile> {
@@ -131,29 +154,48 @@ export class VenuesService {
       .select('-__v');
   }
 
+  /**
+   * Réponse du gestionnaire à une demande de réservation.
+   *
+   * Transition ATOMIQUE : identité + propriété (`venue`) + état attendu
+   * (`PENDING`) sont tous dans le filtre. Deux réponses concurrentes, ou une
+   * réponse concurrente d'une annulation organisateur, ont exactement un
+   * gagnant.
+   *
+   * Corollaire indispensable : les effets de bord (notification, e-mail) ne
+   * sont émis QUE pour la transition gagnante. Avant ce correctif,
+   * l'organisateur pouvait recevoir « confirmé » ET « refusé » pour la même
+   * réservation.
+   */
   async respondToBooking(bookingId: string, userId: string, dto: RespondVenueBookingDto): Promise<VenueBooking> {
-    const booking = await this.venueBookingModel.findById(bookingId).lean().select('venue status organizer event');
-    if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
-
-    if (booking.status !== VenueBookingStatus.PENDING) {
-      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
-    }
-
-    const venueProfile = await this.venueModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
-    if (!venueProfile || booking.venue?.toString() !== (venueProfile._id as Types.ObjectId).toString()) {
-      throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
-    }
+    const venueProfile = await this.venueModel
+      .findOne({ user: new Types.ObjectId(userId) })
+      .lean()
+      .select('_id name');
+    if (!venueProfile) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
 
     const updated = await this.venueBookingModel
-      .findByIdAndUpdate(
-        bookingId,
-        { status: dto.status, responseMessage: dto.responseMessage, respondedAt: new Date() },
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(bookingId),
+          venue: venueProfile._id,
+          status: VenueBookingStatus.PENDING,
+        },
+        {
+          status: dto.status,
+          responseMessage: dto.responseMessage,
+          respondedAt: new Date(),
+        },
         { new: true },
       )
       .lean()
       .select('-__v');
 
-    const organizerId = (booking.organizer as Types.ObjectId).toString();
+    if (!updated) {
+      throw await this.failedBookingTransitionError(bookingId, venueProfile._id as Types.ObjectId);
+    }
+
+    const organizerId = (updated.organizer as Types.ObjectId).toString();
     this.notificationsService
       .create(organizerId, NotificationType.VENUE_CONFIRMED, { bookingId, status: dto.status })
       .catch(() => undefined);
@@ -161,38 +203,101 @@ export class VenuesService {
     const emailStatus = dto.status === VenueBookingStatus.CONFIRMED ? 'confirmed' : 'refused';
     Promise.all([
       this.userModel.findById(organizerId).lean().select('email fullName'),
-      this.eventModel.findById((booking.event as Types.ObjectId).toString()).lean().select('title'),
-      this.venueModel.findById((booking.venue as Types.ObjectId).toString()).lean().select('name'),
-    ]).then(([organizer, event, venue]) => {
-      if (!organizer || !event || !venue) return;
+      this.eventModel.findById((updated.event as Types.ObjectId).toString()).lean().select('title'),
+    ]).then(([organizer, event]) => {
+      if (!organizer || !event) return;
       return this.emailsService.sendVenueBookingUpdate(organizer.email, {
         fullName: organizer.fullName,
-        venueName: venue.name,
+        venueName: venueProfile.name,
         eventTitle: event.title,
         status: emailStatus,
         message: dto.responseMessage,
       });
     }).catch(() => undefined);
 
-    return updated!;
+    return updated;
   }
 
-  async cancelBooking(bookingId: string, userId: string, roles: string[] = []): Promise<VenueBooking> {
-    const booking = await this.venueBookingModel.findById(bookingId).lean().select('event status');
-    if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
-    if (![VenueBookingStatus.PENDING, VenueBookingStatus.CONFIRMED].includes(booking.status)) {
-      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+  /**
+   * Traduit l'échec d'une transition conditionnelle en erreur métier précise.
+   * Renvoie l'exception (au lieu de la lever) pour que TypeScript restreigne
+   * le type de l'appelant sans assertion `!`.
+   */
+  private async failedBookingTransitionError(
+    bookingId: string,
+    venueProfileId: Types.ObjectId,
+  ): Promise<HttpException> {
+    const current = await this.venueBookingModel
+      .findById(bookingId)
+      .lean()
+      .select('venue status');
+
+    if (!current) return new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
+    if (current.venue?.toString() !== venueProfileId.toString()) {
+      return new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     }
+    return new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
+  }
+
+  /**
+   * Annulation par l'organisateur.
+   *
+   * Le filtre atomique inclut les états annulables : la course
+   * « annuler pendant que le gestionnaire répond » a un seul gagnant.
+   * L'autorisation événement est vérifiée AVANT la transition, car elle
+   * dépend d'une autre collection et ne peut pas entrer dans le filtre.
+   */
+  async cancelBooking(bookingId: string, userId: string, roles: string[] = []): Promise<VenueBooking> {
+    // Capture le début logique de l'opération avant toute lecture. Une réponse
+    // créée après cet instant ne doit pas pouvoir être immédiatement écrasée
+    // par cette même requête d'annulation concurrente.
+    const operationStartedAt = new Date();
+    const booking = await this.venueBookingModel
+      .findById(bookingId)
+      .lean()
+      .select('event status respondedAt');
+    if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
+
     const event = await this.eventModel.findById(booking.event.toString()).lean().select('organizer');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId, roles }, event).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
+
+    if (
+      booking.status !== VenueBookingStatus.PENDING &&
+      booking.status !== VenueBookingStatus.CONFIRMED
+    ) {
+      throw new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    }
+
+    const statusGuard =
+      booking.status === VenueBookingStatus.PENDING
+        ? { status: VenueBookingStatus.PENDING }
+        : {
+            status: VenueBookingStatus.CONFIRMED,
+            $or: [
+              { respondedAt: { $lt: operationStartedAt } },
+              { respondedAt: null },
+              { respondedAt: { $exists: false } },
+            ],
+          };
+
     const updated = await this.venueBookingModel
-      .findByIdAndUpdate(bookingId, { status: VenueBookingStatus.CANCELLED, respondedAt: new Date() }, { new: true })
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(bookingId),
+          ...statusGuard,
+        },
+        { status: VenueBookingStatus.CANCELLED, respondedAt: new Date() },
+        { new: true },
+      )
       .lean()
       .select('-__v');
-    return updated!;
+
+    // Perdant de la course : la réservation a changé d'état entre-temps.
+    if (!updated) throw new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    return updated;
   }
 
   async listMyBookings(userId: string): Promise<VenueBooking[]> {
@@ -201,7 +306,11 @@ export class VenuesService {
 
     return this.venueBookingModel
       .find({ venue: venueProfile._id })
-      .populate('event', 'title startDate')
+      .populate('event', 'title startDate slug')
+      // Même raison que côté prestataire : l'écran affiche le nom de
+      // l'organisateur, il doit donc être peuplé.
+      .populate('organizer', 'fullName')
+      .sort({ createdAt: -1 })
       .lean()
       .select('-__v');
   }

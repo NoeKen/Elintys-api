@@ -1,4 +1,4 @@
-import { IsEnum, IsInt, IsString, Max, MaxLength, Min } from 'class-validator';
+import { IsEnum, IsInt, IsMongoId, IsString, Max, MaxLength, Min } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty } from '@nestjs/swagger';
@@ -9,8 +9,9 @@ export class CreateReviewDto {
   @IsEnum(ReviewTargetType)
   targetType!: ReviewTargetType;
 
+  /** Validé comme ObjectId : un identifiant malformé produit un 400, pas un CastError en 500. */
   @ApiProperty({ example: '664f1a2b3c4d5e6f7a8b9c0d', description: 'MongoDB ObjectId de la cible' })
-  @IsString()
+  @IsMongoId()
   targetId!: string;
 
   @ApiProperty({ example: 5, description: 'Note de 1 à 5', minimum: 1, maximum: 5 })

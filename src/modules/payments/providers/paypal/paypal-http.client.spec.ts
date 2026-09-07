@@ -11,16 +11,35 @@ import {
   PayPalApiError,
   PayPalHttpClient,
 } from './paypal-http.client';
-import { PAYPAL_DISABLED, PAYPAL_SANDBOX_BASE_URL } from '../../../../config/paypal-environment';
+import { PAYPAL_DISABLED, resolvePayPalConfig } from '../../../../config/paypal-environment';
 
-const ENABLED_CONFIG = {
-  enabled: true,
-  environment: 'sandbox' as const,
-  baseUrl: PAYPAL_SANDBOX_BASE_URL,
-  clientId: 'sb-client',
-  clientSecret: 'sb-super-secret',
-  webhookId: 'WH-42',
-};
+/**
+ * Configuration résolue par la SOURCE DE VÉRITÉ, pas recopiée à la main :
+ * le client HTTP doit consommer exactement ce que la configuration produit.
+ */
+const ENABLED_CONFIG = resolvePayPalConfig(
+  {
+    enabled: 'true',
+    environment: 'sandbox',
+    clientId: 'sb-client',
+    clientSecret: 'sb-super-secret',
+    webhookId: 'WH-42',
+  },
+  'dev',
+  'development',
+);
+
+const LIVE_CONFIG = resolvePayPalConfig(
+  {
+    enabled: 'true',
+    environment: 'live',
+    clientId: 'FAKE-live-client-not-a-credential',
+    clientSecret: 'FAKE-live-secret-not-a-credential',
+    webhookId: 'WH-LIVE',
+  },
+  'prod',
+  'production',
+);
 
 function build(config: unknown = ENABLED_CONFIG): PayPalHttpClient {
   const configService = {
@@ -57,6 +76,32 @@ describe('PayPalHttpClient — configuration', () => {
   });
 });
 
+describe('PayPalHttpClient — environnement piloté par configuration', () => {
+  it.each([
+    ['sandbox', ENABLED_CONFIG],
+    ['live', LIVE_CONFIG],
+  ])('devrait viser l\'hôte API %s sans modification de code', async (_name, config) => {
+    // Le MÊME client, la MÊME classe : seule la configuration injectée change.
+    const client = build(config);
+    fetchMock.mockResolvedValue(jsonResponse(200, { access_token: 'tok', expires_in: 32_400 }));
+
+    await client.getAccessToken();
+
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).toBe(`${config.baseUrl}/v1/oauth2/token`);
+  });
+
+  it('devrait cloisonner les hôtes API des deux environnements', () => {
+    expect(ENABLED_CONFIG.baseUrl).toBe('https://api-m.sandbox.paypal.com');
+    expect(LIVE_CONFIG.baseUrl).toBe('https://api-m.paypal.com');
+  });
+
+  it('devrait porter un webhook distinct par environnement', () => {
+    // Un webhook Sandbox ne doit jamais servir à vérifier une signature Live.
+    expect(ENABLED_CONFIG.webhookId).not.toBe(LIVE_CONFIG.webhookId);
+  });
+});
+
 describe('PayPalHttpClient — OAuth', () => {
   it('devrait envoyer des credentials Basic et mettre le jeton en cache', async () => {
     const client = build();
@@ -67,7 +112,7 @@ describe('PayPalHttpClient — OAuth', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe(`${PAYPAL_SANDBOX_BASE_URL}/v1/oauth2/token`);
+    expect(url).toBe(`${ENABLED_CONFIG.baseUrl}/v1/oauth2/token`);
     const headers = init.headers as Record<string, string>;
     expect(headers.Authorization).toBe(
       `Basic ${Buffer.from('sb-client:sb-super-secret').toString('base64')}`,

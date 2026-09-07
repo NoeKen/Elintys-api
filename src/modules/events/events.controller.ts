@@ -200,7 +200,7 @@ export class EventsController {
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   reviewAccessRequest(
     @Param('id', ParseObjectIdPipe) id: string,
-    @Param('requestId') requestId: string,
+    @Param('requestId', ParseObjectIdPipe) requestId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: ReviewEventAccessRequestDto,
   ) {

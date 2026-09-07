@@ -31,6 +31,10 @@ export const ErrorCodes = {
   QR_NOT_FOUND: 'QR_NOT_FOUND',
   QR_ALREADY_USED: 'QR_ALREADY_USED',
   QR_CANCELLED: 'QR_CANCELLED',
+  /** Le billet existe pour cet événement mais n'est ni valide ni utilisé. */
+  QR_NOT_VALID: 'QR_NOT_VALID',
+  /** Le billet existe mais appartient à un AUTRE événement que celui scanné. */
+  QR_EVENT_MISMATCH: 'QR_EVENT_MISMATCH',
   BUYER_OR_GUEST_REQUIRED: 'BUYER_OR_GUEST_REQUIRED',
 
   // Vendors
@@ -44,6 +48,11 @@ export const ErrorCodes = {
 
   // Generic access
   ACCESS_DENIED: 'ACCESS_DENIED',
+
+  // Favoris
+  FAVORITE_TARGET_NOT_FOUND: 'FAVORITE_TARGET_NOT_FOUND',
+  FAVORITE_ALREADY_EXISTS: 'FAVORITE_ALREADY_EXISTS',
+  FAVORITE_NOT_FOUND: 'FAVORITE_NOT_FOUND',
 
   // Venues
   VENUE_PROFILE_EXISTS: 'VENUE_PROFILE_EXISTS',

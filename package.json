@@ -28,7 +28,8 @@
     "sprint3-wave4:migrate": "ts-node src/scripts/migrate-sprint3-wave4-indexes.ts",
     "sprint3-wave5:migrate": "ts-node src/scripts/migrate-sprint3-wave5-indexes.ts",
     "wave5:concurrency": "ts-node src/scripts/verify-wave5-concurrency.ts",
-    "sprint3-wave6:migrate": "ts-node src/scripts/migrate-sprint3-wave6-indexes.ts"
+    "sprint3-wave6:migrate": "ts-node src/scripts/migrate-sprint3-wave6-indexes.ts",
+    "wave-a:concurrency": "ts-node src/scripts/verify-wave-a-concurrency.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",

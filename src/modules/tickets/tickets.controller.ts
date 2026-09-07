@@ -129,11 +129,14 @@ export class TicketsController {
   @HttpCode(HttpStatus.OK)
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Scanner un billet à l\'entrée d\'un événement' })
-  @ApiResponse({ status: 200, description: 'Résultat du scan' })
-  @ApiResponse({ status: 400, description: 'Billet non valide' })
+  @ApiResponse({ status: 200, description: "Résultat du scan : outcome 'admitted' ou 'already_used'" })
+  @ApiResponse({ status: 400, description: 'Billet annulé (QR_CANCELLED) ou état non scannable (QR_NOT_VALID)' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  @ApiResponse({ status: 403, description: 'Accès refusé — non organisateur' })
+  @ApiResponse({ status: 403, description: "Accès refusé — non gestionnaire de CET événement (EVENT_NOT_OWNER)" })
+  @ApiResponse({ status: 404, description: "Événement introuvable, ou code QR inconnu POUR CET ÉVÉNEMENT (QR_NOT_FOUND)" })
   scan(@Body() dto: ScanTicketDto, @CurrentUser() user: JwtPayload) {
-    return this.ticketsService.scan(dto.qrCode, user.sub);
+    // `eventId` fait autorité pour l'AUTORISATION du scanneur et pour lier le
+    // billet à l'événement : il n'est jamais accepté comme identité métier.
+    return this.ticketsService.scan(dto.eventId, dto.qrCode, user.sub, user.roles);
   }
 }

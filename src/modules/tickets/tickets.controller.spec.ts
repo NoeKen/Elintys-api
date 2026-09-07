@@ -162,17 +162,38 @@ describe('TicketsController', () => {
 
   // ── POST /tickets/scan ──
   describe('scan', () => {
-    it('délègue à ticketsService.scan avec le code QR du body et user.sub', async () => {
+    it("délègue à ticketsService.scan l'événement, le code QR, user.sub et les rôles", async () => {
       mockTicketsService.scan.mockResolvedValue({
-        purchase: { _id: 'p1', status: 'valid' },
+        purchase: { _id: 'p1', status: 'used' },
+        outcome: 'admitted',
         message: 'Billet scanné avec succès.',
       });
 
-      const dto: ScanTicketDto = { qrCode: 'ABCD-EFGH-IJKL' };
+      const dto: ScanTicketDto = {
+        eventId: '664f1a2b3c4d5e6f7a8b9c0d',
+        qrCode: 'ABCD-EFGH-IJKL',
+      };
       const result = await controller.scan(dto, mockUser);
 
-      expect(mockTicketsService.scan).toHaveBeenCalledWith('ABCD-EFGH-IJKL', mockUser.sub);
-      expect(result.message).toBe('Billet scanné avec succès.');
+      // `eventId` est transmis pour l'autorisation ET pour lier le billet :
+      // ce n'est pas un champ décoratif accepté puis ignoré.
+      expect(mockTicketsService.scan).toHaveBeenCalledWith(
+        '664f1a2b3c4d5e6f7a8b9c0d',
+        'ABCD-EFGH-IJKL',
+        mockUser.sub,
+        mockUser.roles,
+      );
+      expect(result.outcome).toBe('admitted');
+    });
+
+    it('le DTO de scan exige un eventId : le contrat frontend est complet', () => {
+      // Garde-fou de contrat : le scanner web envoie {eventId, qrCode}. Avec
+      // `forbidNonWhitelisted`, tout champ absent du DTO produisait un 400.
+      const dto: ScanTicketDto = {
+        eventId: '664f1a2b3c4d5e6f7a8b9c0d',
+        qrCode: 'ABCD-EFGH-IJKL',
+      };
+      expect(Object.keys(dto).sort()).toEqual(['eventId', 'qrCode']);
     });
   });
 });
