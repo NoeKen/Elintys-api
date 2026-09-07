@@ -73,6 +73,7 @@ describe('VendorsService', () => {
       findById: jest.fn(),
       findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
+      findOneAndUpdate: jest.fn(),
       countDocuments: jest.fn(),
       create: jest.fn(),
     };
@@ -83,6 +84,8 @@ describe('VendorsService', () => {
       findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
+      findOneAndUpdate: jest.fn(),
+      findOneAndDelete: jest.fn(),
       create: jest.fn(),
     };
 
@@ -380,62 +383,226 @@ describe('VendorsService', () => {
   });
 
   // ── respondToRequest ──
-  describe('respondToRequest', () => {
-    it('devrait accepter une demande en attente', async () => {
-      const request = mockRequest({ vendor: new Types.ObjectId(vendorId) });
-      vendorRequestModel.findById.mockReturnValue(makeChainable(request));
-      vendorModel.findOne.mockReturnValue(makeChainable({ _id: new Types.ObjectId(vendorId) }));
-      const acceptedRequest = mockRequest({ status: VendorRequestStatus.ACCEPTED });
-      vendorRequestModel.findByIdAndUpdate.mockReturnValue(makeChainable(acceptedRequest));
+  // ── updateMyProfile (F-04) ──
+  describe('updateMyProfile', () => {
+    it('cible le profil du user connecté, jamais un id fourni par le client', async () => {
+      vendorModel.findOneAndUpdate.mockReturnValue(makeChainable(mockVendor()));
 
-      const dto = { status: VendorRequestStatus.ACCEPTED as VendorRequestStatus.ACCEPTED };
-      const result = await service.respondToRequest(requestId, userId, dto);
+      await service.updateMyProfile(userId, { businessName: 'Nouveau nom' });
 
-      expect(vendorRequestModel.findByIdAndUpdate).toHaveBeenCalledWith(
-        requestId,
-        expect.objectContaining({ status: VendorRequestStatus.ACCEPTED }),
-        { new: true },
+      const [filter] = vendorModel.findOneAndUpdate.mock.calls[0] as [{ user: Types.ObjectId }];
+      expect(filter.user.toString()).toBe(userId);
+    });
+
+    it('lève NotFoundException si aucun profil n’existe encore', async () => {
+      // Le client doit pouvoir distinguer « pas de profil » (⇒ créer) d'une panne.
+      vendorModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+
+      await expect(service.updateMyProfile(userId, { businessName: 'X' })).rejects.toThrow(
+        NotFoundException,
       );
+    });
+
+    it('applique les validateurs du schéma (catégorie hors énumération refusée)', async () => {
+      vendorModel.findOneAndUpdate.mockReturnValue(makeChainable(mockVendor()));
+
+      await service.updateMyProfile(userId, { businessName: 'X' });
+
+      const [, , options] = vendorModel.findOneAndUpdate.mock.calls[0] as [
+        unknown,
+        unknown,
+        { runValidators?: boolean },
+      ];
+      expect(options.runValidators).toBe(true);
+    });
+  });
+
+  describe('respondToRequest', () => {
+    const acceptDto = { status: VendorRequestStatus.ACCEPTED as VendorRequestStatus.ACCEPTED };
+    const myProfile = () => makeChainable({ _id: new Types.ObjectId(vendorId), businessName: 'Lumière Nord' });
+
+    it('devrait accepter une demande en attente via une transition conditionnelle', async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockRequest({ status: VendorRequestStatus.ACCEPTED })),
+      );
+
+      const result = await service.respondToRequest(requestId, userId, acceptDto);
+
+      // L'état attendu est DANS le filtre : c'est ce qui empêche deux
+      // réponses concurrentes de réussir toutes les deux.
+      const [filter] = vendorRequestModel.findOneAndUpdate.mock.calls[0] as [
+        { status: string; vendor: Types.ObjectId },
+      ];
+      expect(filter.status).toBe(VendorRequestStatus.PENDING);
+      expect(filter.vendor.toString()).toBe(vendorId);
       expect(result).toBeDefined();
     });
 
-    it('devrait lever ForbiddenException si le prestataire ne correspond pas', async () => {
-      const otherVendorId = new Types.ObjectId().toString();
-      const request = mockRequest({ vendor: new Types.ObjectId(otherVendorId) });
-      vendorRequestModel.findById.mockReturnValue(makeChainable(request));
-      vendorModel.findOne.mockReturnValue(makeChainable({ _id: new Types.ObjectId(vendorId) }));
+    it('devrait enregistrer responseMessage et respondedAt', async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(makeChainable(mockRequest()));
 
-      const dto = { status: VendorRequestStatus.ACCEPTED as VendorRequestStatus.ACCEPTED };
-      await expect(service.respondToRequest(requestId, userId, dto)).rejects.toThrow(ForbiddenException);
+      await service.respondToRequest(requestId, userId, {
+        ...acceptDto,
+        responseMessage: 'Avec plaisir',
+      });
+
+      const [, update] = vendorRequestModel.findOneAndUpdate.mock.calls[0] as [
+        unknown,
+        { responseMessage?: string; respondedAt?: Date },
+      ];
+      expect(update.responseMessage).toBe('Avec plaisir');
+      expect(update.respondedAt).toBeInstanceOf(Date);
     });
 
-    it('devrait lever BadRequestException si la demande n\'est pas en attente', async () => {
-      // State check happens BEFORE ownership check — no need to mock vendorModel.findOne
-      const request = mockRequest({ status: VendorRequestStatus.ACCEPTED, vendor: new Types.ObjectId(vendorId) });
-      vendorRequestModel.findById.mockReturnValue(makeChainable(request));
+    it("devrait lever NotFoundException si le prestataire n'a pas de profil", async () => {
+      vendorModel.findOne.mockReturnValue(makeChainable(null));
 
-      const dto = { status: VendorRequestStatus.DECLINED as VendorRequestStatus.DECLINED };
-      await expect(service.respondToRequest(requestId, userId, dto)).rejects.toThrow(BadRequestException);
+      await expect(service.respondToRequest(requestId, userId, acceptDto)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it('devrait lever ForbiddenException si la demande appartient à un autre prestataire', async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({
+          vendor: new Types.ObjectId(),
+          status: VendorRequestStatus.PENDING,
+        }),
+      );
+
+      await expect(service.respondToRequest(requestId, userId, acceptDto)).rejects.toThrow(
+        ForbiddenException,
+      );
+    });
+
+    it("devrait lever ConflictException si la demande n'est plus en attente", async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({
+          vendor: new Types.ObjectId(vendorId),
+          status: VendorRequestStatus.ACCEPTED,
+        }),
+      );
+
+      await expect(service.respondToRequest(requestId, userId, acceptDto)).rejects.toThrow(
+        ConflictException,
+      );
+    });
+
+    it('devrait lever NotFoundException si la demande a disparu', async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(makeChainable(null));
+
+      await expect(service.respondToRequest(requestId, userId, acceptDto)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it("devrait lever BadRequestException pour une demande manuelle sans prestataire plateforme", async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({ vendor: null, status: VendorRequestStatus.PENDING }),
+      );
+
+      await expect(service.respondToRequest(requestId, userId, acceptDto)).rejects.toThrow(
+        BadRequestException,
+      );
+    });
+
+    it("n'émet AUCUN effet de bord lorsque la transition est perdue", async () => {
+      // Avant ce correctif, deux réponses concurrentes envoyaient deux
+      // notifications contradictoires pour la même demande.
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({
+          vendor: new Types.ObjectId(vendorId),
+          status: VendorRequestStatus.ACCEPTED,
+        }),
+      );
+
+      await expect(service.respondToRequest(requestId, userId, acceptDto)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(notificationsService.create).not.toHaveBeenCalled();
+    });
+
+    it('un seul de deux réponses concurrentes gagne', async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      // Le premier `findOneAndUpdate` matche `status: PENDING`, le second non.
+      vendorRequestModel.findOneAndUpdate
+        .mockReturnValueOnce(makeChainable(mockRequest({ status: VendorRequestStatus.ACCEPTED })))
+        .mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({
+          vendor: new Types.ObjectId(vendorId),
+          status: VendorRequestStatus.ACCEPTED,
+        }),
+      );
+
+      const outcomes = await Promise.allSettled([
+        service.respondToRequest(requestId, userId, acceptDto),
+        service.respondToRequest(requestId, userId, {
+          status: VendorRequestStatus.DECLINED as VendorRequestStatus.DECLINED,
+        }),
+      ]);
+
+      expect(outcomes.filter((o) => o.status === 'fulfilled')).toHaveLength(1);
+      expect(outcomes.filter((o) => o.status === 'rejected')).toHaveLength(1);
+      expect(notificationsService.create).toHaveBeenCalledTimes(1);
     });
   });
 
   // ── cancelRequest ──
   describe('cancelRequest', () => {
-    it('devrait annuler une demande en attente', async () => {
-      const request = mockRequest({ organizer: { toString: () => userId } });
-      vendorRequestModel.findById.mockReturnValue(makeChainable(request));
+    it('devrait annuler une demande en attente via une suppression conditionnelle', async () => {
+      vendorRequestModel.findOneAndDelete.mockReturnValue(makeChainable({ _id: requestId }));
 
       await service.cancelRequest(requestId, userId);
 
-      expect(vendorRequestModel.findByIdAndDelete).toHaveBeenCalledWith(requestId);
+      const [filter] = vendorRequestModel.findOneAndDelete.mock.calls[0] as [
+        { status: string; organizer: Types.ObjectId },
+      ];
+      expect(filter.status).toBe(VendorRequestStatus.PENDING);
+      expect(filter.organizer.toString()).toBe(userId);
     });
 
-    it('devrait lever ForbiddenException si l\'organisateur ne correspond pas', async () => {
-      const otherUserId = new Types.ObjectId().toString();
-      const request = mockRequest({ organizer: { toString: () => otherUserId } });
-      vendorRequestModel.findById.mockReturnValue(makeChainable(request));
+    it("devrait lever ForbiddenException si l'organisateur ne correspond pas", async () => {
+      vendorRequestModel.findOneAndDelete.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({
+          organizer: { toString: () => new Types.ObjectId().toString() },
+          status: VendorRequestStatus.PENDING,
+        }),
+      );
 
       await expect(service.cancelRequest(requestId, userId)).rejects.toThrow(ForbiddenException);
+    });
+
+    it('devrait lever NotFoundException si la demande est introuvable', async () => {
+      vendorRequestModel.findOneAndDelete.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(makeChainable(null));
+
+      await expect(service.cancelRequest(requestId, userId)).rejects.toThrow(NotFoundException);
+    });
+
+    it("devrait lever ConflictException si la demande a déjà été tranchée (course accept vs cancel)", async () => {
+      vendorRequestModel.findOneAndDelete.mockReturnValue(makeChainable(null));
+      vendorRequestModel.findById.mockReturnValue(
+        makeChainable({
+          organizer: { toString: () => userId },
+          status: VendorRequestStatus.ACCEPTED,
+        }),
+      );
+
+      await expect(service.cancelRequest(requestId, userId)).rejects.toThrow(ConflictException);
     });
   });
 

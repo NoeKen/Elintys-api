@@ -7,6 +7,7 @@ import { QueryVendorDto } from './dto/query-vendor.dto';
 import { CreateVendorRequestDto } from './dto/create-request.dto';
 import { RespondVendorRequestDto } from './dto/respond-request.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
@@ -46,9 +47,29 @@ export class VendorsController {
   @ApiResponse({ status: 200, description: 'Profil prestataire de l\'utilisateur connecté' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
-  @ApiResponse({ status: 404, description: 'Profil introuvable' })
+  @ApiResponse({ status: 404, description: 'Profil introuvable (VENDOR_PROFILE_NOT_FOUND) — le client doit basculer en mode création' })
   myProfile(@CurrentUser() user: JwtPayload) {
     return this.vendorsService.findMyProfile(user.sub);
+  }
+
+  /**
+   * ⚠️ IMPORTANT : `me` DOIT être déclaré avant `:id`.
+   *
+   * Sans cette route, `PUT /vendors/me` était capté par `PUT /vendors/:id` avec
+   * `id = "me"`, produisant un `CastError` Mongoose donc une 500. L'identité
+   * vient exclusivement de `user.sub` : le client ne transmet jamais l'id du
+   * profil comme autorité.
+   */
+  @Put('me')
+  @Roles(Role.PRESTATAIRE, Role.ADMIN)
+  @ApiOperation({ summary: 'Mettre à jour MON profil prestataire' })
+  @ApiResponse({ status: 200, description: 'Profil mis à jour' })
+  @ApiResponse({ status: 400, description: 'Payload invalide (catégorie hors énumération, champ inconnu)' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
+  @ApiResponse({ status: 404, description: 'Profil introuvable (VENDOR_PROFILE_NOT_FOUND)' })
+  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateVendorDto) {
+    return this.vendorsService.updateMyProfile(user.sub, dto);
   }
 
   // ⚠️ IMPORTANT: requests/my MUST come before :id and :eventId/requests to avoid route conflicts
@@ -65,7 +86,7 @@ export class VendorsController {
   @ApiOperation({ summary: 'Accepter ou refuser une demande' })
   @ApiParam({ name: 'requestId' })
   @ApiResponse({ status: 200, description: 'Réponse enregistrée' })
-  respondToRequest(@Param('requestId') requestId: string, @CurrentUser() user: JwtPayload, @Body() dto: RespondVendorRequestDto) {
+  respondToRequest(@Param('requestId', ParseObjectIdPipe) requestId: string, @CurrentUser() user: JwtPayload, @Body() dto: RespondVendorRequestDto) {
     return this.vendorsService.respondToRequest(requestId, user.sub, dto);
   }
 
@@ -76,7 +97,7 @@ export class VendorsController {
   @ApiParam({ name: 'requestId' })
   @ApiResponse({ status: 204, description: 'Demande annulée' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
-  cancelRequest(@Param('requestId') requestId: string, @CurrentUser() user: JwtPayload) {
+  cancelRequest(@Param('requestId', ParseObjectIdPipe) requestId: string, @CurrentUser() user: JwtPayload) {
     return this.vendorsService.cancelRequest(requestId, user.sub);
   }
 
@@ -86,7 +107,7 @@ export class VendorsController {
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId du prestataire' })
   @ApiResponse({ status: 200, description: 'Prestataire trouvé' })
   @ApiResponse({ status: 404, description: 'Prestataire introuvable' })
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseObjectIdPipe) id: string) {
     return this.vendorsService.findOne(id);
   }
 
@@ -98,7 +119,7 @@ export class VendorsController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Prestataire introuvable' })
-  update(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Body() dto: UpdateVendorDto) {
+  update(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: UpdateVendorDto) {
     return this.vendorsService.update(id, user.sub, dto);
   }
 
@@ -108,7 +129,7 @@ export class VendorsController {
   @ApiParam({ name: 'eventId', description: 'ID de l\'événement' })
   @ApiResponse({ status: 201, description: 'Demande créée' })
   @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
-  createRequest(@Param('eventId') eventId: string, @CurrentUser() user: JwtPayload, @Body() dto: CreateVendorRequestDto) {
+  createRequest(@Param('eventId', ParseObjectIdPipe) eventId: string, @CurrentUser() user: JwtPayload, @Body() dto: CreateVendorRequestDto) {
     return this.vendorsService.createRequest(eventId, user.sub, dto);
   }
 
@@ -118,7 +139,7 @@ export class VendorsController {
   @ApiParam({ name: 'eventId' })
   @ApiResponse({ status: 200, description: 'Liste des demandes' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  listRequestsByEvent(@Param('eventId') eventId: string, @CurrentUser() user: JwtPayload) {
+  listRequestsByEvent(@Param('eventId', ParseObjectIdPipe) eventId: string, @CurrentUser() user: JwtPayload) {
     return this.vendorsService.listRequestsByEvent(eventId, user.sub);
   }
 }

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
@@ -8,6 +8,7 @@ import { UpdateVendorDto } from './dto/update-vendor.dto';
 import { QueryVendorDto, VendorPriceTier } from './dto/query-vendor.dto';
 import { CreateVendorRequestDto } from './dto/create-request.dto';
 import { RespondVendorRequestDto } from './dto/respond-request.dto';
+import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -31,10 +32,32 @@ export class VendorsService {
 
   async create(userId: string, dto: CreateVendorDto): Promise<VendorProfile> {
     const exists = await this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
-    if (exists) throw new ConflictException('Un profil prestataire existe déjà pour ce compte.');
+    if (exists) throw new ConflictException(ErrorCodes.VENDOR_PROFILE_EXISTS);
 
-    const vendor = await this.vendorModel.create({ ...dto, user: new Types.ObjectId(userId) });
-    return vendor.toObject();
+    try {
+      const vendor = await this.vendorModel.create({ ...dto, user: new Types.ObjectId(userId) });
+      return vendor.toObject();
+    } catch (error) {
+      // L'index unique sur `user` est l'autorité : deux créations concurrentes
+      // (double soumission du formulaire) donnent un conflit métier, pas une 500.
+      if (isDuplicateKeyError(error)) throw new ConflictException(ErrorCodes.VENDOR_PROFILE_EXISTS);
+      throw error;
+    }
+  }
+
+  /**
+   * Mise à jour du profil du prestataire CONNECTÉ.
+   *
+   * L'identité vient de `userId` (issu du JWT), jamais d'un identifiant fourni
+   * par le client : il n'y a donc aucune surface d'IDOR sur cette route.
+   */
+  async updateMyProfile(userId: string, dto: UpdateVendorDto): Promise<VendorProfile> {
+    const updated = await this.vendorModel
+      .findOneAndUpdate({ user: new Types.ObjectId(userId) }, dto, { new: true, runValidators: true })
+      .lean()
+      .select('-__v');
+    if (!updated) throw new NotFoundException(ErrorCodes.VENDOR_PROFILE_NOT_FOUND);
+    return updated;
   }
 
   async findAll(query: QueryVendorDto): Promise<PaginatedResult<VendorProfile>> {
@@ -74,23 +97,27 @@ export class VendorsService {
 
   async findOne(id: string): Promise<VendorProfile> {
     const vendor = await this.vendorModel.findById(id).lean().select('-__v');
-    if (!vendor) throw new NotFoundException('Profil prestataire introuvable.');
+    if (!vendor) throw new NotFoundException(ErrorCodes.VENDOR_NOT_FOUND);
     return vendor;
   }
 
   async findMyProfile(userId: string): Promise<VendorProfile> {
     const vendor = await this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('-__v');
-    if (!vendor) throw new NotFoundException('Profil prestataire introuvable.');
+    // 404 métier explicite : le client bascule en mode création, il ne doit
+    // jamais afficher un formulaire d'édition vide comme si un profil existait.
+    if (!vendor) throw new NotFoundException(ErrorCodes.VENDOR_PROFILE_NOT_FOUND);
     return vendor;
   }
 
   async update(id: string, userId: string, dto: UpdateVendorDto): Promise<VendorProfile> {
     const vendor = await this.vendorModel.findById(id).lean().select('user');
-    if (!vendor) throw new NotFoundException('Profil prestataire introuvable.');
-    if (vendor.user.toString() !== userId) throw new ForbiddenException('Accès refusé.');
+    if (!vendor) throw new NotFoundException(ErrorCodes.VENDOR_NOT_FOUND);
+    if (vendor.user.toString() !== userId) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
 
     const updated = await this.vendorModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
-    return updated!;
+    // Peut être null si le profil a été supprimé entre la vérification et l'écriture.
+    if (!updated) throw new NotFoundException(ErrorCodes.VENDOR_NOT_FOUND);
+    return updated;
   }
 
   // ── VendorRequest methods ──
@@ -215,31 +242,52 @@ export class VendorsService {
       .select('-__v');
   }
 
+  /**
+   * Réponse du prestataire à une demande.
+   *
+   * La transition est ATOMIQUE : le filtre du `findOneAndUpdate` porte à la
+   * fois l'identité de la demande, la propriété (`vendor`) et l'état attendu
+   * (`PENDING`). Deux réponses concurrentes (ex. « accepter » et « refuser »
+   * envoyés en même temps) ne peuvent donc pas réussir toutes les deux : la
+   * seconde ne matche plus `status: PENDING` et reçoit un conflit.
+   *
+   * Corollaire indispensable : les effets de bord (notification, e-mail) ne
+   * sont déclenchés QUE pour la transition gagnante. Avant ce correctif,
+   * l'organisateur pouvait recevoir une notification « accepté » ET une
+   * notification « refusé » pour la même demande.
+   */
   async respondToRequest(requestId: string, userId: string, dto: RespondVendorRequestDto): Promise<VendorRequest> {
-    const request = await this.vendorRequestModel.findById(requestId).lean().select('vendor status organizer event');
-    if (!request) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
-
-    // State check FIRST — cannot respond to non-pending requests regardless of who you are
-    if (request.status !== VendorRequestStatus.PENDING) {
-      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
-    }
-
-    // Manual requests (no platform vendor) cannot be responded to via this endpoint
-    if (!request.vendor) {
-      throw new BadRequestException(ErrorCodes.MANUAL_REQUEST_NO_PLATFORM_VENDOR);
-    }
-
-    // Ownership check
-    const vendorProfile = await this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
-    if (!vendorProfile || request.vendor.toString() !== (vendorProfile._id as Types.ObjectId).toString()) {
-      throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
-    }
+    const vendorProfile = await this.vendorModel
+      .findOne({ user: new Types.ObjectId(userId) })
+      .lean()
+      .select('_id businessName');
+    if (!vendorProfile) throw new NotFoundException(ErrorCodes.VENDOR_PROFILE_NOT_FOUND);
 
     const updated = await this.vendorRequestModel
-      .findByIdAndUpdate(requestId, { status: dto.status, responseMessage: dto.responseMessage, respondedAt: new Date() }, { new: true })
-      .lean().select('-__v');
+      .findOneAndUpdate(
+        {
+          _id: new Types.ObjectId(requestId),
+          vendor: vendorProfile._id,
+          status: VendorRequestStatus.PENDING,
+        },
+        {
+          status: dto.status,
+          responseMessage: dto.responseMessage,
+          respondedAt: new Date(),
+        },
+        { new: true },
+      )
+      .lean()
+      .select('-__v');
 
-    const organizerId = (request.organizer as Types.ObjectId).toString();
+    // Aucune ligne mise à jour : on relit pour distinguer les causes possibles
+    // sans jamais révéler l'existence d'une demande appartenant à autrui.
+    if (!updated) {
+      throw await this.failedRequestTransitionError(requestId, vendorProfile._id as Types.ObjectId);
+    }
+
+    const organizerId = (updated.organizer as Types.ObjectId).toString();
+
     this.notificationsService
       .create(organizerId, NotificationType.VENDOR_RESPONDED, { requestId, status: dto.status })
       .catch(() => undefined);
@@ -248,10 +296,9 @@ export class VendorsService {
       const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
       Promise.all([
         this.userModel.findById(organizerId).lean().select('email fullName'),
-        this.eventModel.findById((request.event as Types.ObjectId).toString()).lean().select('title'),
-        this.vendorModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('businessName'),
-      ]).then(([organizer, event, vendorProfile]) => {
-        if (!organizer || !event || !vendorProfile) return;
+        this.eventModel.findById((updated.event as Types.ObjectId).toString()).lean().select('title'),
+      ]).then(([organizer, event]) => {
+        if (!organizer || !event) return;
         return this.emailsService.sendRequestAccepted(organizer.email, {
           vendorName: vendorProfile.businessName,
           organizerName: organizer.fullName,
@@ -261,7 +308,32 @@ export class VendorsService {
       }).catch(() => undefined);
     }
 
-    return updated!;
+    return updated;
+  }
+
+  /**
+   * Traduit l'échec d'une transition conditionnelle en erreur métier précise.
+   *
+   * Renvoie l'exception au lieu de la lever : l'appelant écrit `throw await …`,
+   * ce qui permet à TypeScript de restreindre le type sans assertion `!`.
+   */
+  private async failedRequestTransitionError(
+    requestId: string,
+    vendorProfileId: Types.ObjectId,
+  ): Promise<HttpException> {
+    const current = await this.vendorRequestModel
+      .findById(requestId)
+      .lean()
+      .select('vendor status');
+
+    if (!current) return new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
+    if (!current.vendor) return new BadRequestException(ErrorCodes.MANUAL_REQUEST_NO_PLATFORM_VENDOR);
+    if (current.vendor.toString() !== vendorProfileId.toString()) {
+      return new ForbiddenException(ErrorCodes.ACCESS_DENIED);
+    }
+    // La demande nous appartient mais n'est plus PENDING : elle a déjà été
+    // tranchée (ou annulée) entre notre lecture et notre écriture.
+    return new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
   }
 
   async listMyRequests(userId: string): Promise<VendorRequest[]> {
@@ -275,13 +347,33 @@ export class VendorsService {
       .select('-__v');
   }
 
+  /**
+   * Annulation par l'organisateur.
+   *
+   * Suppression conditionnelle atomique : la course « annuler pendant que le
+   * prestataire répond » a exactement un gagnant. Si l'annulation perd, la
+   * demande n'est plus PENDING et l'appelant reçoit un conflit stable.
+   */
   async cancelRequest(requestId: string, organizerId: string): Promise<void> {
-    const request = await this.vendorRequestModel.findById(requestId).lean().select('organizer status');
-    if (!request) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
-    if (request.organizer.toString() !== organizerId) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
-    if (request.status !== VendorRequestStatus.PENDING) {
-      throw new BadRequestException(ErrorCodes.INVALID_STATUS_TRANSITION);
+    const deleted = await this.vendorRequestModel
+      .findOneAndDelete({
+        _id: new Types.ObjectId(requestId),
+        organizer: new Types.ObjectId(organizerId),
+        status: VendorRequestStatus.PENDING,
+      })
+      .lean()
+      .select('_id');
+
+    if (deleted) return;
+
+    const current = await this.vendorRequestModel
+      .findById(requestId)
+      .lean()
+      .select('organizer status');
+    if (!current) throw new NotFoundException(ErrorCodes.REQUEST_NOT_FOUND);
+    if (current.organizer.toString() !== organizerId) {
+      throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     }
-    await this.vendorRequestModel.findByIdAndDelete(requestId);
+    throw new ConflictException(ErrorCodes.INVALID_STATUS_TRANSITION);
   }
 }

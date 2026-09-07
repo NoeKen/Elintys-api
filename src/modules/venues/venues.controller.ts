@@ -14,6 +14,7 @@ import { CreateVenueBookingDto } from './dto/create-booking.dto';
 import { RespondVenueBookingDto } from './dto/respond-booking.dto';
 import { QueryVenueDto } from './dto/query-venue.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { Public } from '../../shared/decorators/public.decorator';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
 
@@ -51,9 +52,28 @@ export class VenuesController {
   @ApiResponse({ status: 200, description: 'Profil de salle' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
-  @ApiResponse({ status: 404, description: 'Profil introuvable' })
+  @ApiResponse({ status: 404, description: 'Profil introuvable (VENUE_PROFILE_NOT_FOUND) — le client doit basculer en mode création' })
   myProfile(@CurrentUser() user: JwtPayload) {
     return this.venuesService.findMyProfile(user.sub);
+  }
+
+  /**
+   * ⚠️ IMPORTANT : `me` DOIT être déclaré avant `:id`.
+   *
+   * Sans cette route, `PUT /venues/me` était capté par `PUT /venues/:id` avec
+   * `id = "me"`, produisant un `CastError` Mongoose donc une 500. L'identité
+   * vient exclusivement de `user.sub`.
+   */
+  @Put('me')
+  @Roles(Role.GESTIONNAIRE_SALLE, Role.ADMIN)
+  @ApiOperation({ summary: 'Mettre à jour MA fiche lieu' })
+  @ApiResponse({ status: 200, description: 'Fiche mise à jour' })
+  @ApiResponse({ status: 400, description: 'Payload invalide' })
+  @ApiResponse({ status: 401, description: 'Non authentifié' })
+  @ApiResponse({ status: 403, description: 'Rôle insuffisant' })
+  @ApiResponse({ status: 404, description: 'Profil introuvable (VENUE_PROFILE_NOT_FOUND)' })
+  updateMyProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateVenueDto) {
+    return this.venuesService.updateMyProfile(user.sub, dto);
   }
 
   @Get('bookings/my')
@@ -70,7 +90,7 @@ export class VenuesController {
   @ApiParam({ name: 'bookingId' })
   @ApiResponse({ status: 200, description: 'Réponse enregistrée' })
   respondToBooking(
-    @Param('bookingId') bookingId: string,
+    @Param('bookingId', ParseObjectIdPipe) bookingId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: RespondVenueBookingDto,
   ) {
@@ -81,7 +101,7 @@ export class VenuesController {
   @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: 'Annuler une réservation appartenant à son événement' })
   @ApiParam({ name: 'bookingId' })
-  cancelBooking(@Param('bookingId') bookingId: string, @CurrentUser() user: JwtPayload) {
+  cancelBooking(@Param('bookingId', ParseObjectIdPipe) bookingId: string, @CurrentUser() user: JwtPayload) {
     return this.venuesService.cancelBooking(bookingId, user.sub, user.roles);
   }
 
@@ -91,7 +111,7 @@ export class VenuesController {
   @ApiParam({ name: 'id', description: 'MongoDB ObjectId de la salle' })
   @ApiResponse({ status: 200, description: 'Salle trouvée' })
   @ApiResponse({ status: 404, description: 'Salle introuvable' })
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseObjectIdPipe) id: string) {
     return this.venuesService.findOne(id);
   }
 
@@ -103,7 +123,7 @@ export class VenuesController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Accès refusé' })
   @ApiResponse({ status: 404, description: 'Salle introuvable' })
-  update(@Param('id') id: string, @CurrentUser() user: JwtPayload, @Body() dto: UpdateVenueDto) {
+  update(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload, @Body() dto: UpdateVenueDto) {
     return this.venuesService.update(id, user.sub, dto);
   }
 
@@ -113,7 +133,7 @@ export class VenuesController {
   @ApiParam({ name: 'eventId' })
   @ApiResponse({ status: 201, description: 'Demande de réservation créée' })
   requestBooking(
-    @Param('eventId') eventId: string,
+    @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
     @Body() dto: CreateVenueBookingDto,
   ) {
@@ -125,7 +145,7 @@ export class VenuesController {
   @ApiParam({ name: 'eventId' })
   @ApiResponse({ status: 200, description: 'Liste des réservations' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
-  listBookingsByEvent(@Param('eventId') eventId: string, @CurrentUser() user: JwtPayload) {
+  listBookingsByEvent(@Param('eventId', ParseObjectIdPipe) eventId: string, @CurrentUser() user: JwtPayload) {
     return this.venuesService.listBookingsByEvent(eventId, user.sub, user.roles);
   }
 }
