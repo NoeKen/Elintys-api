@@ -54,6 +54,8 @@ describe('GuestsService', () => {
       findById: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
+      findOneAndUpdate: jest.fn(),
+      findOneAndDelete: jest.fn(),
       countDocuments: jest.fn(),
       create: jest.fn(),
     };
@@ -65,6 +67,7 @@ describe('GuestsService', () => {
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
     guestModel.find.mockReturnValue(makeChainable([mockGuest()]));
     guestModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockGuest()));
+    guestModel.findOneAndUpdate.mockReturnValue(makeChainable(mockGuest()));
     guestModel.countDocuments.mockResolvedValue(1);
 
     testingModule = await Test.createTestingModule({
@@ -130,11 +133,16 @@ describe('GuestsService', () => {
     it('met à jour le statut d\'un invité', async () => {
       const dto = { status: 'confirmed' };
       const updated = mockGuest(dto);
-      guestModel.findByIdAndUpdate.mockReturnValue(makeChainable(updated));
+      guestModel.findOneAndUpdate.mockReturnValue(makeChainable(updated));
 
       const result = await service.update(guestId, eventId, organizerId, dto as never);
 
       expect(result.status).toBe('confirmed');
+      expect(guestModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: guestId, event: expect.any(Types.ObjectId) },
+        dto,
+        { new: true, runValidators: true },
+      );
     });
 
     it('lève ForbiddenException si l\'utilisateur n\'est pas l\'organisateur', async () => {
@@ -144,7 +152,7 @@ describe('GuestsService', () => {
     });
 
     it('lève NotFoundException si l\'invité n\'existe pas', async () => {
-      guestModel.findByIdAndUpdate.mockReturnValue(makeChainable(null));
+      guestModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
 
       await expect(
         service.update('id-inexistant', eventId, organizerId, {}),
@@ -155,10 +163,13 @@ describe('GuestsService', () => {
   // ── remove ──
   describe('remove', () => {
     it('supprime un invité de l\'événement', async () => {
-      guestModel.findByIdAndDelete.mockResolvedValue({ _id: guestId });
+      guestModel.findOneAndDelete.mockResolvedValue({ _id: guestId });
 
       await expect(service.remove(guestId, eventId, organizerId)).resolves.toBeUndefined();
-      expect(guestModel.findByIdAndDelete).toHaveBeenCalledWith(guestId);
+      expect(guestModel.findOneAndDelete).toHaveBeenCalledWith({
+        _id: guestId,
+        event: expect.any(Types.ObjectId),
+      });
     });
 
     it('lève ForbiddenException si l\'utilisateur n\'est pas l\'organisateur', async () => {
@@ -168,7 +179,7 @@ describe('GuestsService', () => {
     });
 
     it('lève NotFoundException si l\'invité n\'existe pas', async () => {
-      guestModel.findByIdAndDelete.mockResolvedValue(null);
+      guestModel.findOneAndDelete.mockResolvedValue(null);
 
       await expect(service.remove('id-inexistant', eventId, organizerId)).rejects.toThrow(NotFoundException);
     });

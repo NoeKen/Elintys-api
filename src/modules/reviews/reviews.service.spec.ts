@@ -4,7 +4,11 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { ReviewsService } from './reviews.service';
 import { Review, ReviewTargetType } from './review.schema';
-import { Event } from '../events/event.schema';
+import {
+  Event,
+  EventDiscoverability,
+  EventStatus,
+} from '../events/event.schema';
 import { VendorProfile } from '../vendors/vendor.schema';
 import { VenueProfile } from '../venues/venue.schema';
 import { ErrorCodes } from '../../shared/constants/error-codes';
@@ -133,6 +137,36 @@ describe('ReviewsService', () => {
       expect(expected.exists).toHaveBeenCalled();
     });
 
+    it('ne permet un avis que sur un événement publié et découvrable', async () => {
+      reviewModel.create.mockResolvedValue(mockReview());
+
+      await service.create(authorId, dto);
+
+      expect(eventModel.exists).toHaveBeenCalledWith({
+        _id: expect.any(Types.ObjectId),
+        status: EventStatus.PUBLISHED,
+        archivedAt: null,
+        $or: expect.arrayContaining([
+          { discoverability: { $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED] } },
+        ]),
+      });
+    });
+
+    it.each([ReviewTargetType.VENDOR, ReviewTargetType.VENUE])(
+      'ne permet un avis que sur une cible active pour %s',
+      async (targetType) => {
+        reviewModel.create.mockResolvedValue(mockReview({ targetType }));
+
+        await service.create(authorId, { ...dto, targetType });
+
+        const model = targetType === ReviewTargetType.VENDOR ? vendorModel : venueModel;
+        expect(model.exists).toHaveBeenCalledWith({
+          _id: expect.any(Types.ObjectId),
+          isActive: true,
+        });
+      },
+    );
+
     it('traduit une violation d’index unique en conflit métier', async () => {
       // L'index {author, targetType, targetId} est l'autorité : deux
       // soumissions concurrentes ne peuvent pas créer deux avis.
@@ -170,9 +204,18 @@ describe('ReviewsService', () => {
       await service.findForTarget(ReviewTargetType.EVENT, targetId);
 
       const chain = reviewModel.find.mock.results[0].value as Record<string, jest.Mock>;
-      expect(chain.populate).toHaveBeenCalledWith('author', 'fullName');
+      expect(chain.populate).toHaveBeenCalledWith('author', 'fullName -_id');
       const projection = chain.select.mock.calls[0][0] as string;
       expect(projection).not.toContain('-__v');
+    });
+
+    it('ne divulgue aucun avis si la cible n’est plus publiquement visible', async () => {
+      eventModel.exists.mockResolvedValue(null);
+
+      await expect(
+        service.findForTarget(ReviewTargetType.EVENT, targetId),
+      ).rejects.toMatchObject({ message: ErrorCodes.REVIEW_TARGET_NOT_FOUND });
+      expect(reviewModel.find).not.toHaveBeenCalled();
     });
   });
 

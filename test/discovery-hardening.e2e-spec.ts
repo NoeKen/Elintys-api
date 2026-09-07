@@ -97,6 +97,10 @@ describe('Contrat Discovery (e2e)', () => {
       expect((await get('/discovery-contract/search?q=a')).status).toBe(400);
     });
 
+    it('applique la même longueur minimale aux filtres de catalogue', async () => {
+      expect((await get('/discovery-contract/vendors?q=a')).status).toBe(400);
+    });
+
     it('refuse un terme démesuré', async () => {
       const long = 'a'.repeat(500);
       expect((await get(`/discovery-contract/search?q=${long}`)).status).toBe(400);

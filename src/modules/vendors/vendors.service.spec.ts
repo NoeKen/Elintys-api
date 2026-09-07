@@ -198,13 +198,15 @@ describe('VendorsService', () => {
   // ── findOne ──
   describe('findOne', () => {
     it('retourne le profil prestataire correspondant à l\'ID', async () => {
+      vendorModel.findOne.mockReturnValue(makeChainable(mockVendor()));
+
       const result = await service.findOne(vendorId);
 
       expect((result as unknown as Record<string, unknown>)._id).toBe(vendorId);
     });
 
     it('lève NotFoundException si le prestataire n\'existe pas', async () => {
-      vendorModel.findById.mockReturnValue(makeChainable(null));
+      vendorModel.findOne.mockReturnValue(makeChainable(null));
 
       await expect(service.findOne('id-inexistant')).rejects.toThrow(NotFoundException);
     });
@@ -628,16 +630,22 @@ describe('VendorsService', () => {
 
       const projection = vendorModel.find.mock.results[0].value.select.mock.calls[0][0] as string;
       expect(projection).not.toContain('user');
+      expect(projection).not.toContain('contactPhone');
       expect(projection).toContain('businessName');
     });
 
       it("n'expose pas l'identifiant du compte sur la fiche publique", async () => {
-      vendorModel.findById.mockReturnValue(makeChainable(mockVendor()));
+      vendorModel.findOne.mockReturnValue(makeChainable(mockVendor()));
 
       await service.findOne('664f1a2b3c4d5e6f7a8b9c0d');
 
-      const projection = vendorModel.findById.mock.results[0].value.select.mock.calls[0][0] as string;
+      expect(vendorModel.findOne).toHaveBeenCalledWith({
+        _id: '664f1a2b3c4d5e6f7a8b9c0d',
+        isActive: true,
+      });
+      const projection = vendorModel.findOne.mock.results[0].value.select.mock.calls[0][0] as string;
       expect(projection).not.toContain('user');
+      expect(projection).not.toContain('contactPhone');
     });
     });
 });

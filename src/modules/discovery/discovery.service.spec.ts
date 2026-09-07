@@ -78,6 +78,7 @@ describe('DiscoveryService', () => {
           $and: expect.arrayContaining([
             expect.objectContaining({
               status: EventStatus.PUBLISHED,
+              archivedAt: null,
               $or: expect.any(Array),
             }),
           ]),
@@ -124,6 +125,7 @@ describe('DiscoveryService', () => {
       expect(result).toHaveLength(1);
       expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({
         status: EventStatus.PUBLISHED,
+        archivedAt: null,
         $or: expect.any(Array),
       }));
     });

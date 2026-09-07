@@ -1,5 +1,8 @@
 import { ForbiddenException } from '@nestjs/common';
 import { canManageEvent } from '../src/modules/events/event-access.policy';
+import { ROLES_KEY, Role } from '../src/shared/decorators/roles.decorator';
+import { TicketTypesController } from '../src/modules/tickets/tickets.controller';
+import { VenuesController } from '../src/modules/venues/venues.controller';
 
 /**
  * Cohérence ADMIN (B-01).
@@ -38,7 +41,7 @@ describe('Politique de gestion d’événement', () => {
   });
 
   it('refuse un acteur anonyme', () => {
-    expect(canManageEvent({ userId: undefined, roles: ['admin'] }, event).allowed).toBe(true);
+    expect(canManageEvent({ userId: undefined, roles: ['admin'] }, event).allowed).toBe(false);
     expect(canManageEvent({ userId: undefined, roles: [] }, event).allowed).toBe(false);
   });
 
@@ -50,50 +53,23 @@ describe('Politique de gestion d’événement', () => {
   });
 });
 
-/**
- * Les services event-scoped acceptent tous un paramètre `roles` optionnel :
- * c'est ce qui rend l'admin annoncé par le contrôleur réellement effectif.
- * Ce test échoue si une signature repart en arrière.
- */
-describe('Signatures admin-aware', () => {
-  const cases: Array<[string, unknown]> = [];
+describe('Contrats de routes admin', () => {
+  it('autorise réellement ADMIN sur la liste de gestion des types de billets', () => {
+    const roles = Reflect.getMetadata(
+      ROLES_KEY,
+      TicketTypesController.prototype.findManagedTypes,
+    ) as Role[];
 
-  beforeAll(async () => {
-    const { EventsService } = await import('../src/modules/events/events.service');
-    const { GuestsService } = await import('../src/modules/guests/guests.service');
-    const { TicketsService } = await import('../src/modules/tickets/tickets.service');
-    const { VendorsService } = await import('../src/modules/vendors/vendors.service');
-    const { VenuesService } = await import('../src/modules/venues/venues.service');
-
-    cases.push(
-      ['EventsService.findOne', EventsService.prototype.findOne],
-      ['EventsService.update', EventsService.prototype.update],
-      ['EventsService.remove', EventsService.prototype.remove],
-      ['EventsService.publish', EventsService.prototype.publish],
-      ['EventsService.cancel', EventsService.prototype.cancel],
-      ['EventsService.archive', EventsService.prototype.archive],
-      ['EventsService.restore', EventsService.prototype.restore],
-      ['EventsService.getPublishReadiness', EventsService.prototype.getPublishReadiness],
-      ['GuestsService.create', GuestsService.prototype.create],
-      ['GuestsService.findAll', GuestsService.prototype.findAll],
-      ['GuestsService.update', GuestsService.prototype.update],
-      ['GuestsService.remove', GuestsService.prototype.remove],
-      ['TicketsService.createTicketType', TicketsService.prototype.createTicketType],
-      ['TicketsService.updateTicketType', TicketsService.prototype.updateTicketType],
-      ['TicketsService.removeTicketType', TicketsService.prototype.removeTicketType],
-      ['VendorsService.createRequest', VendorsService.prototype.createRequest],
-      ['VendorsService.listRequestsByEvent', VendorsService.prototype.listRequestsByEvent],
-      ['VendorsService.cancelRequest', VendorsService.prototype.cancelRequest],
-      ['VenuesService.cancelBooking', VenuesService.prototype.cancelBooking],
-    );
+    expect(roles).toEqual([Role.ORGANISATEUR, Role.ADMIN]);
   });
 
-  it('chaque service event-scoped accepte des rôles', () => {
-    const missing = cases
-      .filter(([, fn]) => !/roles/.test(String(fn)))
-      .map(([name]) => name);
+  it('annonce les mêmes rôles que le service sur les réservations d’un événement', () => {
+    const roles = Reflect.getMetadata(
+      ROLES_KEY,
+      VenuesController.prototype.listBookingsByEvent,
+    ) as Role[];
 
-    expect(missing).toEqual([]);
+    expect(roles).toEqual([Role.ORGANISATEUR, Role.ADMIN]);
   });
 });
 

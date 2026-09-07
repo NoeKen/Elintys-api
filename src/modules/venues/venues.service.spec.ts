@@ -171,13 +171,15 @@ describe('VenuesService', () => {
   // ── findOne ──
   describe('findOne', () => {
     it('retourne la salle correspondant à l\'ID', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+
       const result = await service.findOne(venueId);
 
       expect((result as unknown as Record<string, unknown>)._id).toBeDefined();
     });
 
     it('lève NotFoundException si la salle n\'existe pas', async () => {
-      venueModel.findById.mockReturnValue(makeChainable(null));
+      venueModel.findOne.mockReturnValue(makeChainable(null));
 
       await expect(service.findOne('id-inexistant')).rejects.toThrow(NotFoundException);
     });
@@ -517,6 +519,30 @@ describe('VenuesService', () => {
     it('devrait avoir externalContact défini dans le schéma', () => {
       const path = VenueBookingSchema.path('externalContact');
       expect(path).toBeDefined();
+    });
+  });
+
+  describe('projection publique', () => {
+    it("n'expose ni compte propriétaire ni téléphone privé dans le catalogue", async () => {
+      venueModel.find.mockReturnValue(makeChainable([mockVenue()]));
+
+      await service.findAll({} as never);
+
+      const projection = venueModel.find.mock.results[0].value.select.mock.calls[0][0] as string;
+      expect(projection).not.toContain('user');
+      expect(projection).not.toContain('contactPhone');
+      expect(projection).toContain('name');
+    });
+
+    it('ne sert une fiche publique que si la salle est active', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+
+      await service.findOne(venueId);
+
+      expect(venueModel.findOne).toHaveBeenCalledWith({ _id: venueId, isActive: true });
+      const projection = venueModel.findOne.mock.results[0].value.select.mock.calls[0][0] as string;
+      expect(projection).not.toContain('user');
+      expect(projection).not.toContain('contactPhone');
     });
   });
 });
