@@ -231,9 +231,13 @@ export function validateEventAccessConfiguration(
 }
 
 export function canManageEvent(actor: EventActor, event: AccessControlledEvent): PolicyDecision {
+  // Un rôle n'est jamais une identité. Les guards HTTP garantissent normalement
+  // `user.sub`, mais la policy reste sûre lorsqu'elle est appelée directement
+  // depuis un service, un job ou un futur transport non HTTP.
+  if (!actor.userId) return { allowed: false, reason: 'UNAUTHENTICATED' };
   if (actor.roles?.includes('admin')) return { allowed: true, reason: 'ADMIN' };
   const organizerId = event.organizer?.toString();
-  return actor.userId && organizerId === actor.userId
+  return organizerId === actor.userId
     ? { allowed: true, reason: 'OWNER' }
     : { allowed: false, reason: 'EVENT_NOT_OWNER' };
 }

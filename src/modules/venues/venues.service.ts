@@ -38,7 +38,7 @@ import { canManageEvent } from '../events/event-access.policy';
  * une réponse anonyme.
  */
 const PUBLIC_VENUE_FIELDS =
-  '_id name type description address capacity photos amenities pricePerDay contactEmail contactPhone rating reviewCount isActive';
+  '_id name type description address capacity photos amenities pricePerDay contactEmail rating reviewCount isActive';
 
 @Injectable()
 export class VenuesService {
@@ -105,7 +105,10 @@ export class VenuesService {
   }
 
   async findOne(id: string): Promise<VenueProfile> {
-    const venue = await this.venueModel.findById(id).lean().select(PUBLIC_VENUE_FIELDS);
+    const venue = await this.venueModel
+      .findOne({ _id: id, isActive: true })
+      .lean()
+      .select(PUBLIC_VENUE_FIELDS);
     if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
     return venue;
   }

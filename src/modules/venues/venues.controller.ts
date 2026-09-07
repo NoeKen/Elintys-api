@@ -143,6 +143,7 @@ export class VenuesController {
   }
 
   @Get(':eventId/bookings')
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: "Réservations d'un événement (authentifié)" })
   @ApiParam({ name: 'eventId' })
   @ApiResponse({ status: 200, description: 'Liste des réservations' })

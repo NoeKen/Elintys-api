@@ -188,7 +188,13 @@ export class EventsService {
     if (category) filter.eventType = category;
 
     const [data, total] = await Promise.all([
-      this.eventModel.find(filter).sort(PAGINATION_SORT).skip(skip).limit(limit).lean().select('-__v'),
+      this.eventModel
+        .find(filter)
+        .sort(PAGINATION_SORT)
+        .skip(skip)
+        .limit(limit)
+        .lean()
+        .select('_id title slug startDate createdAt location coverImage eventType status'),
       this.eventModel.countDocuments(filter),
     ]);
 

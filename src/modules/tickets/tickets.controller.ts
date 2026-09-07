@@ -54,7 +54,7 @@ export class TicketTypesController {
   }
 
   @Get('events/:eventId/manage')
-  @Roles(Role.ORGANISATEUR)
+  @Roles(Role.ORGANISATEUR, Role.ADMIN)
   @ApiOperation({ summary: "Lister les types de billets pour la gestion organisateur" })
   findManagedTypes(
     @Param('eventId', ParseObjectIdPipe) eventId: string,

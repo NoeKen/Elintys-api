@@ -11,7 +11,13 @@ import { CreateReviewDto } from './dto/create-review.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
-import { Event, EventDocument } from '../events/event.schema';
+import {
+  Event,
+  EventDiscoverability,
+  EventDocument,
+  EventStatus,
+  EventVisibility,
+} from '../events/event.schema';
 import { VendorProfile, VendorProfileDocument } from '../vendors/vendor.schema';
 import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
 
@@ -40,21 +46,41 @@ export class ReviewsService {
    * formé : des avis orphelins s'accumulaient, invisibles et inexploitables.
    * Même raisonnement que pour les favoris (Vague A).
    */
-  private async targetExists(targetType: ReviewTargetType, targetId: Types.ObjectId): Promise<boolean> {
+  private async targetIsPubliclyVisible(
+    targetType: ReviewTargetType,
+    targetId: Types.ObjectId,
+  ): Promise<boolean> {
     switch (targetType) {
       case ReviewTargetType.EVENT:
-        return (await this.eventModel.exists({ _id: targetId })) !== null;
+        return (
+          (await this.eventModel.exists({
+            _id: targetId,
+            status: EventStatus.PUBLISHED,
+            archivedAt: null,
+            $or: [
+              {
+                discoverability: {
+                  $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED],
+                },
+              },
+              {
+                accessModelVersion: { $exists: false },
+                visibility: EventVisibility.PUBLIC,
+              },
+            ],
+          })) !== null
+        );
       case ReviewTargetType.VENDOR:
-        return (await this.vendorModel.exists({ _id: targetId })) !== null;
+        return (await this.vendorModel.exists({ _id: targetId, isActive: true })) !== null;
       case ReviewTargetType.VENUE:
-        return (await this.venueModel.exists({ _id: targetId })) !== null;
+        return (await this.venueModel.exists({ _id: targetId, isActive: true })) !== null;
     }
   }
 
   async create(authorId: string, dto: CreateReviewDto): Promise<Review> {
     const targetId = new Types.ObjectId(dto.targetId);
 
-    if (!(await this.targetExists(dto.targetType, targetId))) {
+    if (!(await this.targetIsPubliclyVisible(dto.targetType, targetId))) {
       throw new NotFoundException(ErrorCodes.REVIEW_TARGET_NOT_FOUND);
     }
 
@@ -82,8 +108,14 @@ export class ReviewsService {
     page = 1,
     limit = 20,
   ): Promise<PaginatedResult<Review>> {
+    const objectId = new Types.ObjectId(targetId);
+    if (!(await this.targetIsPubliclyVisible(targetType, objectId))) {
+      // Même réponse pour une cible absente ou non publique : la route
+      // anonyme ne devient pas un oracle sur les brouillons/profils désactivés.
+      throw new NotFoundException(ErrorCodes.REVIEW_TARGET_NOT_FOUND);
+    }
     const skip = (page - 1) * limit;
-    const filter = { targetType, targetId: new Types.ObjectId(targetId) };
+    const filter = { targetType, targetId: objectId };
 
     const [data, total] = await Promise.all([
       this.reviewModel
@@ -91,7 +123,7 @@ export class ReviewsService {
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit)
-        .populate('author', 'fullName')
+        .populate('author', 'fullName -_id')
         .lean()
         .select(PUBLIC_REVIEW_FIELDS),
       this.reviewModel.countDocuments(filter),

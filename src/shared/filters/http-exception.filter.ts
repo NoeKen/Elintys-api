@@ -23,11 +23,22 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
+    const exceptionResponse =
+      exception instanceof HttpException ? exception.getResponse() : undefined;
+    const responseBody =
+      exceptionResponse && typeof exceptionResponse === 'object'
+        ? (exceptionResponse as { message?: string | string[]; code?: unknown })
+        : undefined;
     const message =
       exception instanceof HttpException
-        ? (exception.getResponse() as { message?: string | string[] }).message ??
-          exception.message
+        ? typeof exceptionResponse === 'string'
+          ? exceptionResponse
+          : responseBody?.message ?? exception.message
         : 'Une erreur interne est survenue.';
+    const code =
+      responseBody && typeof responseBody.code === 'string'
+        ? responseBody.code
+        : undefined;
 
     if (status >= 500) {
       this.logger.error(
@@ -49,9 +60,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
     response.status(status).json({
       statusCode: status,
       message,
+      ...(code ? { code } : {}),
       requestId: request.requestId,
       timestamp: new Date().toISOString(),
-      path: request.url,
+      // Ne jamais refléter la query string : elle peut contenir un token
+      // d'invitation ou une autre donnée sensible. Le chemin suffit au debug,
+      // corrélé au requestId.
+      path: request.path,
     });
   }
 }

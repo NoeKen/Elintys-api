@@ -31,7 +31,7 @@ import { escapeRegExp } from '../../shared/utils/escape-regexp';
  * prestataires, et la fiche publique l'affiche.
  */
 const PUBLIC_VENDOR_FIELDS =
-  '_id businessName category description photos priceRange serviceArea contactEmail contactPhone rating reviewCount isActive isPremium';
+  '_id businessName category description photos priceRange serviceArea contactEmail rating reviewCount isActive isPremium';
 
 @Injectable()
 export class VendorsService {
@@ -117,7 +117,10 @@ export class VendorsService {
   }
 
   async findOne(id: string): Promise<VendorProfile> {
-    const vendor = await this.vendorModel.findById(id).lean().select(PUBLIC_VENDOR_FIELDS);
+    const vendor = await this.vendorModel
+      .findOne({ _id: id, isActive: true })
+      .lean()
+      .select(PUBLIC_VENDOR_FIELDS);
     if (!vendor) throw new NotFoundException(ErrorCodes.VENDOR_NOT_FOUND);
     return vendor;
   }

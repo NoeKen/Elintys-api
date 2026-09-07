@@ -58,15 +58,28 @@ export class GuestsService {
 
   async update(id: string, eventId: string, userId: string, dto: UpdateGuestDto, roles: string[] = []): Promise<Guest> {
     await this.assertCanManage(eventId, userId, roles);
-    const guest = await this.guestModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
-    if (!guest) throw new NotFoundException('Invité introuvable.');
+    // L'identifiant d'événement fait partie du filtre d'écriture. Sans lui, le
+    // propriétaire de A pouvait modifier un invité de B en combinant eventId=A
+    // avec le guestId de B.
+    const guest = await this.guestModel
+      .findOneAndUpdate(
+        { _id: id, event: new Types.ObjectId(eventId) },
+        dto,
+        { new: true, runValidators: true },
+      )
+      .lean()
+      .select('-__v');
+    if (!guest) throw new NotFoundException(ErrorCodes.GUEST_NOT_FOUND);
     return guest;
   }
 
   async remove(id: string, eventId: string, userId: string, roles: string[] = []): Promise<void> {
     await this.assertCanManage(eventId, userId, roles);
-    const result = await this.guestModel.findByIdAndDelete(id);
-    if (!result) throw new NotFoundException('Invité introuvable.');
+    const result = await this.guestModel.findOneAndDelete({
+      _id: id,
+      event: new Types.ObjectId(eventId),
+    });
+    if (!result) throw new NotFoundException(ErrorCodes.GUEST_NOT_FOUND);
   }
 
   async bulkCreate(eventId: string, userId: string, dto: BulkCreateGuestDto, roles: string[] = []): Promise<{ created: number }> {

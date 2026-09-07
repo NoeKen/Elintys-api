@@ -14,6 +14,7 @@ export interface SearchResults {
 
 const publicEventFilter = {
   status: EventStatus.PUBLISHED,
+  archivedAt: null,
   $or: [
     { discoverability: EventDiscoverability.PUBLIC },
     { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },

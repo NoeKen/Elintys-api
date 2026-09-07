@@ -70,6 +70,7 @@ export class QueryDiscoveryEventsDto extends PaginatedDiscoveryQuery {
   @IsOptional()
   @Transform(trimValue)
   @IsString()
+  @MinLength(2)
   @MaxLength(DISCOVERY_MAX_QUERY_LENGTH)
   q?: string;
 
@@ -86,6 +87,7 @@ export class QueryDiscoveryVendorsDto extends PaginatedDiscoveryQuery {
   @IsOptional()
   @Transform(trimValue)
   @IsString()
+  @MinLength(2)
   @MaxLength(DISCOVERY_MAX_QUERY_LENGTH)
   q?: string;
 
@@ -104,6 +106,7 @@ export class QueryDiscoveryVenuesDto extends PaginatedDiscoveryQuery {
   @IsOptional()
   @Transform(trimValue)
   @IsString()
+  @MinLength(2)
   @MaxLength(DISCOVERY_MAX_QUERY_LENGTH)
   q?: string;
 
