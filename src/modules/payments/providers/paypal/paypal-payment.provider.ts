@@ -10,8 +10,8 @@ import { PayPalHttpClient } from './paypal-http.client';
 import { PayPalOrdersApi } from './paypal-orders.api';
 import { fromPayPalValue } from './paypal-money';
 import { PayPalCaptureState, PayPalOrderSnapshot, PayPalOrderState } from './paypal.types';
+import { isAllowedHost } from '../../../../shared/utils/host-matching';
 
-export const PAYPAL_LIVE_MODE_REFUSED = 'PAYPAL_LIVE_MODE_REFUSED';
 export const PAYPAL_APPROVAL_URL_MISSING = 'PAYPAL_APPROVAL_URL_MISSING';
 
 /**
@@ -21,12 +21,12 @@ export const PAYPAL_APPROVAL_URL_MISSING = 'PAYPAL_APPROVAL_URL_MISSING';
  * `TicketHold`, ni stock, ni admission. Elle traduit dans les deux sens entre
  * l'API Orders v2 et les types agnostiques du domaine.
  *
- * SANDBOX UNIQUEMENT (Vague 6)
- * ----------------------------
- * `assertSandbox()` refuse toute opération si l'environnement résolu n'est pas
- * `sandbox`. C'est un garde-fou de vague, en plus de celui de la configuration
- * (qui refuse `PAYPAL_ENV=live` dans tous les environnements). Aucun paiement réel
- * n'est atteignable tant que ce garde est en place.
+ * ENVIRONNEMENT
+ * -------------
+ * L'adaptateur ne sait PAS s'il parle à Sandbox ou à Live : il consomme
+ * `http.config`, dont l'hôte API et les hôtes d'approbation sont dérivés de
+ * `PAYPAL_ENV` en un seul endroit. Basculer d'un environnement à l'autre ne
+ * demande donc aucune modification de ce fichier.
  *
  * SÉMANTIQUE DES ÉTATS
  * --------------------
@@ -49,16 +49,7 @@ export class PayPalPaymentProvider implements PaymentProvider {
     return this.http.enabled;
   }
 
-  /** Garde-fou de vague : aucune opération hors Sandbox. */
-  private assertSandbox(): void {
-    if (this.http.config.environment !== 'sandbox') {
-      throw new ServiceUnavailableException(PAYPAL_LIVE_MODE_REFUSED);
-    }
-  }
-
   async createPayment(input: CreatePaymentInput): Promise<PaymentHandle> {
-    this.assertSandbox();
-
     const snapshot = await this.orders.createOrder({
       orderId: input.orderId,
       // Le montant vient EXCLUSIVEMENT du TicketOrder serveur.
@@ -72,8 +63,16 @@ export class PayPalPaymentProvider implements PaymentProvider {
     }
     // Sans URL d'approbation, l'acheteur ne peut rien faire : on échoue tôt
     // plutôt que de laisser une commande bloquée en attente.
-    if (!snapshot.approvalUrl || !isTrustedSandboxApprovalUrl(snapshot.approvalUrl)) {
-      this.logger.error("PayPal n'a pas fourni de lien d'approbation Sandbox valide");
+    // L'URL doit appartenir aux hôtes de l'environnement COURANT : une URL
+    // Live reçue en Sandbox (ou l'inverse) signale une confusion de
+    // configuration et n'est jamais suivie.
+    if (
+      !snapshot.approvalUrl ||
+      !isTrustedApprovalUrl(snapshot.approvalUrl, this.http.config.approvalHosts)
+    ) {
+      this.logger.error(
+        `PayPal n'a pas fourni de lien d'approbation valide pour l'environnement ${this.http.config.environment}`,
+      );
       throw new ServiceUnavailableException(PAYPAL_APPROVAL_URL_MISSING);
     }
 
@@ -81,7 +80,6 @@ export class PayPalPaymentProvider implements PaymentProvider {
   }
 
   async getPaymentStatus(reference: string): Promise<ProviderPaymentStatus> {
-    this.assertSandbox();
     const snapshot = await this.orders.getOrder(reference);
     return mapSnapshotToStatus(snapshot);
   }
@@ -94,8 +92,6 @@ export class PayPalPaymentProvider implements PaymentProvider {
    * PayPal renvoie l'état existant, que l'on relit.
    */
   async confirmPayment(input: { reference: string; orderId: string }): Promise<PaymentHandle> {
-    this.assertSandbox();
-
     let snapshot: PayPalOrderSnapshot;
     try {
       snapshot = await this.orders.captureOrder(input.reference, input.orderId);
@@ -118,7 +114,6 @@ export class PayPalPaymentProvider implements PaymentProvider {
    * jamais échouer — l'annulation doit être idempotente.
    */
   async cancelPayment(reference: string): Promise<void> {
-    if (this.http.config.environment !== 'sandbox') return;
     try {
       await this.orders.getOrder(reference);
     } catch {
@@ -153,11 +148,20 @@ export class PayPalPaymentProvider implements PaymentProvider {
   }
 }
 
-/** La Vague 6 ne redirige que vers l'interface acheteur PayPal Sandbox. */
-export function isTrustedSandboxApprovalUrl(value: string): boolean {
+/**
+ * L'URL d'approbation acheteur doit être en HTTPS et appartenir aux hôtes de
+ * l'environnement PayPal courant.
+ *
+ * `isAllowedHost` compare exactement : `paypal.com.attacker.tld` et
+ * `fakepaypal.com` sont refusés, et surtout un hôte Sandbox est refusé en
+ * configuration Live — `www.sandbox.paypal.com` étant un sous-domaine de
+ * `paypal.com`, une comparaison par domaine ne cloisonnerait pas les deux
+ * environnements.
+ */
+export function isTrustedApprovalUrl(value: string, approvalHosts: readonly string[]): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' && /(^|\.)sandbox\.paypal\.com$/.test(url.hostname);
+    return url.protocol === 'https:' && isAllowedHost(url.hostname, approvalHosts);
   } catch {
     return false;
   }
