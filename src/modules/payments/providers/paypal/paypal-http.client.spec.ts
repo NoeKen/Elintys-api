@@ -33,8 +33,8 @@ const LIVE_CONFIG = resolvePayPalConfig(
   {
     enabled: 'true',
     environment: 'live',
-    clientId: 'live-client',
-    clientSecret: 'live-super-secret',
+    clientId: 'FAKE-live-client-not-a-credential',
+    clientSecret: 'FAKE-live-secret-not-a-credential',
     webhookId: 'WH-LIVE',
   },
   'prod',
