@@ -11,6 +11,7 @@ import { ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { NotificationsService } from './notifications.service';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
+import { QueryNotificationsDto } from './dto/query-notifications.dto';
 
 @ApiTags('Notifications')
 @Controller('notifications')
@@ -34,12 +35,11 @@ export class NotificationsController {
   @ApiQuery({ name: 'page', required: false, type: Number })
   findMine(
     @CurrentUser() user: JwtPayload,
-    @Query('unreadOnly') unreadOnly?: string,
-    @Query('page') page?: string,
+    @Query() query: QueryNotificationsDto,
   ) {
     return this.notificationsService.findByUser(user.sub, {
-      unreadOnly: unreadOnly === 'true',
-      page: page ? parseInt(page, 10) : 1,
+      unreadOnly: query.unreadOnly ?? false,
+      page: query.page ?? 1,
     });
   }
 
