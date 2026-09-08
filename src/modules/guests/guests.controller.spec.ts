@@ -49,15 +49,15 @@ describe('GuestsController', () => {
     it('délègue à guestsService.findAll avec les paramètres par défaut', async () => {
       mockGuestsService.findAll.mockResolvedValue({ data: [], total: 0 });
 
-      await controller.findAll('event-id', mockUser as never, undefined, undefined);
+      await controller.findAll('event-id', mockUser as never, {});
 
       expect(mockGuestsService.findAll).toHaveBeenCalledWith('event-id', mockUser.sub, 1, 50, mockUser.roles);
     });
 
-    it('passe les valeurs de page et limit parsées', async () => {
+    it('passe les valeurs de page et limit validées', async () => {
       mockGuestsService.findAll.mockResolvedValue({ data: [], total: 0 });
 
-      await controller.findAll('event-id', mockUser as never, '2', '25');
+      await controller.findAll('event-id', mockUser as never, { page: 2, limit: 25 });
 
       expect(mockGuestsService.findAll).toHaveBeenCalledWith('event-id', mockUser.sub, 2, 25, mockUser.roles);
     });

@@ -7,6 +7,7 @@ import { BulkCreateGuestDto } from './dto/bulk-create-guest.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { Roles, Role } from '../../shared/decorators/roles.decorator';
+import { QueryGuestsDto } from './dto/query-guests.dto';
 
 @ApiTags('Guests')
 @ApiBearerAuth('access-token')
@@ -53,14 +54,13 @@ export class GuestsController {
   findAll(
     @Param('eventId', ParseObjectIdPipe) eventId: string,
     @CurrentUser() user: JwtPayload,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
+    @Query() query: QueryGuestsDto,
   ) {
     return this.guestsService.findAll(
       eventId,
       user.sub,
-      page ? parseInt(page, 10) : 1,
-      limit ? parseInt(limit, 10) : 50,
+      query.page ?? 1,
+      query.limit ?? 50,
       user.roles,
     );
   }
