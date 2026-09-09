@@ -19,6 +19,8 @@ import { createHash, randomBytes } from 'crypto';
 import { AdmissionMode, Event, EventDocument, EventStatus } from '../events/event.schema';
 import { canManageEvent } from '../events/event-access.policy';
 import { QueryEventInvitationsDto } from './dto/query-event-invitations.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/notification.schema';
 
 export interface OrganizerInvitationDto {
   _id: string;
@@ -68,6 +70,7 @@ export class InvitationsService {
     private readonly eventModel: Model<EventDocument>,
     private readonly emailsService: EmailsService,
     private readonly configService: ConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   async sendInvitation(
@@ -160,6 +163,19 @@ export class InvitationsService {
     if (!invitation) {
       throw new NotFoundException(ErrorCodes.INVITATION_NOT_FOUND);
     }
+
+    if (invitation.invitedBy) {
+      this.notificationsService.create(
+        invitation.invitedBy.toString(),
+        NotificationType.INVITATION_ACCEPTED,
+        {
+          invitationId: invitation._id.toString(),
+          ...(invitation.eventId ? { eventId: invitation.eventId.toString() } : {}),
+          inviteeName: invitation.name,
+        },
+      ).catch(() => undefined);
+    }
+
     const serialized = typeof invitation.toObject === 'function'
       ? invitation.toObject()
       : invitation;

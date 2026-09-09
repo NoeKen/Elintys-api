@@ -5,6 +5,7 @@ import { InvitationsService } from './invitations.service';
 import { InvitationsController } from './invitations.controller';
 import { User, UserSchema } from '../auth/user.schema';
 import { Event, EventSchema } from '../events/event.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { Event, EventSchema } from '../events/event.schema';
       { name: User.name, schema: UserSchema },
       { name: Event.name, schema: EventSchema },
     ]),
+    NotificationsModule,
   ],
   providers: [InvitationsService],
   controllers: [InvitationsController],

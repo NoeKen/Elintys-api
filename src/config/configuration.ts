@@ -53,6 +53,10 @@ export default () => {
     },
     email: {
       from: process.env.EMAIL_FROM ?? 'Elintys <no-reply@elintys.com>',
+      // Les E2E système valident les producteurs et l'UI sans envoyer de
+      // courriels réels à leurs adresses fixtures. Le transport reste actif
+      // par défaut dans tous les environnements.
+      enabled: process.env.EMAIL_DELIVERY_ENABLED !== 'false',
     },
     cloudinary: {
       cloudName: process.env.CLOUDINARY_CLOUD_NAME,
