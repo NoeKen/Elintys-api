@@ -14,6 +14,9 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
+import { NotificationType } from '../notifications/notification.schema';
+
+const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -37,6 +40,7 @@ describe('VenuesService', () => {
   let venueModel: Record<string, jest.Mock>;
   let venueBookingModel: Record<string, jest.Mock>;
   let notificationsService: Record<string, jest.Mock>;
+  let emailsService: Record<string, jest.Mock>;
   let eventModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
@@ -96,6 +100,10 @@ describe('VenuesService', () => {
     venueBookingModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockBooking()));
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+    emailsService = {
+      sendVenueBookingRequest: jest.fn().mockResolvedValue(undefined),
+      sendVenueBookingUpdate: jest.fn().mockResolvedValue(undefined),
+    };
 
     testingModule = await Test.createTestingModule({
       providers: [
@@ -105,7 +113,7 @@ describe('VenuesService', () => {
         { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: NotificationsService, useValue: notificationsService },
-        { provide: EmailsService, useValue: { sendVenueBookingUpdate: jest.fn().mockResolvedValue(undefined) } },
+        { provide: EmailsService, useValue: emailsService },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
@@ -246,6 +254,37 @@ describe('VenuesService', () => {
         expect.objectContaining({ status: VenueBookingStatus.PENDING }),
       );
       expect(result).toBeDefined();
+    });
+
+    it('notifie le gestionnaire avec un contexte contrôlé après la création', async () => {
+      venueBookingModel.create.mockResolvedValue(mockBooking());
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+
+      await service.requestBooking(eventId, userId, dto as never);
+      await flushAsync();
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        userId,
+        NotificationType.VENUE_BOOKING_RECEIVED,
+        expect.objectContaining({ bookingId, eventId, eventTitle: 'Test Event' }),
+      );
+    });
+
+    it('envoie au gestionnaire le courriel de la demande créée', async () => {
+      venueBookingModel.create.mockResolvedValue(mockBooking());
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+
+      await service.requestBooking(eventId, userId, dto as never);
+      await flushAsync();
+
+      expect(emailsService.sendVenueBookingRequest).toHaveBeenCalledWith(
+        'org@test.com',
+        expect.objectContaining({
+          venueName: 'Salle des Mille Étoiles',
+          eventTitle: 'Test Event',
+          requestUrl: 'http://localhost:3000/tableau-de-bord/gestionnaire/reservations',
+        }),
+      );
     });
 
     it('devrait lever BadRequestException si bookingEnd <= bookingStart', async () => {
@@ -413,6 +452,21 @@ describe('VenuesService', () => {
       ];
       expect(update.responseMessage).toBe('Salle disponible');
       expect(update.respondedAt).toBeInstanceOf(Date);
+    });
+
+    it("inclut l'événement dans la notification de réponse pour construire un deep link sûr", async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockBooking({ status: VenueBookingStatus.CONFIRMED })),
+      );
+
+      await service.respondToBooking(bookingId, userId, confirmDto);
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        userId,
+        NotificationType.VENUE_CONFIRMED,
+        expect.objectContaining({ bookingId, eventId, status: VenueBookingStatus.CONFIRMED }),
+      );
     });
 
     it("lève NotFoundException si le gestionnaire n'a pas de fiche", async () => {

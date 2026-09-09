@@ -102,7 +102,7 @@ describe('VendorsService', () => {
 
     notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
     emailsService = {
-      sendRequestAccepted: jest.fn().mockResolvedValue(undefined),
+      sendVendorRequestUpdate: jest.fn().mockResolvedValue(undefined),
       sendNewRequest: jest.fn().mockResolvedValue(undefined),
     };
 
@@ -456,6 +456,39 @@ describe('VendorsService', () => {
       ];
       expect(update.responseMessage).toBe('Avec plaisir');
       expect(update.respondedAt).toBeInstanceOf(Date);
+    });
+
+    it("inclut l'événement dans la notification de réponse pour construire un deep link sûr", async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockRequest({ status: VendorRequestStatus.ACCEPTED })),
+      );
+
+      await service.respondToRequest(requestId, userId, acceptDto);
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        userId,
+        NotificationType.VENDOR_RESPONDED,
+        expect.objectContaining({ requestId, eventId, status: VendorRequestStatus.ACCEPTED }),
+      );
+    });
+
+    it.each([
+      VendorRequestStatus.ACCEPTED,
+      VendorRequestStatus.DECLINED,
+    ])('envoie un courriel à l’organisateur après une réponse %s', async (status) => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockRequest({ status })),
+      );
+
+      await service.respondToRequest(requestId, userId, { status } as never);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(emailsService.sendVendorRequestUpdate).toHaveBeenCalledWith(
+        'org@test.com',
+        expect.objectContaining({ status, eventTitle: 'Test Event' }),
+      );
     });
 
     it("devrait lever NotFoundException si le prestataire n'a pas de profil", async () => {

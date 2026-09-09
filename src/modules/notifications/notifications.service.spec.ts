@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
+import { NotFoundException } from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { Notification, NotificationType } from './notification.schema';
 
@@ -98,7 +99,7 @@ describe('NotificationsService', () => {
   describe('markRead', () => {
     it('devrait mettre à jour read à true pour une notification', async () => {
       mockNotificationModel.findOneAndUpdate.mockReturnValue({
-        exec: jest.fn().mockResolvedValueOnce(null),
+        exec: jest.fn().mockResolvedValueOnce({ _id: new Types.ObjectId() }),
       });
 
       await service.markRead(new Types.ObjectId().toString(), mockUserId);
@@ -110,6 +111,16 @@ describe('NotificationsService', () => {
         }),
         { read: true },
       );
+    });
+
+    it("refuse sans révéler l'existence lorsqu'une notification n'appartient pas au compte", async () => {
+      mockNotificationModel.findOneAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValueOnce(null),
+      });
+
+      await expect(
+        service.markRead(new Types.ObjectId().toString(), mockUserId),
+      ).rejects.toThrow(NotFoundException);
     });
   });
 

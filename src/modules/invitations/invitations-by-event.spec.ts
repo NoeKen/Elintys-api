@@ -12,6 +12,7 @@ import { Invitation, InvitationType } from './invitation.schema';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
+import { NotificationsService } from '../notifications/notifications.service';
 
 let testingModule: TestingModule;
 afterEach(async () => {
@@ -60,6 +61,10 @@ describe('InvitationsService.findByEvent', () => {
         {
           provide: ConfigService,
           useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') },
+        },
+        {
+          provide: NotificationsService,
+          useValue: { create: jest.fn().mockResolvedValue(undefined) },
         },
       ],
     }).compile();

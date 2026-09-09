@@ -13,6 +13,8 @@ import { Invitation, InvitationType } from './invitation.schema';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event } from '../events/event.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/notification.schema';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -35,6 +37,7 @@ describe('InvitationsService', () => {
   let service: InvitationsService;
   const eventModel = { findById: jest.fn() };
   const userModel = { findById: jest.fn() };
+  const notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
 
   beforeEach(async () => {
     testingModule = await Test.createTestingModule({
@@ -44,6 +47,7 @@ describe('InvitationsService', () => {
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: EmailsService, useValue: { sendInvitationEmail: jest.fn().mockResolvedValue(undefined) } },
+        { provide: NotificationsService, useValue: notificationsService },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
       ],
     }).compile();
@@ -317,6 +321,34 @@ describe('InvitationsService', () => {
         expect.objectContaining({ status: 'pending' }),
         expect.objectContaining({ $inc: { useCount: 1 } }),
         { new: true },
+      );
+    });
+
+    it("notifie l'organisateur une seule fois après une acceptation atomique", async () => {
+      const invitationId = new Types.ObjectId();
+      const eventId = new Types.ObjectId();
+      const mockInvitation = {
+        _id: invitationId,
+        invitedBy: new Types.ObjectId(mockInvitedById),
+        eventId,
+        name: 'Participant QA',
+        status: 'accepted',
+        toObject() { return { ...this }; },
+      };
+      mockInvitationModel.findOneAndUpdate.mockReturnValue({
+        exec: jest.fn().mockResolvedValueOnce(mockInvitation),
+      });
+
+      await service.acceptInvitation('valid-token');
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        mockInvitedById,
+        NotificationType.INVITATION_ACCEPTED,
+        {
+          invitationId: invitationId.toString(),
+          eventId: eventId.toString(),
+          inviteeName: 'Participant QA',
+        },
       );
     });
   });
