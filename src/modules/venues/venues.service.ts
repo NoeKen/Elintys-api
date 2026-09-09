@@ -136,8 +136,8 @@ export class VenuesService {
     if (end <= start) throw new BadRequestException(ErrorCodes.INVALID_DATE_RANGE);
 
     const [event, venue] = await Promise.all([
-      this.eventModel.findById(eventId).lean().select('organizer'),
-      this.venueModel.findOne({ _id: dto.venueId, isActive: true }).lean().select('_id'),
+      this.eventModel.findById(eventId).lean().select('organizer title'),
+      this.venueModel.findOne({ _id: dto.venueId, isActive: true }).lean().select('_id user name'),
     ]);
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId: organizerId, roles }, event).allowed) {
@@ -155,7 +155,51 @@ export class VenuesService {
       totalPrice: dto.totalPrice,
       status: VenueBookingStatus.PENDING,
     });
+
+    this.announceBookingRequest({
+      bookingId: booking._id.toString(),
+      eventId,
+      eventTitle: event.title,
+      organizerId,
+      venueUserId: venue.user.toString(),
+      venueName: venue.name,
+    }).catch(() => undefined);
+
     return booking.toObject();
+  }
+
+  private async announceBookingRequest(input: {
+    bookingId: string;
+    eventId: string;
+    eventTitle: string;
+    organizerId: string;
+    venueUserId: string;
+    venueName: string;
+  }): Promise<void> {
+    await this.notificationsService.create(
+      input.venueUserId,
+      NotificationType.VENUE_BOOKING_RECEIVED,
+      {
+        bookingId: input.bookingId,
+        eventId: input.eventId,
+        eventTitle: input.eventTitle,
+      },
+    ).catch(() => undefined);
+
+    const [organizer, manager] = await Promise.all([
+      this.userModel.findById(input.organizerId).lean().select('fullName'),
+      this.userModel.findById(input.venueUserId).lean().select('email fullName'),
+    ]);
+    if (!organizer || !manager?.email) return;
+
+    const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
+    await this.emailsService.sendVenueBookingRequest(manager.email, {
+      managerName: manager.fullName,
+      organizerName: organizer.fullName,
+      venueName: input.venueName,
+      eventTitle: input.eventTitle,
+      requestUrl: `${frontendUrl}/tableau-de-bord/gestionnaire/reservations`,
+    });
   }
 
   async listBookingsByEvent(eventId: string, userId: string, roles: string[] = []): Promise<VenueBooking[]> {
@@ -214,7 +258,11 @@ export class VenuesService {
 
     const organizerId = (updated.organizer as Types.ObjectId).toString();
     this.notificationsService
-      .create(organizerId, NotificationType.VENUE_CONFIRMED, { bookingId, status: dto.status })
+      .create(organizerId, NotificationType.VENUE_CONFIRMED, {
+        bookingId,
+        eventId: (updated.event as Types.ObjectId).toString(),
+        status: dto.status,
+      })
       .catch(() => undefined);
 
     const emailStatus = dto.status === VenueBookingStatus.CONFIRMED ? 'confirmed' : 'refused';

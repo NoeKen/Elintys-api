@@ -1,4 +1,4 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, NotFoundException, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { NotificationsController } from '../src/modules/notifications/notifications.controller';
@@ -66,5 +66,20 @@ describe('Notifications HTTP routing contract (e2e)', () => {
       .expect(400);
 
     expect(notificationsService.findByUser).not.toHaveBeenCalled();
+  });
+
+  it('rejette un identifiant de notification invalide avant le service', async () => {
+    await request(app.getHttpServer()).patch('/notifications/not-an-object-id/read').expect(400);
+    expect(notificationsService.markRead).not.toHaveBeenCalled();
+  });
+
+  it("ne révèle pas une notification absente ou appartenant à un autre compte", async () => {
+    notificationsService.markRead.mockRejectedValueOnce(
+      new NotFoundException('NOTIFICATION_NOT_FOUND'),
+    );
+
+    await request(app.getHttpServer())
+      .patch('/notifications/507f1f77bcf86cd799439012/read')
+      .expect(404);
   });
 });

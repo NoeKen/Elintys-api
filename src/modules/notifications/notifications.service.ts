@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { FlattenMaps, Model, Types } from 'mongoose';
 import { Notification, NotificationDocument, NotificationType } from './notification.schema';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 
 @Injectable()
 export class NotificationsService {
@@ -44,7 +45,7 @@ export class NotificationsService {
   }
 
   async markRead(notificationId: string, userId: string): Promise<void> {
-    await this.notificationModel
+    const notification = await this.notificationModel
       .findOneAndUpdate(
         {
           _id: new Types.ObjectId(notificationId),
@@ -53,6 +54,7 @@ export class NotificationsService {
         { read: true },
       )
       .exec();
+    if (!notification) throw new NotFoundException(ErrorCodes.NOTIFICATION_NOT_FOUND);
   }
 
   async markAllRead(userId: string): Promise<void> {

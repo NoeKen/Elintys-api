@@ -313,24 +313,28 @@ export class VendorsService {
     const organizerId = (updated.organizer as Types.ObjectId).toString();
 
     this.notificationsService
-      .create(organizerId, NotificationType.VENDOR_RESPONDED, { requestId, status: dto.status })
+      .create(organizerId, NotificationType.VENDOR_RESPONDED, {
+        requestId,
+        eventId: (updated.event as Types.ObjectId).toString(),
+        status: dto.status,
+      })
       .catch(() => undefined);
 
-    if (dto.status === VendorRequestStatus.ACCEPTED) {
-      const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
-      Promise.all([
-        this.userModel.findById(organizerId).lean().select('email fullName'),
-        this.eventModel.findById((updated.event as Types.ObjectId).toString()).lean().select('title'),
-      ]).then(([organizer, event]) => {
-        if (!organizer || !event) return;
-        return this.emailsService.sendRequestAccepted(organizer.email, {
-          vendorName: vendorProfile.businessName,
-          organizerName: organizer.fullName,
-          eventTitle: event.title,
-          eventUrl: `${frontendUrl}/tableau-de-bord/evenements`,
-        });
-      }).catch(() => undefined);
-    }
+    const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
+    const eventId = (updated.event as Types.ObjectId).toString();
+    Promise.all([
+      this.userModel.findById(organizerId).lean().select('email fullName'),
+      this.eventModel.findById(eventId).lean().select('title'),
+    ]).then(([organizer, event]) => {
+      if (!organizer || !event) return;
+      return this.emailsService.sendVendorRequestUpdate(organizer.email, {
+        vendorName: vendorProfile.businessName,
+        organizerName: organizer.fullName,
+        eventTitle: event.title,
+        status: dto.status,
+        eventUrl: `${frontendUrl}/tableau-de-bord/evenements/${eventId}/prestataires`,
+      });
+    }).catch(() => undefined);
 
     return updated;
   }
