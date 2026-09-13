@@ -111,6 +111,16 @@ describe('AuthService', () => {
 
   // ── register ──
   describe('register', () => {
+    it('refuse ADMIN même si la validation HTTP est contournée', async () => {
+      await expect(service.register({
+        fullName: 'Attaquant Test',
+        email: 'attaquant@test.com',
+        password: 'motdepasse123',
+        roles: [UserRole.ADMIN],
+      })).rejects.toThrow(ErrorCodes.ROLE_NOT_ADDABLE);
+      expect(userModel.create).not.toHaveBeenCalled();
+    });
+
     it('crée un utilisateur et retourne accessToken + user', async () => {
       userModel.findOne.mockReturnValue(makeChainable(null));
       userModel.create.mockResolvedValue(mockUser);

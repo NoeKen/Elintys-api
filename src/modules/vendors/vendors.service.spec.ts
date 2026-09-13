@@ -38,6 +38,7 @@ describe('VendorsService', () => {
   let vendorRequestModel: Record<string, jest.Mock>;
   let notificationsService: Record<string, jest.Mock>;
   let emailsService: Record<string, jest.Mock>;
+  let userModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
   const vendorUserId = new Types.ObjectId().toString();
@@ -105,13 +106,18 @@ describe('VendorsService', () => {
       sendVendorRequestUpdate: jest.fn().mockResolvedValue(undefined),
       sendNewRequest: jest.fn().mockResolvedValue(undefined),
     };
+    userModel = {
+      findById: jest.fn().mockReturnValue(
+        makeChainable({ email: 'org@test.com', fullName: 'Org' }),
+      ),
+    };
 
     testingModule = await Test.createTestingModule({
       providers: [
         VendorsService,
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
         { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
-        { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
+        { provide: getModelToken(User.name), useValue: userModel },
         {
           provide: getModelToken(Event.name),
           useValue: {
@@ -303,6 +309,30 @@ describe('VendorsService', () => {
       );
     });
 
+    it('conserve la notification in-app mais respecte le refus de courriel du prestataire', async () => {
+      const dto = { vendorId, source: VendorRequestSource.PLATFORM, message: 'Bonjour' };
+      vendorRequestModel.create.mockResolvedValue(mockRequest());
+      vendorModel.findById.mockReturnValue(
+        makeChainable(mockVendor({ user: { toString: () => vendorUserId } })),
+      );
+      userModel.findById
+        .mockReturnValueOnce(makeChainable({ fullName: 'Org' }))
+        .mockReturnValueOnce(makeChainable({
+          email: 'vendor@test.com',
+          emailNotifications: { vendorRequestReceived: false },
+        }));
+
+      await service.createRequest(eventId, userId, dto);
+      await flushAsync();
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        vendorUserId,
+        NotificationType.VENDOR_REQUEST_RECEIVED,
+        expect.any(Object),
+      );
+      expect(emailsService.sendNewRequest).not.toHaveBeenCalled();
+    });
+
     it('devrait envoyer un courriel au contact externe sans créer de notification', async () => {
       const externalContact = { name: 'Jean Photo', email: 'jean@example.com' };
       const dto = { source: VendorRequestSource.MANUAL, externalContact };
@@ -489,6 +519,24 @@ describe('VendorsService', () => {
         'org@test.com',
         expect.objectContaining({ status, eventTitle: 'Test Event' }),
       );
+    });
+
+    it('conserve la notification in-app mais respecte le refus de courriel de réponse', async () => {
+      vendorModel.findOne.mockReturnValue(myProfile());
+      vendorRequestModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockRequest({ status: VendorRequestStatus.ACCEPTED })),
+      );
+      userModel.findById.mockReturnValue(makeChainable({
+        email: 'org@test.com',
+        fullName: 'Org',
+        emailNotifications: { vendorResponse: false },
+      }));
+
+      await service.respondToRequest(requestId, userId, acceptDto);
+      await flushAsync();
+
+      expect(notificationsService.create).toHaveBeenCalledTimes(1);
+      expect(emailsService.sendVendorRequestUpdate).not.toHaveBeenCalled();
     });
 
     it("devrait lever NotFoundException si le prestataire n'a pas de profil", async () => {

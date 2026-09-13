@@ -25,6 +25,11 @@ const mockAuthService = {
   resetPassword:       jest.fn(),
   verifyEmail:         jest.fn(),
   resendVerification:  jest.fn(),
+  resendVerificationForUser: jest.fn(),
+  updateProfile: jest.fn(),
+  changePassword: jest.fn(),
+  updateNotificationPreferences: jest.fn(),
+  addRole: jest.fn(),
 };
 
 const mockConfigService = {
@@ -162,6 +167,83 @@ describe('AuthController', () => {
 
       expect(mockAuthService.getMe).toHaveBeenCalledWith(mockUser.sub);
       expect(result).toEqual(mockProfile);
+    });
+  });
+
+  describe('account settings', () => {
+    it('met à jour le profil à partir de l’identité serveur', async () => {
+      const dto = { firstName: 'Jean', lastName: 'Tremblay' };
+      mockAuthService.updateProfile.mockResolvedValue({ fullName: 'Jean Tremblay' });
+
+      await expect(controller.updateProfile(mockUser as JwtPayload, dto)).resolves.toEqual({
+        user: { fullName: 'Jean Tremblay' },
+      });
+      expect(mockAuthService.updateProfile).toHaveBeenCalledWith(mockUser.sub, dto);
+    });
+
+    it('révoque les cookies après un changement de mot de passe', async () => {
+      const res = mockResponse();
+      const dto = { currentPassword: 'AncienSecret1!', newPassword: 'NouveauSecret2!' };
+      mockAuthService.changePassword.mockResolvedValue(undefined);
+
+      await controller.changePassword(mockUser as JwtPayload, dto, res as Response);
+
+      expect(mockAuthService.changePassword).toHaveBeenCalledWith(mockUser.sub, dto);
+      expect(res.clearCookie).toHaveBeenCalledWith('access_token', expect.any(Object));
+      expect(res.clearCookie).toHaveBeenCalledWith('refresh_token', expect.any(Object));
+    });
+
+    it('met à jour les préférences à partir de l’identité serveur', async () => {
+      const dto = { vendorResponse: false };
+      mockAuthService.updateNotificationPreferences.mockResolvedValue({
+        emailNotifications: dto,
+      });
+
+      await controller.updateNotificationPreferences(mockUser as JwtPayload, dto);
+
+      expect(mockAuthService.updateNotificationPreferences).toHaveBeenCalledWith(mockUser.sub, dto);
+    });
+
+    it('ajoute un rôle et renouvelle seulement le cookie d’accès', async () => {
+      const res = mockResponse();
+      mockAuthService.addRole.mockResolvedValue({
+        accessToken: 'new-access',
+        user: { roles: ['participant', 'prestataire'] },
+      });
+
+      const result = await controller.addRole(
+        mockUser as JwtPayload,
+        { role: 'prestataire' } as never,
+        res as Response,
+      );
+
+      expect(mockAuthService.addRole).toHaveBeenCalledWith(mockUser.sub, 'prestataire');
+      expect(res.cookie).toHaveBeenCalledWith('access_token', 'new-access', expect.any(Object));
+      expect(res.cookie).not.toHaveBeenCalledWith('refresh_token', expect.anything(), expect.any(Object));
+      expect(result.user).toEqual({ roles: ['participant', 'prestataire'] });
+    });
+
+    it('ne remplace pas un cookie gagnant lors du rejeu idempotent concurrent', async () => {
+      const res = mockResponse();
+      mockAuthService.addRole.mockResolvedValue({
+        user: { roles: ['participant', 'prestataire'] },
+      });
+
+      await controller.addRole(
+        mockUser as JwtPayload,
+        { role: 'prestataire' } as never,
+        res as Response,
+      );
+
+      expect(res.cookie).not.toHaveBeenCalled();
+    });
+
+    it('renvoie une vérification sans accepter une adresse fournie par le client', async () => {
+      mockAuthService.resendVerificationForUser.mockResolvedValue(undefined);
+
+      await controller.resendMyVerification(mockUser as JwtPayload);
+
+      expect(mockAuthService.resendVerificationForUser).toHaveBeenCalledWith(mockUser.sub);
     });
   });
 

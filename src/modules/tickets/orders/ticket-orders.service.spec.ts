@@ -93,6 +93,8 @@ function buildHarness(
       accessPolicy: { type: 'open' },
       admissionModes: options.admissionModes ?? ['paid_ticket'],
       accessModelVersion: 2,
+      title: 'Événement test',
+      slug: 'evenement-test',
     },
   ]);
   const orders = mongo.collection('ticket_orders');
@@ -689,6 +691,10 @@ describe('TicketOrdersService — lecture et contrôle de propriété', () => {
     expect(page.total).toBe(2);
     expect(page.data).toHaveLength(1);
     expect(page.limit).toBe(1);
+    expect(page.data[0]).toMatchObject({
+      createdAt: expect.any(String),
+      eventSummary: { title: 'Événement test', slug: 'evenement-test' },
+    });
   });
 
   it('devrait signaler une commande inexistante', async () => {
