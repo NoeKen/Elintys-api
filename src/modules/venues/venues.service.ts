@@ -188,9 +188,10 @@ export class VenuesService {
 
     const [organizer, manager] = await Promise.all([
       this.userModel.findById(input.organizerId).lean().select('fullName'),
-      this.userModel.findById(input.venueUserId).lean().select('email fullName'),
+      this.userModel.findById(input.venueUserId).lean().select('email fullName emailNotifications'),
     ]);
     if (!organizer || !manager?.email) return;
+    if (manager.emailNotifications?.venueBookingReceived === false) return;
 
     const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
     await this.emailsService.sendVenueBookingRequest(manager.email, {
@@ -267,10 +268,11 @@ export class VenuesService {
 
     const emailStatus = dto.status === VenueBookingStatus.CONFIRMED ? 'confirmed' : 'refused';
     Promise.all([
-      this.userModel.findById(organizerId).lean().select('email fullName'),
+      this.userModel.findById(organizerId).lean().select('email fullName emailNotifications'),
       this.eventModel.findById((updated.event as Types.ObjectId).toString()).lean().select('title'),
     ]).then(([organizer, event]) => {
       if (!organizer || !event) return;
+      if (organizer.emailNotifications?.venueResponse === false) return;
       return this.emailsService.sendVenueBookingUpdate(organizer.email, {
         fullName: organizer.fullName,
         venueName: venueProfile.name,

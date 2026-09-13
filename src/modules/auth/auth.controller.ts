@@ -24,6 +24,10 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { SaveOnboardingDto } from './dto/save-onboarding.dto';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
+import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
+import { AddRoleDto } from './dto/add-role.dto';
 import { Public } from '../../shared/decorators/public.decorator';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 
@@ -61,6 +65,10 @@ export class AuthController {
   private setAuthCookies(res: Response, accessToken: string, refreshToken: string): void {
     res.cookie('access_token', accessToken, this.accessCookieOptions);
     res.cookie('refresh_token', refreshToken, this.refreshCookieOptions);
+  }
+
+  private setAccessCookie(res: Response, accessToken: string): void {
+    res.cookie('access_token', accessToken, this.accessCookieOptions);
   }
 
   @Public()
@@ -128,6 +136,64 @@ export class AuthController {
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   async getMe(@CurrentUser() user: JwtPayload) {
     return this.authService.getMe(user.sub);
+  }
+
+  @Patch('me/profile')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Modifier les champs publics autorisés de mon profil' })
+  async updateProfile(@CurrentUser() user: JwtPayload, @Body() dto: UpdateProfileDto) {
+    return { user: await this.authService.updateProfile(user.sub, dto) };
+  }
+
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @Post('me/change-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Changer mon mot de passe et révoquer ma session' })
+  async changePassword(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: ChangePasswordDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ message: string }> {
+    await this.authService.changePassword(user.sub, dto);
+    res.clearCookie('access_token', this.sharedCookieOptions);
+    res.clearCookie('refresh_token', this.sharedCookieOptions);
+    return { message: 'Mot de passe modifié. Reconnectez-vous.' };
+  }
+
+  @Patch('me/notification-preferences')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Modifier mes préférences de courriels métier' })
+  async updateNotificationPreferences(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateNotificationPreferencesDto,
+  ) {
+    return { user: await this.authService.updateNotificationPreferences(user.sub, dto) };
+  }
+
+  @Post('me/roles')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Ajouter un rôle métier autorisé à mon compte' })
+  async addRole(
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: AddRoleDto,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<{ user: object }> {
+    const result = await this.authService.addRole(user.sub, dto.role);
+    if (result.accessToken) {
+      // Le refresh token existant reste valide. Sa prochaine rotation relira
+      // les rôles depuis la base, ce qui évite une course entre deux ajouts.
+      this.setAccessCookie(res, result.accessToken);
+    }
+    return { user: result.user };
+  }
+
+  @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @Post('me/resend-verification')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Renvoyer la vérification à mon adresse authentifiée' })
+  async resendMyVerification(@CurrentUser() user: JwtPayload): Promise<{ message: string }> {
+    await this.authService.resendVerificationForUser(user.sub);
+    return { message: 'Un lien a été envoyé si votre adresse doit encore être vérifiée.' };
   }
 
   @Patch('onboarding/:role')

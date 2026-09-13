@@ -14,7 +14,13 @@ import { SignOptions } from 'jsonwebtoken';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { User, UserDocument, UserRole } from './user.schema';
+import {
+  DEFAULT_EMAIL_NOTIFICATION_PREFERENCES,
+  EmailNotificationPreferences,
+  User,
+  UserDocument,
+  UserRole,
+} from './user.schema';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { SaveOnboardingDto } from './dto/save-onboarding.dto';
@@ -39,6 +45,11 @@ type PublicUser = {
   onboardingCompleted: boolean;
   onboardingByRole: Record<string, boolean>;
   onboardingData: Record<string, SavedOnboardingData>;
+  emailNotifications: EmailNotificationPreferences;
+  subscriptions: object[];
+  referralBalance: number;
+  createdAt?: Date;
+  updatedAt?: Date;
 };
 
 type OnboardingRole = UserRole.ORGANISATEUR | UserRole.PRESTATAIRE | UserRole.GESTIONNAIRE_SALLE;
@@ -57,7 +68,21 @@ type UserProfile = {
   onboardingCompleted?: boolean;
   onboardingByRole?: Record<string, boolean>;
   onboardingData?: unknown;
+  emailNotifications?: Partial<EmailNotificationPreferences>;
+  referralBalance?: number;
 };
+
+const ADDABLE_ROLES = new Set<UserRole>([
+  UserRole.ORGANISATEUR,
+  UserRole.PRESTATAIRE,
+  UserRole.GESTIONNAIRE_SALLE,
+]);
+const PUBLIC_REGISTRATION_ROLES = new Set<UserRole>([
+  UserRole.ORGANISATEUR,
+  UserRole.PRESTATAIRE,
+  UserRole.GESTIONNAIRE_SALLE,
+  UserRole.PARTICIPANT,
+]);
 
 const ONBOARDING_FIELDS_BY_ROLE: Record<OnboardingRole, SaveOnboardingField[]> = {
   [UserRole.ORGANISATEUR]: ['eventTypes', 'frequency', 'avatar', 'displayName', 'city'],
@@ -82,6 +107,9 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto): Promise<{ accessToken: string; refreshToken: string; user: PublicUser }> {
+    if (dto.roles.length !== 1 || dto.roles.some((role) => !PUBLIC_REGISTRATION_ROLES.has(role))) {
+      throw new BadRequestException(ErrorCodes.ROLE_NOT_ADDABLE);
+    }
     const exists = await this.userModel.findOne({ email: dto.email }).lean().select('_id');
     if (exists) {
       throw new ConflictException({
@@ -112,8 +140,8 @@ export class AuthService {
       this.emailsService.sendEmailVerification(user.email, {
         fullName: user.fullName,
         token: verificationToken,
-      }).catch((err: unknown) => {
-        this.logger.error(`Échec envoi courriel vérification à ${user.email}: ${String(err)}`);
+      }).catch(() => {
+        this.logger.error('Échec de l’envoi du courriel de vérification');
       }),
       this.ticketsService.linkGuestPurchases(user.email, userId),
     ]);
@@ -130,6 +158,11 @@ export class AuthService {
         onboardingCompleted: user.onboardingCompleted,
         onboardingByRole: user.onboardingByRole,
         onboardingData: this.normalizeSavedOnboardingData(user.onboardingData),
+        emailNotifications: this.normalizeEmailNotifications(user.emailNotifications),
+        subscriptions: user.subscriptions ?? [],
+        referralBalance: user.referralBalance ?? 0,
+        createdAt: (user as unknown as UserProfile).createdAt,
+        updatedAt: (user as unknown as UserProfile).updatedAt,
       },
     };
   }
@@ -166,6 +199,11 @@ export class AuthService {
         onboardingCompleted: user.onboardingCompleted ?? false,
         onboardingByRole: user.onboardingByRole ?? {},
         onboardingData: this.normalizeSavedOnboardingData(user.onboardingData),
+        emailNotifications: this.normalizeEmailNotifications(user.emailNotifications),
+        subscriptions: user.subscriptions ?? [],
+        referralBalance: user.referralBalance ?? 0,
+        createdAt: (user as unknown as UserProfile).createdAt,
+        updatedAt: (user as unknown as UserProfile).updatedAt,
       },
     };
   }
@@ -229,11 +267,12 @@ export class AuthService {
     onboardingCompleted: boolean;
     onboardingByRole: Record<string, boolean>;
     onboardingData: Record<string, SavedOnboardingData>;
+    emailNotifications: EmailNotificationPreferences;
   }> {
     const user = await this.userModel
       .findById(userId)
       .lean()
-      .select('_id fullName email roles isEmailVerified subscriptions createdAt updatedAt onboardingCompleted onboardingByRole onboardingData');
+      .select('_id fullName email roles isEmailVerified subscriptions createdAt updatedAt onboardingCompleted onboardingByRole onboardingData emailNotifications');
 
     if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
     const profile = user as unknown as UserProfile;
@@ -250,7 +289,121 @@ export class AuthService {
       onboardingCompleted: profile.onboardingCompleted ?? false,
       onboardingByRole: profile.onboardingByRole ?? {},
       onboardingData: this.normalizeSavedOnboardingData(profile.onboardingData),
+      emailNotifications: this.normalizeEmailNotifications(profile.emailNotifications),
     };
+  }
+
+  async updateProfile(
+    userId: string,
+    input: { firstName: string; lastName: string },
+  ): Promise<PublicUser> {
+    const fullName = `${input.firstName.trim()} ${input.lastName.trim()}`.trim();
+    const user = await this.userModel
+      .findByIdAndUpdate(
+        userId,
+        { $set: { fullName } },
+        { new: true, runValidators: true },
+      )
+      .select('_id fullName email roles isEmailVerified subscriptions referralBalance createdAt updatedAt onboardingCompleted onboardingByRole onboardingData emailNotifications')
+      .lean();
+
+    if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
+    return this.toPublicUser(user as unknown as UserProfile);
+  }
+
+  async changePassword(
+    userId: string,
+    input: { currentPassword: string; newPassword: string },
+  ): Promise<void> {
+    const user = await this.userModel.findById(userId).select('+password').lean();
+    if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
+
+    const currentMatches = await bcrypt.compare(input.currentPassword, user.password);
+    if (!currentMatches) throw new BadRequestException(ErrorCodes.CURRENT_PASSWORD_INVALID);
+    if (input.currentPassword === input.newPassword) {
+      throw new BadRequestException(ErrorCodes.NEW_PASSWORD_MUST_DIFFER);
+    }
+
+    await this.userModel.findByIdAndUpdate(userId, {
+      password: await bcrypt.hash(input.newPassword, 12),
+      refreshToken: null,
+    });
+  }
+
+  async updateNotificationPreferences(
+    userId: string,
+    input: Partial<EmailNotificationPreferences>,
+  ): Promise<PublicUser> {
+    const allowedKeys: (keyof EmailNotificationPreferences)[] = [
+      'vendorRequestReceived',
+      'vendorResponse',
+      'venueBookingReceived',
+      'venueResponse',
+    ];
+    const fields = allowedKeys.reduce<Record<string, boolean>>((updates, key) => {
+      if (typeof input[key] === 'boolean') updates[`emailNotifications.${key}`] = input[key];
+      return updates;
+    }, {});
+    if (Object.keys(fields).length === 0) {
+      throw new BadRequestException(ErrorCodes.VALIDATION_FAILED);
+    }
+
+    const user = await this.userModel
+      .findByIdAndUpdate(
+        userId,
+        { $set: fields },
+        { new: true, runValidators: true },
+      )
+      .select('_id fullName email roles isEmailVerified subscriptions referralBalance createdAt updatedAt onboardingCompleted onboardingByRole onboardingData emailNotifications')
+      .lean();
+    if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
+    return this.toPublicUser(user as unknown as UserProfile);
+  }
+
+  async addRole(
+    userId: string,
+    role: UserRole,
+  ): Promise<{ accessToken?: string; user: PublicUser }> {
+    if (!ADDABLE_ROLES.has(role)) throw new BadRequestException(ErrorCodes.ROLE_NOT_ADDABLE);
+
+    let changed = true;
+    let user = await this.userModel
+      .findOneAndUpdate(
+        { _id: new Types.ObjectId(userId), roles: { $ne: role } },
+        { $addToSet: { roles: role } },
+        { new: true, runValidators: true },
+      )
+      .select('_id fullName email roles isEmailVerified subscriptions referralBalance createdAt updatedAt onboardingCompleted onboardingByRole onboardingData emailNotifications')
+      .lean() as unknown as UserProfile | null;
+
+    if (!user) {
+      changed = false;
+      user = await this.userModel
+        .findById(userId)
+        .select('_id fullName email roles isEmailVerified subscriptions referralBalance createdAt updatedAt onboardingCompleted onboardingByRole onboardingData emailNotifications')
+        .lean() as unknown as UserProfile | null;
+    }
+    if (!user) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
+
+    const publicUser = this.toPublicUser(user);
+    if (!changed) return { user: publicUser };
+
+    const tokens = this.generateTokens({
+      sub: publicUser._id,
+      email: publicUser.email,
+      roles: publicUser.roles,
+    });
+
+    return { accessToken: tokens.accessToken, user: publicUser };
+  }
+
+  async resendVerificationForUser(userId: string): Promise<void> {
+    const user = await this.userModel
+      .findOne({ _id: new Types.ObjectId(userId), isEmailVerified: false })
+      .select('_id email fullName')
+      .lean();
+    if (!user) return;
+    await this.issueVerificationEmail(user._id, user.email, user.fullName);
   }
 
   async saveOnboarding(userId: string, roleParam: string, dto: SaveOnboardingDto): Promise<PublicUser> {
@@ -280,7 +433,7 @@ export class AuthService {
         { new: true },
       )
       .lean()
-      .select('_id fullName email roles isEmailVerified onboardingCompleted onboardingByRole onboardingData');
+      .select('_id fullName email roles isEmailVerified subscriptions referralBalance createdAt updatedAt onboardingCompleted onboardingByRole onboardingData emailNotifications');
 
     if (!updatedUser) throw new NotFoundException(ErrorCodes.ACCOUNT_NOT_FOUND);
 
@@ -293,6 +446,11 @@ export class AuthService {
       onboardingCompleted: updatedUser.onboardingCompleted ?? false,
       onboardingByRole: updatedUser.onboardingByRole ?? {},
       onboardingData: this.normalizeSavedOnboardingData(updatedUser.onboardingData),
+      emailNotifications: this.normalizeEmailNotifications(updatedUser.emailNotifications),
+      subscriptions: updatedUser.subscriptions ?? [],
+      referralBalance: updatedUser.referralBalance ?? 0,
+      createdAt: (updatedUser as unknown as UserProfile).createdAt,
+      updatedAt: (updatedUser as unknown as UserProfile).updatedAt,
     };
   }
 
@@ -316,8 +474,8 @@ export class AuthService {
         fullName: user.fullName,
         token: resetToken,
       });
-    } catch (err) {
-      this.logger.error(`Échec envoi courriel réinitialisation à ${email}: ${String(err)}`);
+    } catch {
+      this.logger.error('Échec de l’envoi du courriel de réinitialisation');
     }
   }
 
@@ -393,20 +551,23 @@ export class AuthService {
     // Silencieux si non trouvé ou déjà vérifié
     if (!user) return;
 
-    const verificationToken = crypto.randomBytes(32).toString('hex');
+    await this.issueVerificationEmail(user._id, user.email, user.fullName);
+  }
 
-    await this.userModel.findByIdAndUpdate(user._id, {
+  private async issueVerificationEmail(
+    userId: Types.ObjectId,
+    email: string,
+    fullName: string,
+  ): Promise<void> {
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    await this.userModel.findByIdAndUpdate(userId, {
       emailVerificationToken: await bcrypt.hash(verificationToken, 12),
       emailVerificationExpiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
     });
-
     try {
-      await this.emailsService.sendEmailVerification(email, {
-        fullName: user.fullName,
-        token: verificationToken,
-      });
-    } catch (err) {
-      this.logger.error(`Échec envoi courriel vérification à ${email}: ${String(err)}`);
+      await this.emailsService.sendEmailVerification(email, { fullName, token: verificationToken });
+    } catch {
+      this.logger.error('Échec de l’envoi du courriel de vérification');
     }
   }
 
@@ -496,5 +657,29 @@ export class AuthService {
       },
       {},
     );
+  }
+
+  private normalizeEmailNotifications(
+    input: Partial<EmailNotificationPreferences> | undefined,
+  ): EmailNotificationPreferences {
+    return { ...DEFAULT_EMAIL_NOTIFICATION_PREFERENCES, ...(input ?? {}) };
+  }
+
+  private toPublicUser(user: UserProfile): PublicUser {
+    return {
+      _id: user._id.toString(),
+      fullName: user.fullName,
+      email: user.email,
+      roles: user.roles,
+      isEmailVerified: user.isEmailVerified,
+      onboardingCompleted: user.onboardingCompleted ?? false,
+      onboardingByRole: user.onboardingByRole ?? {},
+      onboardingData: this.normalizeSavedOnboardingData(user.onboardingData),
+      emailNotifications: this.normalizeEmailNotifications(user.emailNotifications),
+      subscriptions: user.subscriptions ?? [],
+      referralBalance: user.referralBalance ?? 0,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
   }
 }

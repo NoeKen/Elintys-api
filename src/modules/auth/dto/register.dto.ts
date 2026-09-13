@@ -1,8 +1,15 @@
-import { IsArray, IsEmail, IsEnum, IsString, ArrayMaxSize, ArrayMinSize, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsEmail, IsIn, IsString, ArrayMaxSize, ArrayMinSize, MaxLength, MinLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { trimLowerValue, trimValue } from '../../../shared/utils/transform';
 import { ApiProperty } from '@nestjs/swagger';
 import { UserRole } from '../user.schema';
+
+const PUBLIC_REGISTRATION_ROLES = [
+  UserRole.ORGANISATEUR,
+  UserRole.PRESTATAIRE,
+  UserRole.GESTIONNAIRE_SALLE,
+  UserRole.PARTICIPANT,
+] as const;
 
 export class RegisterDto {
   @ApiProperty({ example: 'Marie Tremblay', description: 'Nom complet', maxLength: 100 })
@@ -22,10 +29,10 @@ export class RegisterDto {
   @MaxLength(72)
   password!: string;
 
-  @ApiProperty({ enum: UserRole, isArray: true, example: [UserRole.ORGANISATEUR], description: 'Rôle initial du compte (un seul rôle à l’inscription)' })
+  @ApiProperty({ enum: PUBLIC_REGISTRATION_ROLES, isArray: true, example: [UserRole.ORGANISATEUR], description: 'Rôle public initial du compte (un seul rôle à l’inscription)' })
   @IsArray()
   @ArrayMinSize(1)
   @ArrayMaxSize(1)
-  @IsEnum(UserRole, { each: true })
+  @IsIn(PUBLIC_REGISTRATION_ROLES, { each: true })
   roles!: UserRole[];
 }

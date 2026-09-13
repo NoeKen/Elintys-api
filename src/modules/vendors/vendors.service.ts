@@ -238,8 +238,12 @@ export class VendorsService {
       })
       .catch(() => undefined);
 
-    const vendorUser = await this.userModel.findById(vendorUserId).lean().select('email');
+    const vendorUser = await this.userModel
+      .findById(vendorUserId)
+      .lean()
+      .select('email emailNotifications');
     if (!vendorUser?.email) return;
+    if (vendorUser.emailNotifications?.vendorRequestReceived === false) return;
 
     await this.emailsService.sendNewRequest(vendorUser.email, {
       organizerName: organizer.fullName,
@@ -323,10 +327,11 @@ export class VendorsService {
     const frontendUrl = this.configService.getOrThrow<string>('frontendUrl');
     const eventId = (updated.event as Types.ObjectId).toString();
     Promise.all([
-      this.userModel.findById(organizerId).lean().select('email fullName'),
+      this.userModel.findById(organizerId).lean().select('email fullName emailNotifications'),
       this.eventModel.findById(eventId).lean().select('title'),
     ]).then(([organizer, event]) => {
       if (!organizer || !event) return;
+      if (organizer.emailNotifications?.vendorResponse === false) return;
       return this.emailsService.sendVendorRequestUpdate(organizer.email, {
         vendorName: vendorProfile.businessName,
         organizerName: organizer.fullName,

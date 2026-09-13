@@ -85,6 +85,8 @@ export interface TicketOrderView {
   admissionIds: string[];
   requiresManualReview: boolean;
   failureReason: string | null;
+  createdAt: string;
+  eventSummary: { title: string; slug: string } | null;
 }
 
 export interface ExpirySweepReport {
@@ -117,6 +119,13 @@ interface LeanOrder {
   admissionIds: Types.ObjectId[];
   requiresManualReview: boolean;
   failureReason: string | null;
+  createdAt: Date;
+}
+
+interface LeanEventSummary {
+  _id: Types.ObjectId;
+  title: string;
+  slug: string;
 }
 
 /**
@@ -411,7 +420,23 @@ export class TicketOrdersService {
       this.orderModel.countDocuments(filter),
     ]);
 
-    return { data: orders.map((order) => this.toView(order)), total, page, limit };
+    const eventIds = [...new Set(orders.map((order) => order.event.toString()))];
+    const events = eventIds.length > 0
+      ? await this.eventModel
+        .find({ _id: { $in: eventIds.map((id) => new Types.ObjectId(id)) } })
+        .lean<LeanEventSummary[]>()
+        .select('_id title slug')
+      : [];
+    const eventsById = new Map(
+      events.map((event) => [event._id.toString(), { title: event.title, slug: event.slug }]),
+    );
+
+    return {
+      data: orders.map((order) => this.toView(order, eventsById.get(order.event.toString()) ?? null)),
+      total,
+      page,
+      limit,
+    };
   }
 
   /**
@@ -940,7 +965,10 @@ export class TicketOrdersService {
     return order;
   }
 
-  private toView(order: LeanOrder): TicketOrderView {
+  private toView(
+    order: LeanOrder,
+    eventSummary: { title: string; slug: string } | null = null,
+  ): TicketOrderView {
     return {
       _id: order._id.toString(),
       event: order.event.toString(),
@@ -962,6 +990,8 @@ export class TicketOrdersService {
       admissionIds: (order.admissionIds ?? []).map((id) => id.toString()),
       requiresManualReview: order.requiresManualReview === true,
       failureReason: order.failureReason ?? null,
+      createdAt: order.createdAt.toISOString(),
+      eventSummary,
     };
   }
 }

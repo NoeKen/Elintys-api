@@ -12,6 +12,20 @@ export enum UserRole {
   GESTIONNAIRE_SALLE = 'gestionnaire_salle',
 }
 
+export interface EmailNotificationPreferences {
+  vendorRequestReceived: boolean;
+  vendorResponse: boolean;
+  venueBookingReceived: boolean;
+  venueResponse: boolean;
+}
+
+export const DEFAULT_EMAIL_NOTIFICATION_PREFERENCES: EmailNotificationPreferences = {
+  vendorRequestReceived: true,
+  vendorResponse: true,
+  venueBookingReceived: true,
+  venueResponse: true,
+};
+
 @Schema({ timestamps: true })
 export class User {
   @Prop({ required: true, trim: true, maxlength: 100 })
@@ -58,6 +72,18 @@ export class User {
 
   @Prop({ type: Object, default: {} })
   onboardingData!: Record<string, Record<string, unknown>>;
+
+  @Prop({
+    type: {
+      vendorRequestReceived: { type: Boolean, default: true },
+      vendorResponse: { type: Boolean, default: true },
+      venueBookingReceived: { type: Boolean, default: true },
+      venueResponse: { type: Boolean, default: true },
+    },
+    _id: false,
+    default: () => ({ ...DEFAULT_EMAIL_NOTIFICATION_PREFERENCES }),
+  })
+  emailNotifications!: EmailNotificationPreferences;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
