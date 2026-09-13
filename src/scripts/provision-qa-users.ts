@@ -1,8 +1,14 @@
 import 'reflect-metadata';
 import 'dotenv/config';
 import * as bcrypt from 'bcrypt';
+import { createHash } from 'crypto';
 import mongoose, { Model } from 'mongoose';
-import { User, UserRole, UserSchema } from '../modules/auth/user.schema';
+import {
+  DEFAULT_EMAIL_NOTIFICATION_PREFERENCES,
+  User,
+  UserRole,
+  UserSchema,
+} from '../modules/auth/user.schema';
 import { resolveElintysEnvironment } from '../config/elintys-environment';
 
 /**
@@ -43,6 +49,9 @@ interface QaUser {
   fullName: string;
   /** Premier rôle = rôle dominant attendu par la politique de priorité. */
   roles: UserRole[];
+  verified?: boolean;
+  verificationToken?: string;
+  resetToken?: string;
 }
 
 async function provision(): Promise<void> {
@@ -96,6 +105,21 @@ async function provision(): Promise<void> {
   const multiEmail = (process.env.E2E_TEST_EMAIL_MULTI ?? 'qa-multi@demo.elintys.com')
     .trim()
     .toLowerCase();
+  const accountEmail = (process.env.E2E_TEST_EMAIL_ACCOUNT ?? 'qa-account@demo.elintys.com')
+    .trim()
+    .toLowerCase();
+  const verificationEmail = (
+    process.env.E2E_TEST_EMAIL_VERIFICATION ?? 'qa-verification@demo.elintys.com'
+  ).trim().toLowerCase();
+  const recoveryEmail = (
+    process.env.E2E_TEST_EMAIL_RECOVERY ?? 'qa-recovery@demo.elintys.com'
+  ).trim().toLowerCase();
+  const verificationToken = createHash('sha256')
+    .update(`wave-g-verification:${password}`)
+    .digest('hex');
+  const resetToken = createHash('sha256')
+    .update(`wave-g-reset:${password}`)
+    .digest('hex');
 
   const qaUsers: QaUser[] = [
     { email: ownerEmail, fullName: 'QA Organisateur Propriétaire', roles: [UserRole.ORGANISATEUR] },
@@ -106,6 +130,20 @@ async function provision(): Promise<void> {
       email: multiEmail,
       fullName: 'QA Multi Rôles',
       roles: [UserRole.ORGANISATEUR, UserRole.PRESTATAIRE],
+    },
+    { email: accountEmail, fullName: 'QA Compte', roles: [UserRole.PARTICIPANT] },
+    {
+      email: verificationEmail,
+      fullName: 'QA Vérification',
+      roles: [UserRole.PARTICIPANT],
+      verified: false,
+      verificationToken,
+    },
+    {
+      email: recoveryEmail,
+      fullName: 'QA Récupération',
+      roles: [UserRole.PARTICIPANT],
+      resetToken,
     },
   ];
 
@@ -123,34 +161,55 @@ async function provision(): Promise<void> {
   const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
   for (const input of qaUsers) {
+    const emailVerificationToken = input.verificationToken
+      ? await bcrypt.hash(input.verificationToken, BCRYPT_ROUNDS)
+      : undefined;
+    const passwordResetToken = input.resetToken
+      ? await bcrypt.hash(input.resetToken, BCRYPT_ROUNDS)
+      : undefined;
+    const setFields: Record<string, unknown> = {
+      fullName: input.fullName,
+      roles: input.roles,
+      password: passwordHash,
+      isEmailVerified: input.verified ?? true,
+      onboardingCompleted: true,
+      onboardingByRole: Object.fromEntries(input.roles.map((role) => [role, true])),
+      emailNotifications: { ...DEFAULT_EMAIL_NOTIFICATION_PREFERENCES },
+    };
+    if (emailVerificationToken) {
+      setFields.emailVerificationToken = emailVerificationToken;
+      setFields.emailVerificationExpiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    }
+    if (passwordResetToken) {
+      setFields.passwordResetToken = passwordResetToken;
+      setFields.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
+    }
+    const unsetFields: Record<string, 1> = { refreshToken: 1 };
+    if (!emailVerificationToken) {
+      unsetFields.emailVerificationToken = 1;
+      unsetFields.emailVerificationExpiresAt = 1;
+    }
+    if (!passwordResetToken) {
+      unsetFields.passwordResetToken = 1;
+      unsetFields.passwordResetExpires = 1;
+    }
     await userModel.findOneAndUpdate(
       { email: input.email },
       {
-        $set: {
-          fullName: input.fullName,
-          roles: input.roles,
-          password: passwordHash,
-          isEmailVerified: true,
-          onboardingCompleted: true,
-          onboardingByRole: Object.fromEntries(input.roles.map((role) => [role, true])),
-        },
+        $set: setFields,
         $setOnInsert: {
           referralBalance: 0,
           subscriptions: [],
           onboardingData: {},
         },
-        $unset: {
-          emailVerificationToken: 1,
-          emailVerificationExpiresAt: 1,
-          passwordResetToken: 1,
-          passwordResetExpires: 1,
-          refreshToken: 1,
-        },
+        $unset: unsetFields,
       },
       { upsert: true, new: true, runValidators: true },
     );
     // Ne JAMAIS logger le mot de passe.
-    console.log(`✓ Compte QA prêt : ${input.email} [${input.roles.join(', ')}, vérifié]`);
+    console.log(
+      `✓ Compte QA prêt : ${input.email} [${input.roles.join(', ')}, ${input.verified === false ? 'non vérifié' : 'vérifié'}]`,
+    );
   }
 
   await mongoose.disconnect();

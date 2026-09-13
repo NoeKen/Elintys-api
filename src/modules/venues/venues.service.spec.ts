@@ -42,6 +42,7 @@ describe('VenuesService', () => {
   let notificationsService: Record<string, jest.Mock>;
   let emailsService: Record<string, jest.Mock>;
   let eventModel: Record<string, jest.Mock>;
+  let userModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
   const venueId = new Types.ObjectId().toString();
@@ -104,13 +105,18 @@ describe('VenuesService', () => {
       sendVenueBookingRequest: jest.fn().mockResolvedValue(undefined),
       sendVenueBookingUpdate: jest.fn().mockResolvedValue(undefined),
     };
+    userModel = {
+      findById: jest.fn().mockReturnValue(
+        makeChainable({ email: 'org@test.com', fullName: 'Org' }),
+      ),
+    };
 
     testingModule = await Test.createTestingModule({
       providers: [
         VenuesService,
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
         { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
-        { provide: getModelToken(User.name), useValue: { findById: jest.fn().mockReturnValue(makeChainable({ email: 'org@test.com', fullName: 'Org' })) } },
+        { provide: getModelToken(User.name), useValue: userModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: NotificationsService, useValue: notificationsService },
         { provide: EmailsService, useValue: emailsService },
@@ -285,6 +291,24 @@ describe('VenuesService', () => {
           requestUrl: 'http://localhost:3000/tableau-de-bord/gestionnaire/reservations',
         }),
       );
+    });
+
+    it('conserve la notification in-app mais respecte le refus de courriel du gestionnaire', async () => {
+      venueBookingModel.create.mockResolvedValue(mockBooking());
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+      userModel.findById
+        .mockReturnValueOnce(makeChainable({ fullName: 'Org' }))
+        .mockReturnValueOnce(makeChainable({
+          email: 'venue@test.com',
+          fullName: 'Gestionnaire',
+          emailNotifications: { venueBookingReceived: false },
+        }));
+
+      await service.requestBooking(eventId, userId, dto as never);
+      await flushAsync();
+
+      expect(notificationsService.create).toHaveBeenCalledTimes(1);
+      expect(emailsService.sendVenueBookingRequest).not.toHaveBeenCalled();
     });
 
     it('devrait lever BadRequestException si bookingEnd <= bookingStart', async () => {
@@ -467,6 +491,24 @@ describe('VenuesService', () => {
         NotificationType.VENUE_CONFIRMED,
         expect.objectContaining({ bookingId, eventId, status: VenueBookingStatus.CONFIRMED }),
       );
+    });
+
+    it('conserve la notification in-app mais respecte le refus de courriel de réponse', async () => {
+      venueModel.findOne.mockReturnValue(myProfile());
+      venueBookingModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockBooking({ status: VenueBookingStatus.CONFIRMED })),
+      );
+      userModel.findById.mockReturnValue(makeChainable({
+        email: 'org@test.com',
+        fullName: 'Org',
+        emailNotifications: { venueResponse: false },
+      }));
+
+      await service.respondToBooking(bookingId, userId, confirmDto);
+      await flushAsync();
+
+      expect(notificationsService.create).toHaveBeenCalledTimes(1);
+      expect(emailsService.sendVenueBookingUpdate).not.toHaveBeenCalled();
     });
 
     it("lève NotFoundException si le gestionnaire n'a pas de fiche", async () => {
