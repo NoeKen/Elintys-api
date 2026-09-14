@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { DiscoveryController } from './discovery.controller';
+import { DiscoveryEntityType } from './dto/query-discovery.dto';
 import { DiscoveryService } from './discovery.service';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
@@ -35,7 +36,7 @@ describe('DiscoveryController', () => {
 
       await controller.search({ q: 'gala', page: 1, limit: 10 });
 
-      expect(mockDiscoveryService.search).toHaveBeenCalledWith('gala', 1, 10);
+      expect(mockDiscoveryService.search).toHaveBeenCalledWith('gala', 1, 10, DiscoveryEntityType.ALL);
     });
 
     it('transmet la pagination demandée', async () => {
@@ -43,7 +44,7 @@ describe('DiscoveryController', () => {
 
       await controller.search({ q: 'montréal', page: 2, limit: 5 });
 
-      expect(mockDiscoveryService.search).toHaveBeenCalledWith('montréal', 2, 5);
+      expect(mockDiscoveryService.search).toHaveBeenCalledWith('montréal', 2, 5, DiscoveryEntityType.ALL);
     });
   });
 

@@ -1,9 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { DiscoveryService } from './discovery.service';
-import { Event, EventStatus, EventVisibility } from '../events/event.schema';
-import { VendorProfile } from '../vendors/vendor.schema';
-import { VenueProfile } from '../venues/venue.schema';
+import { Event, EventStatus, EventType, EventVisibility } from '../events/event.schema';
+import { VendorCategory, VendorProfile } from '../vendors/vendor.schema';
+import { VenueProfile, VenueType } from '../venues/venue.schema';
+import { DiscoveryEntityType } from './dto/query-discovery.dto';
+import { VendorPriceTier } from '../vendors/dto/query-vendor.dto';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -37,9 +39,9 @@ describe('DiscoveryService', () => {
   };
 
   beforeEach(async () => {
-    eventModel = { find: jest.fn() };
-    vendorModel = { find: jest.fn() };
-    venueModel = { find: jest.fn() };
+    eventModel = { find: jest.fn(), countDocuments: jest.fn().mockResolvedValue(1) };
+    vendorModel = { find: jest.fn(), countDocuments: jest.fn().mockResolvedValue(0) };
+    venueModel = { find: jest.fn(), countDocuments: jest.fn().mockResolvedValue(0) };
 
     eventModel.find.mockReturnValue(makeChainable([mockPublicEvent]));
     vendorModel.find.mockReturnValue(makeChainable([]));
@@ -67,6 +69,8 @@ describe('DiscoveryService', () => {
       expect(result).toHaveProperty('events');
       expect(result).toHaveProperty('vendors');
       expect(result).toHaveProperty('venues');
+      expect(result).toHaveProperty('totals', { events: 1, vendors: 0, venues: 0 });
+      expect(result).toMatchObject({ page: 1, limit: 10 });
       expect(result.events).toHaveLength(1);
     });
 
@@ -113,6 +117,28 @@ describe('DiscoveryService', () => {
       expect(vendorModel.find).toHaveBeenCalledTimes(1);
       expect(venueModel.find).toHaveBeenCalledTimes(1);
     });
+
+    it('limite la recherche au type demandé sans interroger les autres collections', async () => {
+      const result = await service.search('gala', 1, 10, DiscoveryEntityType.EVENT);
+
+      expect(result.events).toHaveLength(1);
+      expect(result.vendors).toEqual([]);
+      expect(result.venues).toEqual([]);
+      expect(vendorModel.find).not.toHaveBeenCalled();
+      expect(venueModel.find).not.toHaveBeenCalled();
+    });
+
+    it('utilise les projections publiques riches sans champs privés', async () => {
+      await service.search('gala', 1, 10);
+
+      const eventChain = eventModel.find.mock.results[0].value as Record<string, jest.Mock>;
+      const vendorChain = vendorModel.find.mock.results[0].value as Record<string, jest.Mock>;
+      const venueChain = venueModel.find.mock.results[0].value as Record<string, jest.Mock>;
+      expect(eventChain.select).toHaveBeenCalledWith(expect.stringContaining('coverImage'));
+      expect(vendorChain.select).toHaveBeenCalledWith(expect.stringContaining('priceRange'));
+      expect(venueChain.select).toHaveBeenCalledWith(expect.stringContaining('photos'));
+      expect(eventChain.select).not.toHaveBeenCalledWith(expect.stringContaining('organizer'));
+    });
   });
 
   // ── featuredEvents ──
@@ -137,6 +163,71 @@ describe('DiscoveryService', () => {
 
       const chain = eventModel.find.mock.results[0].value as Record<string, jest.Mock>;
       expect(chain.limit).toHaveBeenCalledWith(3);
+    });
+  });
+
+  describe('typed catalogs', () => {
+    it('applique type, ville et bornes UTC inclusives aux événements', async () => {
+      await service.findEvents(
+        'gala',
+        'Montréal',
+        EventType.GALA,
+        '2027-05-01',
+        '2027-05-31',
+        2,
+        12,
+      );
+
+      expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        eventType: EventType.GALA,
+        'location.city': expect.any(Object),
+        $and: expect.arrayContaining([
+          expect.objectContaining({
+            $or: expect.arrayContaining([
+              expect.objectContaining({ 'location.city': expect.any(Object) }),
+            ]),
+          }),
+        ]),
+        startDate: {
+          $gte: new Date('2027-05-01T00:00:00.000Z'),
+          $lte: new Date('2027-05-31T23:59:59.999Z'),
+        },
+      }));
+    });
+
+    it('applique catégorie, ville et palier de prix aux prestataires', async () => {
+      await service.findVendors(
+        'photo',
+        VendorCategory.PHOTOGRAPHE,
+        'Montréal',
+        VendorPriceTier.STANDARD,
+        1,
+        12,
+      );
+
+      expect(vendorModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        isActive: true,
+        category: VendorCategory.PHOTOGRAPHE,
+        $or: expect.arrayContaining([
+          expect.objectContaining({ serviceArea: expect.any(Object) }),
+        ]),
+        serviceArea: expect.any(Object),
+        'priceRange.min': { $gt: 1000, $lte: 2500 },
+      }));
+    });
+
+    it('applique type, ville et capacité minimale aux lieux', async () => {
+      await service.findVenues('salle', 'Montréal', VenueType.RECEPTION, 200, 1, 12);
+
+      expect(venueModel.find).toHaveBeenCalledWith(expect.objectContaining({
+        isActive: true,
+        type: VenueType.RECEPTION,
+        $or: expect.arrayContaining([
+          expect.objectContaining({ description: expect.any(Object) }),
+        ]),
+        'address.city': expect.any(Object),
+        capacity: { $gte: 200 },
+      }));
     });
   });
 });
