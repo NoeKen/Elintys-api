@@ -5,7 +5,11 @@ import { AllExceptionsFilter } from '../src/shared/filters/http-exception.filter
 import { escapeRegExp } from '../src/shared/utils/escape-regexp';
 import {
   DISCOVERY_MAX_LIMIT,
+  DISCOVERY_MAX_PAGE,
+  DiscoveryEntityType,
   FeaturedDiscoveryDto,
+  QueryDiscoveryEventsDto,
+  QueryDiscoveryVenuesDto,
   QueryDiscoveryVendorsDto,
   SearchDiscoveryDto,
 } from '../src/modules/discovery/dto/query-discovery.dto';
@@ -32,6 +36,16 @@ class DiscoveryContractController {
 
   @Get('vendors')
   vendors(@Query() query: QueryDiscoveryVendorsDto) {
+    return query;
+  }
+
+  @Get('events')
+  events(@Query() query: QueryDiscoveryEventsDto) {
+    return query;
+  }
+
+  @Get('venues')
+  venues(@Query() query: QueryDiscoveryVenuesDto) {
     return query;
   }
 }
@@ -84,6 +98,10 @@ describe('Contrat Discovery (e2e)', () => {
       const response = await get(`/discovery-contract/search?q=gala&page=${page}`);
       expect(response.status).toBe(400);
     });
+
+    it('refuse une page qui provoquerait un skip Mongo démesuré', async () => {
+      expect((await get(`/discovery-contract/search?q=gala&page=${DISCOVERY_MAX_PAGE + 1}`)).status).toBe(400);
+    });
   });
 
   describe('terme de recherche', () => {
@@ -133,12 +151,47 @@ describe('Contrat Discovery (e2e)', () => {
   });
 
   describe('énumérations', () => {
+    it.each(Object.values(DiscoveryEntityType))('accepte le type de recherche %s', async (type) => {
+      expect((await get(`/discovery-contract/search?q=gala&type=${type}`)).status).toBe(200);
+    });
+
+    it('refuse un type de recherche inventé', async () => {
+      expect((await get('/discovery-contract/search?q=gala&type=admin')).status).toBe(400);
+    });
+
     it('accepte une catégorie connue', async () => {
       expect((await get('/discovery-contract/vendors?category=photographe')).status).toBe(200);
     });
 
     it('refuse une catégorie inventée', async () => {
       expect((await get('/discovery-contract/vendors?category=hacker')).status).toBe(400);
+    });
+  });
+
+  describe('filtres typés', () => {
+    it('accepte une plage de dates calendrier valide', async () => {
+      const response = await get('/discovery-contract/events?dateFrom=2027-05-01&dateTo=2027-05-31&type=gala');
+      expect(response.status).toBe(200);
+    });
+
+    it.each(['2027-13-01', '01-05-2027', 'yesterday'])('refuse la date invalide %s', async (date) => {
+      expect((await get(`/discovery-contract/events?dateFrom=${date}`)).status).toBe(400);
+    });
+
+    it('refuse une plage inversée', async () => {
+      expect((await get('/discovery-contract/events?dateFrom=2027-06-01&dateTo=2027-05-01')).status).toBe(400);
+    });
+
+    it('accepte les filtres prestataire existants', async () => {
+      expect((await get('/discovery-contract/vendors?city=Montr%C3%A9al&price=%24%24')).status).toBe(200);
+    });
+
+    it.each(['-1', '0', 'abc', '1.5', '1000001'])('refuse capacity=%s', async (capacity) => {
+      expect((await get(`/discovery-contract/venues?capacity=${capacity}`)).status).toBe(400);
+    });
+
+    it('accepte type, ville et capacité pour un lieu', async () => {
+      expect((await get('/discovery-contract/venues?type=reception&city=Montr%C3%A9al&capacity=200')).status).toBe(200);
     });
   });
 
