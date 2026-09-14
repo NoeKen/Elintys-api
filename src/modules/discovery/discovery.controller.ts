@@ -6,6 +6,7 @@ import { Public } from '../../shared/decorators/public.decorator';
 import { THROTTLE_TIERS } from '../../config/throttle.config';
 import {
   FeaturedDiscoveryDto,
+  DiscoveryEntityType,
   QueryDiscoveryEventsDto,
   QueryDiscoveryVendorsDto,
   QueryDiscoveryVenuesDto,
@@ -32,7 +33,12 @@ export class DiscoveryController {
     // Le DTO valide et borne : `page`/`limit` sont des entiers dans une plage
     // fermée, `q` une chaîne bornée. `forbidNonWhitelisted` rejette au passage
     // toute clé inattendue — un `?q[$ne]=` ne peut plus atteindre le filtre.
-    return this.discoveryService.search(query.q, query.page, query.limit);
+    return this.discoveryService.search(
+      query.q,
+      query.page,
+      query.limit,
+      query.type ?? DiscoveryEntityType.ALL,
+    );
   }
 
   @Get('featured')
@@ -51,7 +57,15 @@ export class DiscoveryController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
   @ApiResponse({ status: 200, description: 'Liste paginée d\'événements' })
   findEvents(@Query() query: QueryDiscoveryEventsDto) {
-    return this.discoveryService.findEvents(query.q, query.city, query.page, query.limit);
+    return this.discoveryService.findEvents(
+      query.q,
+      query.city,
+      query.type,
+      query.dateFrom,
+      query.dateTo,
+      query.page,
+      query.limit,
+    );
   }
 
   @Get('vendors')
@@ -62,7 +76,14 @@ export class DiscoveryController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
   @ApiResponse({ status: 200, description: 'Liste paginée de prestataires' })
   findVendors(@Query() query: QueryDiscoveryVendorsDto) {
-    return this.discoveryService.findVendors(query.q, query.category, query.page, query.limit);
+    return this.discoveryService.findVendors(
+      query.q,
+      query.category,
+      query.city,
+      query.price,
+      query.page,
+      query.limit,
+    );
   }
 
   @Get('venues')
@@ -73,6 +94,13 @@ export class DiscoveryController {
   @ApiQuery({ name: 'limit', required: false, type: Number, example: 12 })
   @ApiResponse({ status: 200, description: 'Liste paginée de salles' })
   findVenues(@Query() query: QueryDiscoveryVenuesDto) {
-    return this.discoveryService.findVenues(query.q, query.city, query.page, query.limit);
+    return this.discoveryService.findVenues(
+      query.q,
+      query.city,
+      query.type,
+      query.capacity,
+      query.page,
+      query.limit,
+    );
   }
 }
