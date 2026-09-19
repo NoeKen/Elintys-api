@@ -147,7 +147,7 @@ describe('FavoritesService', () => {
 
       expect(eventModel.exists).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: EventStatus.PUBLISHED,
+          status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
           archivedAt: null,
           $or: expect.any(Array),
         }),
@@ -236,7 +236,10 @@ describe('FavoritesService', () => {
       expect(favorite.target?.href).toBe('/evenements/gala-annuel');
       expect(favorite.target?.imageUrl).toBe('https://cdn/cover.jpg');
       expect(eventModel.find).toHaveBeenCalledWith(
-        expect.objectContaining({ status: EventStatus.PUBLISHED, archivedAt: null }),
+        expect.objectContaining({
+          status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
+          archivedAt: null,
+        }),
       );
     });
 

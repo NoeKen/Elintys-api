@@ -31,6 +31,9 @@ function leanSelect(value: unknown) {
 function selectExec(value: unknown) {
   return { select: () => ({ exec: jest.fn().mockResolvedValue(value) }) };
 }
+function updateLeanSelect(value: unknown) {
+  return { lean: () => ({ select: jest.fn().mockResolvedValue(value) }) };
+}
 
 interface Models {
   eventModel?: unknown;
@@ -141,18 +144,65 @@ describe('EventAccessService — updateConfiguration (ownership)', () => {
     ).rejects.toThrow(BadRequestException);
   });
 
+  it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+    'devrait refuser une mutation sur un événement terminal (%s)',
+    async (status) => {
+      const service = makeService({
+        eventModel: { findById: () => selectExec(eventDoc({ status })) },
+      });
+
+      await expect(
+        service.updateConfiguration(eventId, { userId: organizerId }, {
+          discoverability: EventDiscoverability.PUBLIC,
+          accessPolicy: { type: EventAccessPolicyType.OPEN },
+          admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+        }),
+      ).rejects.toThrow(ConflictException);
+    },
+  );
+
   it('devrait persister la configuration et marquer accessModelVersion=2', async () => {
     const doc = eventDoc();
-    const service = makeService({ eventModel: { findById: () => selectExec(doc) } });
+    const findOneAndUpdate = jest.fn().mockReturnValue(updateLeanSelect(eventDoc({
+      discoverability: EventDiscoverability.UNLISTED,
+      accessPolicy: { type: EventAccessPolicyType.INVITATION_TOKEN },
+      admissionModes: [AdmissionMode.INVITATION],
+      accessModelVersion: 2,
+    })));
+    const service = makeService({ eventModel: {
+      findById: () => selectExec(doc),
+      findOneAndUpdate,
+    } });
     const result = await service.updateConfiguration(eventId, { userId: organizerId }, {
       discoverability: EventDiscoverability.UNLISTED,
       accessPolicy: { type: EventAccessPolicyType.INVITATION_TOKEN },
       admissionModes: [AdmissionMode.INVITATION],
     });
-    expect(doc.save).toHaveBeenCalled();
-    expect(doc.accessModelVersion).toBe(2);
-    expect(doc.discoverability).toBe(EventDiscoverability.UNLISTED);
+    expect(doc.save).not.toHaveBeenCalled();
+    expect(findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: eventId, status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] } },
+      { $set: expect.objectContaining({ accessModelVersion: 2 }) },
+      { new: true, runValidators: true },
+    );
+    expect(result.accessModelVersion).toBe(2);
+    expect(result.discoverability).toBe(EventDiscoverability.UNLISTED);
     expect(result.accessPolicy).not.toHaveProperty('codeHash');
+  });
+
+  it('refuse une écriture Access V2 perdue face à l’annulation', async () => {
+    const doc = eventDoc({ status: EventStatus.PUBLISHED });
+    const findOneAndUpdate = jest.fn().mockReturnValue(updateLeanSelect(null));
+    const service = makeService({ eventModel: {
+      findById: () => selectExec(doc),
+      findOneAndUpdate,
+    } });
+
+    await expect(service.updateConfiguration(eventId, { userId: organizerId }, {
+      discoverability: EventDiscoverability.PUBLIC,
+      accessPolicy: { type: EventAccessPolicyType.OPEN },
+      admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+    })).rejects.toThrow(ConflictException);
+    expect(doc.save).not.toHaveBeenCalled();
   });
 });
 
@@ -205,7 +255,7 @@ describe('EventAccessService — verifyCode', () => {
     await expect(service.verifyCode(eventId, 'code')).rejects.toThrow(ForbiddenException);
     expect(findOne).toHaveBeenCalledWith({
       _id: eventId,
-      status: EventStatus.PUBLISHED,
+      status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
       archivedAt: null,
     });
   });
@@ -275,7 +325,7 @@ describe('EventAccessService — resolveAccessGrant', () => {
     await expect(service.resolveAccessGrant(await grantFor(eventId))).rejects.toThrow(NotFoundException);
     expect(findOne).toHaveBeenCalledWith({
       _id: eventId,
-      status: EventStatus.PUBLISHED,
+      status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
       archivedAt: null,
     });
   });
@@ -485,6 +535,32 @@ describe('EventAccessService — reviewRequest (ownership)', () => {
       ),
     ).resolves.toEqual(updated);
   });
+
+  it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+    'devrait refuser une décision sur un événement terminal (%s)',
+    async (status) => {
+      const mutation = jest.fn();
+      const service = makeService({
+        eventModel: {
+          findById: () => leanSelect({
+            organizer: { toString: () => organizerId },
+            status,
+          }),
+        },
+        requestModel: { findOneAndUpdate: mutation },
+      });
+
+      await expect(
+        service.reviewRequest(
+          eventId,
+          requestId,
+          { userId: organizerId },
+          EventAccessRequestStatus.APPROVED,
+        ),
+      ).rejects.toThrow(ConflictException);
+      expect(mutation).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('EventAccessService — buildActor', () => {
