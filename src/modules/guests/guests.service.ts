@@ -1,10 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { canManageEvent } from '../events/event-access.policy';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { Guest, GuestDocument } from './guest.schema';
-import { Event, EventDocument } from '../events/event.schema';
+import { Event, EventDocument, EventStatus } from '../events/event.schema';
 import { CreateGuestDto } from './dto/create-guest.dto';
 import { UpdateGuestDto } from './dto/update-guest.dto';
 import { BulkCreateGuestDto } from './dto/bulk-create-guest.dto';
@@ -26,16 +26,23 @@ export class GuestsService {
     eventId: string,
     userId: string,
     roles: string[] = [],
+    requireMutable = false,
   ): Promise<void> {
-    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    const event = await this.eventModel.findById(eventId).lean().select('organizer status');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
+    if (
+      requireMutable &&
+      [EventStatus.COMPLETED, EventStatus.CANCELLED].includes(event.status)
+    ) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
   }
 
   async create(eventId: string, userId: string, dto: CreateGuestDto, roles: string[] = []): Promise<Guest> {
-    await this.assertCanManage(eventId, userId, roles);
+    await this.assertCanManage(eventId, userId, roles, true);
     const guest = await this.guestModel.create({
       ...dto,
       event: new Types.ObjectId(eventId),
@@ -57,7 +64,7 @@ export class GuestsService {
   }
 
   async update(id: string, eventId: string, userId: string, dto: UpdateGuestDto, roles: string[] = []): Promise<Guest> {
-    await this.assertCanManage(eventId, userId, roles);
+    await this.assertCanManage(eventId, userId, roles, true);
     // L'identifiant d'événement fait partie du filtre d'écriture. Sans lui, le
     // propriétaire de A pouvait modifier un invité de B en combinant eventId=A
     // avec le guestId de B.
@@ -74,7 +81,7 @@ export class GuestsService {
   }
 
   async remove(id: string, eventId: string, userId: string, roles: string[] = []): Promise<void> {
-    await this.assertCanManage(eventId, userId, roles);
+    await this.assertCanManage(eventId, userId, roles, true);
     const result = await this.guestModel.findOneAndDelete({
       _id: id,
       event: new Types.ObjectId(eventId),
@@ -83,7 +90,7 @@ export class GuestsService {
   }
 
   async bulkCreate(eventId: string, userId: string, dto: BulkCreateGuestDto, roles: string[] = []): Promise<{ created: number }> {
-    await this.assertCanManage(eventId, userId, roles);
+    await this.assertCanManage(eventId, userId, roles, true);
     const docs = dto.guests.map((g) => ({
       ...g,
       event: new Types.ObjectId(eventId),

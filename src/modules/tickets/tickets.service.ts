@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -23,6 +24,7 @@ import { EventAccessService } from '../events/event-access.service';
 import { canManageEvent, canPurchaseTicket, normalizeLegacyEventAccess } from '../events/event-access.policy';
 import { IdempotencyService } from '../../shared/consistency/idempotency/idempotency.service';
 import { InsufficientCapacityError } from '../../shared/consistency/errors/consistency.errors';
+import { isActiveEventStatus } from '../events/event-lifecycle.state-machine';
 
 /**
  * Issue d'un scan, décidée par le SERVEUR.
@@ -72,16 +74,23 @@ export class TicketsService {
     eventId: string,
     organizerId: string,
     roles: string[] = [],
+    requireMutable = false,
   ): Promise<void> {
-    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    const event = await this.eventModel.findById(eventId).lean().select('organizer status');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
     }
+    if (
+      requireMutable &&
+      [EventStatus.COMPLETED, EventStatus.CANCELLED].includes(event.status)
+    ) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
   }
 
   async createTicketType(eventId: string, organizerId: string, dto: CreateTicketTypeDto, roles: string[] = []): Promise<TicketType> {
-    await this.assertEventOwner(eventId, organizerId, roles);
+    await this.assertEventOwner(eventId, organizerId, roles, true);
     if (!dto.isFree && (!dto.price || dto.price <= 0)) {
       throw new BadRequestException('PAID_TICKET_PRICE_REQUIRED');
     }
@@ -95,7 +104,7 @@ export class TicketsService {
 
   async findTicketTypes(eventId: string): Promise<TicketType[]> {
     const event = await this.eventModel.findById(eventId).lean().select('status archivedAt discoverability visibility accessModelVersion');
-    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) {
+    if (!event || !isActiveEventStatus(event.status) || event.archivedAt) {
       throw new NotFoundException('Événement introuvable.');
     }
     if (normalizeLegacyEventAccess(event).discoverability === EventDiscoverability.PRIVATE) {
@@ -119,7 +128,7 @@ export class TicketsService {
       .lean()
       .select('event sold reserved price isFree');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
-    await this.assertEventOwner(tt.event.toString(), organizerId, roles);
+    await this.assertEventOwner(tt.event.toString(), organizerId, roles, true);
 
     const committed = (tt.sold ?? 0) + (tt.reserved ?? 0);
     if (dto.quantity !== undefined && dto.quantity < committed) {
@@ -166,7 +175,7 @@ export class TicketsService {
   async removeTicketType(id: string, organizerId: string, roles: string[] = []): Promise<void> {
     const tt = await this.ticketTypeModel.findById(id).lean().select('event sold reserved');
     if (!tt) throw new NotFoundException('Type de billet introuvable.');
-    await this.assertEventOwner(tt.event.toString(), organizerId, roles);
+    await this.assertEventOwner(tt.event.toString(), organizerId, roles, true);
     if ((tt.sold ?? 0) + (tt.reserved ?? 0) > 0) {
       throw new BadRequestException('TICKET_TYPE_HAS_SALES');
     }
@@ -460,10 +469,16 @@ export class TicketsService {
    * est la même que celle appliquée partout ailleurs sur les événements.
    */
   private async assertCanScanEvent(eventId: string, userId: string, roles: string[]): Promise<void> {
-    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    const event = await this.eventModel
+      .findById(eventId)
+      .lean()
+      .select('organizer status');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId, roles }, event).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    if (!isActiveEventStatus(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
     }
   }
 

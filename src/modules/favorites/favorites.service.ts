@@ -10,11 +10,11 @@ import {
   Event,
   EventDiscoverability,
   EventDocument,
-  EventStatus,
   EventVisibility,
 } from '../events/event.schema';
 import { VendorProfile, VendorProfileDocument } from '../vendors/vendor.schema';
 import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
+import { ACTIVE_EVENT_STATUSES } from '../events/event-lifecycle.state-machine';
 
 function firstPhoto(photos: string[] | undefined): string | undefined {
   return photos && photos.length > 0 ? photos[0] : undefined;
@@ -61,7 +61,7 @@ export class FavoritesService {
   private publicEventFilter(targetId: Types.ObjectId | Types.ObjectId[]) {
     return {
       _id: Array.isArray(targetId) ? { $in: targetId } : targetId,
-      status: EventStatus.PUBLISHED,
+      status: { $in: ACTIVE_EVENT_STATUSES },
       archivedAt: null,
       $or: [
         {

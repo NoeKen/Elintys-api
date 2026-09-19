@@ -8,7 +8,7 @@ import { VendorProfile, VendorCategory, VendorRequest, VendorRequestSchema, Vend
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
-import { Event } from '../events/event.schema';
+import { Event, EventStatus } from '../events/event.schema';
 import { VendorPriceTier } from './dto/query-vendor.dto';
 import { NotificationType } from '../notifications/notification.schema';
 
@@ -39,6 +39,7 @@ describe('VendorsService', () => {
   let notificationsService: Record<string, jest.Mock>;
   let emailsService: Record<string, jest.Mock>;
   let userModel: Record<string, jest.Mock>;
+  let eventModel: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
   const vendorUserId = new Types.ObjectId().toString();
@@ -111,6 +112,14 @@ describe('VendorsService', () => {
         makeChainable({ email: 'org@test.com', fullName: 'Org' }),
       ),
     };
+    eventModel = {
+      findById: jest.fn().mockReturnValue(
+        makeChainable({
+          title: 'Test Event',
+          organizer: { toString: () => userId },
+        }),
+      ),
+    };
 
     testingModule = await Test.createTestingModule({
       providers: [
@@ -118,17 +127,7 @@ describe('VendorsService', () => {
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
         { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
         { provide: getModelToken(User.name), useValue: userModel },
-        {
-          provide: getModelToken(Event.name),
-          useValue: {
-            findById: jest.fn().mockReturnValue(
-              makeChainable({
-                title: 'Test Event',
-                organizer: { toString: () => userId },
-              }),
-            ),
-          },
-        },
+        { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: NotificationsService, useValue: notificationsService },
         { provide: EmailsService, useValue: emailsService },
         { provide: ConfigService, useValue: { getOrThrow: jest.fn().mockReturnValue('http://localhost:3000') } },
@@ -263,6 +262,23 @@ describe('VendorsService', () => {
 
   // ── createRequest ──
   describe('createRequest', () => {
+    it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse une nouvelle demande sur un événement terminal (%s)',
+      async (status) => {
+        eventModel.findById.mockReturnValue(
+          makeChainable({ organizer: { toString: () => userId }, status }),
+        );
+
+        await expect(
+          service.createRequest(eventId, userId, {
+            vendorId,
+            source: VendorRequestSource.PLATFORM,
+          }),
+        ).rejects.toThrow(ConflictException);
+        expect(vendorRequestModel.create).not.toHaveBeenCalled();
+      },
+    );
+
     it('devrait créer une demande plateforme avec un vendorId', async () => {
       const dto = { vendorId, source: VendorRequestSource.PLATFORM, message: 'Bonjour' };
       vendorRequestModel.create.mockResolvedValue(mockRequest());

@@ -99,7 +99,7 @@ export class EventsController {
   @ApiOperation({ summary: 'Mes événements (organisateur connecté)' })
   @ApiQuery({ name: 'page', required: false, type: Number })
   @ApiQuery({ name: 'limit', required: false, type: Number })
-  @ApiQuery({ name: 'status', required: false, enum: ['draft', 'published', 'cancelled', 'completed'] })
+  @ApiQuery({ name: 'status', required: false, enum: ['draft', 'published', 'ongoing', 'cancelled', 'completed'] })
   @ApiResponse({ status: 200, description: 'Liste paginée des événements de l\'organisateur' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Rôle insuffisant' })

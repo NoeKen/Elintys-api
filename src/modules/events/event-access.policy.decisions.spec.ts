@@ -119,6 +119,12 @@ describe('canViewEvent', () => {
     ).toEqual({ allowed: false, reason: 'EVENT_NOT_PUBLISHED' });
   });
 
+  it('autorise un événement en cours sans confondre accès et admission', () => {
+    expect(
+      canViewEvent({ userId: 'tiers' }, event({ status: EventStatus.ONGOING })),
+    ).toEqual({ allowed: true, reason: 'PUBLIC_DETAILS' });
+  });
+
   it('devrait autoriser la consultation d’un événement unlisted', () => {
     expect(
       canViewEvent({ userId: 'tiers' }, event({ discoverability: EventDiscoverability.UNLISTED })).allowed,

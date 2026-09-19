@@ -13,7 +13,7 @@ import { VenueBooking, VenueBookingSchema, VenueBookingStatus, VenueProfile, Ven
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
-import { Event } from '../events/event.schema';
+import { Event, EventStatus } from '../events/event.schema';
 import { NotificationType } from '../notifications/notification.schema';
 
 const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
@@ -249,6 +249,25 @@ describe('VenuesService', () => {
       bookingStart: '2025-12-01T18:00:00Z',
       bookingEnd: '2025-12-02T02:00:00Z',
     };
+
+    it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse une nouvelle réservation sur un événement terminal (%s)',
+      async (status) => {
+        eventModel.findById.mockReturnValue(
+          makeChainable({
+            organizer: { toString: () => userId },
+            title: 'Terminé',
+            status,
+          }),
+        );
+        venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+
+        await expect(
+          service.requestBooking(eventId, userId, dto as never),
+        ).rejects.toThrow(ConflictException);
+        expect(venueBookingModel.create).not.toHaveBeenCalled();
+      },
+    );
 
     it('devrait créer une réservation avec les bonnes dates', async () => {
       venueBookingModel.create.mockResolvedValue(mockBooking());

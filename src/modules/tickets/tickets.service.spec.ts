@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,7 +10,7 @@ import { ClientSession, Types } from 'mongoose';
 import { TicketsService } from './tickets.service';
 import { TicketType, TicketPurchase, TicketPurchaseStatus, TicketPurchaseSchema } from './ticket.schema';
 import { PurchaseTicketDto } from './dto/purchase-ticket.dto';
-import { Event } from '../events/event.schema';
+import { Event, EventStatus } from '../events/event.schema';
 import { EventAccessService } from '../events/event-access.service';
 import { IdempotencyService } from '../../shared/consistency/idempotency/idempotency.service';
 import { InsufficientCapacityError } from '../../shared/consistency/errors/consistency.errors';
@@ -178,6 +179,22 @@ describe('TicketsService', () => {
       ).rejects.toThrow('PAID_TICKET_PRICE_REQUIRED');
       expect(ticketTypeModel.create).not.toHaveBeenCalled();
     });
+
+    it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse toute création sur un événement terminal (%s)',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+
+        await expect(
+          service.createTicketType(eventId, organizerId, {
+            name: 'Fermé',
+            isFree: true,
+            quantity: 10,
+          } as never),
+        ).rejects.toThrow(ConflictException);
+        expect(ticketTypeModel.create).not.toHaveBeenCalled();
+      },
+    );
   });
 
   // ── findTicketTypes ──
@@ -554,6 +571,18 @@ describe('TicketsService', () => {
       expect(ticketPurchaseModel.findOneAndUpdate).not.toHaveBeenCalled();
       expect(ticketPurchaseModel.findOne).not.toHaveBeenCalled();
     });
+
+    it.each([EventStatus.DRAFT, EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse tout scan lorsque l’événement est %s',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+
+        await expect(
+          service.scan(eventId, 'ABCD-EFGH-IJKL', organizerId, ['organisateur']),
+        ).rejects.toThrow(ConflictException);
+        expect(ticketPurchaseModel.findOneAndUpdate).not.toHaveBeenCalled();
+      },
+    );
 
     it('autorise un admin sur un événement dont il n\'est pas propriétaire', async () => {
       admitOnce();

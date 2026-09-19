@@ -31,6 +31,7 @@ import { Event, EventDocument } from '../events/event.schema';
 import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
 import { canManageEvent } from '../events/event-access.policy';
+import { isTerminalEventStatus } from '../events/event-lifecycle.state-machine';
 
 /**
  * Projection des routes PUBLIQUES — voir VendorsService pour le raisonnement :
@@ -136,12 +137,15 @@ export class VenuesService {
     if (end <= start) throw new BadRequestException(ErrorCodes.INVALID_DATE_RANGE);
 
     const [event, venue] = await Promise.all([
-      this.eventModel.findById(eventId).lean().select('organizer title'),
+      this.eventModel.findById(eventId).lean().select('organizer title status'),
       this.venueModel.findOne({ _id: dto.venueId, isActive: true }).lean().select('_id user name'),
     ]);
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId: organizerId, roles }, event).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    if (isTerminalEventStatus(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
     }
     if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
 

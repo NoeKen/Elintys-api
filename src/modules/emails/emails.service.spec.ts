@@ -217,6 +217,10 @@ describe('EmailsService', () => {
       startDate: attack,
       eventUrl: 'http://localhost:3000/evenements/test',
     });
+    await service.sendEventCancellation('user@exemple.ca', {
+      fullName: attack,
+      eventTitle: attack,
+    });
     await service.sendRatingReminder('user@exemple.ca', {
       fullName: attack,
       eventTitle: attack,
@@ -236,6 +240,35 @@ describe('EmailsService', () => {
     for (const [input] of mockResendSend.mock.calls) {
       expect((input as { html: string }).html).not.toContain('<img src=x');
     }
+  });
+
+  it('annonce une annulation sans prétendre avoir remboursé un paiement', async () => {
+    mockResendSend.mockResolvedValue({ data: { id: 'email-id-cancellation' }, error: null });
+
+    await service.sendEventCancellation('user@exemple.ca', {
+      fullName: 'Camille',
+      eventTitle: 'Gala Boréal',
+    });
+
+    expect(mockResendSend).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: 'Événement annulé — Gala Boréal',
+        html: expect.stringContaining("aucune action financière n'est réalisée automatiquement"),
+      }),
+    );
+    expect(mockResendSend.mock.calls[0][0].html).not.toContain('remboursé');
+  });
+
+  it('ne transmet aucun saut de ligne contrôlé par le titre dans le sujet', async () => {
+    mockResendSend.mockResolvedValue({ data: { id: 'email-id-cancellation' }, error: null });
+
+    await service.sendEventCancellation('user@exemple.ca', {
+      fullName: 'Camille',
+      eventTitle: 'Gala\r\nBcc: autre@exemple.ca',
+    });
+
+    const subject = (mockResendSend.mock.calls[0][0] as { subject: string }).subject;
+    expect(subject).not.toMatch(/[\r\n]/);
   });
 
   describe('sendVenueBookingUpdate', () => {

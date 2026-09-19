@@ -18,6 +18,7 @@ import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
+import { isTerminalEventStatus } from '../events/event-lifecycle.state-machine';
 
 /**
  * Projection des routes PUBLIQUES.
@@ -150,10 +151,13 @@ export class VendorsService {
     const event = await this.eventModel
       .findById(eventId)
       .lean()
-      .select('organizer');
+      .select('organizer status');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    if (isTerminalEventStatus(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
     }
 
     const duplicateFilter = dto.vendorId

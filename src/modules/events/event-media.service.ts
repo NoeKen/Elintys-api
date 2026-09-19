@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -22,7 +23,7 @@ import {
   MEDIA_STORAGE,
   MediaStorage,
 } from '../media/media-storage.interface';
-import { Event, EventDocument } from './event.schema';
+import { Event, EventDocument, EventStatus } from './event.schema';
 import { canManageEvent } from './event-access.policy';
 import { getMediaRootPrefix } from '../media/media-environment';
 
@@ -31,7 +32,7 @@ export interface EventMediaState {
   gallery: MediaImage[];
 }
 
-type EventMediaSnapshot = Pick<Event, 'coverImage' | 'gallery' | 'organizer'> & {
+type EventMediaSnapshot = Pick<Event, 'coverImage' | 'gallery' | 'organizer' | 'status'> & {
   _id: Types.ObjectId;
 };
 
@@ -75,6 +76,7 @@ export class EventMediaService {
           {
             _id: new Types.ObjectId(eventId),
             organizer: new Types.ObjectId(organizerId),
+            status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
           },
           { $set: { coverImage: uploaded } },
           { new: true, runValidators: true },
@@ -88,6 +90,7 @@ export class EventMediaService {
 
     if (!updated) {
       await this.cleanupUploadedMedia([uploaded], 'cover ownership rollback');
+      await this.findOwnedMedia(eventId, organizerId, roles);
       throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     }
 
@@ -115,13 +118,17 @@ export class EventMediaService {
         {
           _id: new Types.ObjectId(eventId),
           organizer: new Types.ObjectId(organizerId),
+          status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
         },
         { $unset: { coverImage: 1 } },
         { new: true },
       )
       .lean()
       .select('coverImage gallery');
-    if (!updated) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    if (!updated) {
+      await this.findOwnedMedia(eventId, organizerId, roles);
+      throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    }
 
     if (
       isManagedMediaImage(event.coverImage) &&
@@ -182,6 +189,7 @@ export class EventMediaService {
           {
             _id: new Types.ObjectId(eventId),
             organizer: new Types.ObjectId(organizerId),
+            status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
             $expr: {
               $lte: [
                 {
@@ -206,6 +214,7 @@ export class EventMediaService {
 
     if (!updated) {
       await this.cleanupUploadedMedia(uploaded, 'gallery capacity rollback');
+      await this.findOwnedMedia(eventId, organizerId, roles);
       throw new BadRequestException('EVENT_GALLERY_LIMIT_EXCEEDED');
     }
     return this.toMediaState(updated);
@@ -231,6 +240,7 @@ export class EventMediaService {
         {
           _id: new Types.ObjectId(eventId),
           organizer: new Types.ObjectId(organizerId),
+          status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
           'gallery.publicId': publicId,
         },
         { $pull: { gallery: { publicId } } },
@@ -238,7 +248,10 @@ export class EventMediaService {
       )
       .lean()
       .select('coverImage gallery');
-    if (!updated) return this.toMediaState(event);
+    if (!updated) {
+      const latest = await this.findOwnedMedia(eventId, organizerId, roles);
+      return this.toMediaState(latest);
+    }
 
     await this.deleteBestEffort(publicId, 'deleted gallery image');
     return this.toMediaState(updated);
@@ -274,10 +287,13 @@ export class EventMediaService {
     const event = await this.eventModel
       .findById(eventId)
       .lean<EventMediaSnapshot>()
-      .select('organizer coverImage gallery');
+      .select('organizer status coverImage gallery');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId: organizerId, roles }, event as never).allowed) {
       throw new ForbiddenException(ErrorCodes.EVENT_NOT_OWNER);
+    }
+    if ([EventStatus.COMPLETED, EventStatus.CANCELLED].includes(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
     }
     return event;
   }

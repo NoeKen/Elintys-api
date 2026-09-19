@@ -1,10 +1,10 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { GuestsService } from './guests.service';
 import { Guest } from './guest.schema';
-import { Event } from '../events/event.schema';
+import { Event, EventStatus } from '../events/event.schema';
 
 // Ferme le module Nest après chaque test : sans cela, des handles
 // restent ouverts et Jest force la sortie du worker (finding F-011).
@@ -110,6 +110,18 @@ describe('GuestsService', () => {
         service.create('id-inexistant', organizerId, { name: 'Marie' } as never),
       ).rejects.toThrow(NotFoundException);
     });
+
+    it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse la création sur un événement terminal (%s)',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+
+        await expect(
+          service.create(eventId, organizerId, { name: 'Marie' } as never),
+        ).rejects.toThrow(ConflictException);
+        expect(guestModel.create).not.toHaveBeenCalled();
+      },
+    );
   });
 
   // ── findAll ──

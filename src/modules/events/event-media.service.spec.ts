@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -7,7 +8,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventMediaService } from './event-media.service';
-import { Event } from './event.schema';
+import { Event, EventStatus } from './event.schema';
 import { ImageFileValidationService } from '../media/image-file-validation.service';
 import {
   MEDIA_STORAGE,
@@ -212,6 +213,37 @@ describe('EventMediaService', () => {
     expect(storage.uploadImage).not.toHaveBeenCalled();
   });
 
+  it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+    'refuse les mutations média sur un événement terminal (%s)',
+    async (status) => {
+      eventModel.findById.mockReturnValue(chain(ownedEvent({ status })));
+
+      await expect(
+        service.uploadCover(eventId, organizerId, file),
+      ).rejects.toThrow(ConflictException);
+      expect(storage.uploadImage).not.toHaveBeenCalled();
+    },
+  );
+
+  it('annule et nettoie un upload si l’événement devient terminal avant l’écriture Mongo', async () => {
+    eventModel.findById
+      .mockReturnValueOnce(chain(ownedEvent({ status: EventStatus.PUBLISHED })))
+      .mockReturnValueOnce(chain(ownedEvent({ status: EventStatus.CANCELLED })));
+    storage.uploadImage.mockResolvedValue(uploadedCover);
+    eventModel.findOneAndUpdate.mockReturnValue(chain(null));
+
+    await expect(service.uploadCover(eventId, organizerId, file))
+      .rejects.toThrow(ConflictException);
+    expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(storage.deleteImage).toHaveBeenCalledWith(uploadedCover.publicId);
+  });
+
   it('refuse une galerie qui dépasserait dix images', async () => {
     eventModel.findById.mockReturnValue(
       chain(
@@ -259,6 +291,29 @@ describe('EventMediaService', () => {
       { $push: { gallery: { $each: [first, second] } } },
       { new: true, runValidators: true },
     );
+  });
+
+  it('nettoie la galerie si une annulation gagne la course avec son ajout', async () => {
+    const image = {
+      ...uploadedCover,
+      publicId: `Elintys/dev/events/${eventId}/gallery/late-image`,
+    };
+    eventModel.findById
+      .mockReturnValueOnce(chain(ownedEvent({ status: EventStatus.PUBLISHED })))
+      .mockReturnValueOnce(chain(ownedEvent({ status: EventStatus.CANCELLED })));
+    storage.uploadImage.mockResolvedValue(image);
+    eventModel.findOneAndUpdate.mockReturnValue(chain(null));
+
+    await expect(service.uploadGallery(eventId, organizerId, [file]))
+      .rejects.toThrow(ConflictException);
+    expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
+      }),
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(storage.deleteImage).toHaveBeenCalledWith(image.publicId);
   });
 
   it('nettoie les uploads réussis lorsqu’un lot galerie échoue partiellement', async () => {

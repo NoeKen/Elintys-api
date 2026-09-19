@@ -1,10 +1,11 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import { EventsService } from './events.service';
 import {
   Event,
+  AdmissionMode,
   EventAccessPolicyType,
   EventDiscoverability,
   EventStatus,
@@ -12,11 +13,17 @@ import {
 } from './event.schema';
 import { EventMediaService } from './event-media.service';
 import { EventAccessService } from './event-access.service';
-import { TicketType } from '../tickets/ticket.schema';
+import { TicketPurchase, TicketType } from '../tickets/ticket.schema';
 import { EventAccessRequest } from './event-access-request.schema';
 import { User } from '../auth/user.schema';
 import { VenueProfile } from '../venues/venue.schema';
 import { VendorProfile, VendorRequest } from '../vendors/vendor.schema';
+import { TicketOrder, TicketOrderStatus } from '../tickets/orders/ticket-order.schema';
+import { EventRegistration } from '../event-registration/event-registration.schema';
+import { Invitation } from '../invitations/invitation.schema';
+import { Guest, GuestStatus } from '../guests/guest.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailsService } from '../emails/emails.service';
 import {
   OrganizerEventDate,
   OrganizerEventProgress,
@@ -58,10 +65,20 @@ describe('EventsService', () => {
     find: jest.fn(),
   };
   const accessRequestModel = { aggregate: jest.fn().mockResolvedValue([]) };
-  const userModel = { findById: jest.fn() };
+  const userModel = { findById: jest.fn(), find: jest.fn() };
   const venueModel = { findOne: jest.fn() };
   const vendorModel = { find: jest.fn() };
   const vendorRequestModel = { find: jest.fn() };
+  const ticketOrderModel = { countDocuments: jest.fn().mockResolvedValue(0) };
+  const ticketPurchaseModel = {
+    countDocuments: jest.fn().mockResolvedValue(0),
+    find: jest.fn(),
+  };
+  const registrationModel = { find: jest.fn() };
+  const invitationModel = { find: jest.fn() };
+  const guestModel = { find: jest.fn() };
+  const notificationsService = { create: jest.fn().mockResolvedValue(undefined) };
+  const emailsService = { sendEventCancellation: jest.fn().mockResolvedValue(undefined) };
 
   const organizerId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
@@ -89,6 +106,8 @@ describe('EventsService', () => {
       findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       findByIdAndDelete: jest.fn(),
+      findOneAndDelete: jest.fn(),
+      findOneAndUpdate: jest.fn(),
       countDocuments: jest.fn(),
       aggregate: jest.fn(),
       create: jest.fn(),
@@ -97,14 +116,21 @@ describe('EventsService', () => {
     eventModel.find.mockReturnValue(makeChainable([mockEvent()]));
     eventModel.findById.mockReturnValue(makeChainable(mockEvent()));
     eventModel.findByIdAndUpdate.mockReturnValue(makeChainable(mockEvent()));
+    eventModel.findOneAndDelete.mockReturnValue(makeChainable(mockEvent()));
+    eventModel.findOneAndUpdate.mockReturnValue(makeChainable(mockEvent()));
     eventModel.findOne.mockReturnValue(makeChainable(null));
     eventModel.countDocuments.mockResolvedValue(1);
     eventModel.aggregate.mockResolvedValue([]);
     ticketTypeModel.find.mockReturnValue(makeChainable([]));
     userModel.findById.mockReturnValue(makeChainable(null));
+    userModel.find.mockReturnValue(makeChainable([]));
     venueModel.findOne.mockReturnValue(makeChainable(null));
     vendorModel.find.mockReturnValue(makeChainable([]));
     vendorRequestModel.find.mockReturnValue(makeChainable([]));
+    ticketPurchaseModel.find.mockReturnValue(makeChainable([]));
+    registrationModel.find.mockReturnValue(makeChainable([]));
+    invitationModel.find.mockReturnValue(makeChainable([]));
+    guestModel.find.mockReturnValue(makeChainable([]));
 
     testingModule = await Test.createTestingModule({
       providers: [
@@ -116,8 +142,15 @@ describe('EventsService', () => {
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
         { provide: getModelToken(VendorProfile.name), useValue: vendorModel },
         { provide: getModelToken(VendorRequest.name), useValue: vendorRequestModel },
+        { provide: getModelToken(TicketOrder.name), useValue: ticketOrderModel },
+        { provide: getModelToken(TicketPurchase.name), useValue: ticketPurchaseModel },
+        { provide: getModelToken(EventRegistration.name), useValue: registrationModel },
+        { provide: getModelToken(Invitation.name), useValue: invitationModel },
+        { provide: getModelToken(Guest.name), useValue: guestModel },
         { provide: EventMediaService, useValue: eventMediaService },
         { provide: EventAccessService, useValue: eventAccessService },
+        { provide: NotificationsService, useValue: notificationsService },
+        { provide: EmailsService, useValue: emailsService },
       ],
     }).compile();
 
@@ -160,7 +193,7 @@ describe('EventsService', () => {
 
       expect(eventModel.find).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: EventStatus.PUBLISHED,
+          status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
           $or: expect.any(Array),
         }),
       );
@@ -218,7 +251,7 @@ describe('EventsService', () => {
         expect.arrayContaining([
           {
             $match: expect.objectContaining({
-              status: EventStatus.PUBLISHED,
+              status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
               $or: expect.any(Array),
             }),
           },
@@ -251,11 +284,39 @@ describe('EventsService', () => {
     it('met à jour et retourne l\'événement modifié', async () => {
       const dto = { title: 'Titre modifié' };
       const updated = mockEvent({ title: dto.title });
-      eventModel.findByIdAndUpdate.mockReturnValue(makeChainable(updated));
+      eventModel.findOneAndUpdate.mockReturnValue(makeChainable(updated));
 
       const result = await service.update(eventId, organizerId, dto as never);
 
       expect(result.title).toBe('Titre modifié');
+      expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: eventId, status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] } },
+        dto,
+        { new: true, runValidators: true },
+      );
+    });
+
+    it.each([EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse de modifier un événement terminal (%s)',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+        await expect(service.update(eventId, organizerId, { title: 'Non' })).rejects.toThrow(
+          ConflictException,
+        );
+        expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuse un PATCH concurrent arrivé après la transition terminale', async () => {
+      eventModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      await expect(service.update(eventId, organizerId, { title: 'Tardif' })).rejects.toThrow(
+        ConflictException,
+      );
+      expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { _id: eventId, status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] } },
+        { title: 'Tardif' },
+        { new: true, runValidators: true },
+      );
     });
 
     it('lève ForbiddenException si l\'utilisateur n\'est pas l\'organisateur', async () => {
@@ -274,15 +335,25 @@ describe('EventsService', () => {
   // ── remove ──
   describe('remove', () => {
     it('supprime l\'événement si l\'utilisateur est l\'organisateur', async () => {
-      eventModel.findByIdAndDelete.mockResolvedValue({});
-
       await expect(service.remove(eventId, organizerId)).resolves.toBeUndefined();
-      expect(eventModel.findByIdAndDelete).toHaveBeenCalledWith(eventId);
+      expect(eventModel.findOneAndDelete).toHaveBeenCalledWith({
+        _id: eventId,
+        status: EventStatus.DRAFT,
+      });
       expect(eventMediaService.cleanupAfterEventDeletion).toHaveBeenCalledWith(
         eventId,
         expect.objectContaining({ organizer: expect.anything() }),
       );
     });
+
+    it.each([EventStatus.PUBLISHED, EventStatus.ONGOING, EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse de supprimer un événement %s',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+        await expect(service.remove(eventId, organizerId)).rejects.toThrow(ConflictException);
+        expect(eventMediaService.cleanupAfterEventDeletion).not.toHaveBeenCalled();
+      },
+    );
 
     it('lève ForbiddenException si l\'utilisateur n\'est pas l\'organisateur', async () => {
       await expect(service.remove(eventId, 'autre-user-id')).rejects.toThrow(ForbiddenException);
@@ -299,12 +370,20 @@ describe('EventsService', () => {
   describe('publish', () => {
     it('passe le statut de l\'événement à "published"', async () => {
       const published = mockEvent({ status: EventStatus.PUBLISHED });
-      eventModel.findByIdAndUpdate.mockReturnValue(makeChainable(published));
+      eventModel.findOneAndUpdate.mockReturnValue(makeChainable(published));
 
       const result = await service.publish(eventId, organizerId);
 
       expect(result.status).toBe(EventStatus.PUBLISHED);
     });
+
+    it.each([EventStatus.PUBLISHED, EventStatus.ONGOING, EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse de republier depuis %s',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+        await expect(service.publish(eventId, organizerId)).rejects.toThrow(ConflictException);
+      },
+    );
 
     it('retourne la readiness au propriétaire et protège les autres utilisateurs', async () => {
       ticketTypeModel.countDocuments
@@ -323,12 +402,143 @@ describe('EventsService', () => {
   // ── cancel ──
   describe('cancel', () => {
     it('passe le statut de l\'événement à "cancelled"', async () => {
-      const cancelled = mockEvent({ status: EventStatus.CANCELLED });
-      eventModel.findByIdAndUpdate.mockReturnValue(makeChainable(cancelled));
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status: EventStatus.PUBLISHED })));
+      const cancelled = mockEvent({ status: EventStatus.CANCELLED, cancelledAt: expect.any(Date) });
+      eventModel.findOneAndUpdate.mockReturnValue(makeChainable(cancelled));
 
       const result = await service.cancel(eventId, organizerId);
 
       expect(result.status).toBe(EventStatus.CANCELLED);
+      expect(eventModel.findOneAndUpdate).toHaveBeenCalledWith(
+        {
+          _id: eventId,
+          status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
+          admissionModes: { $ne: AdmissionMode.PAID_TICKET },
+        },
+        expect.objectContaining({ $set: expect.objectContaining({ status: EventStatus.CANCELLED }) }),
+        expect.objectContaining({ new: true, runValidators: true }),
+      );
+    });
+
+    it('bloque l’annulation si une commande payée existe', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status: EventStatus.PUBLISHED })));
+      ticketOrderModel.countDocuments.mockResolvedValueOnce(1);
+
+      await expect(service.cancel(eventId, organizerId)).rejects.toThrow(ConflictException);
+      expect(ticketOrderModel.countDocuments).toHaveBeenCalledWith({
+        event: new Types.ObjectId(eventId),
+        status: { $in: [TicketOrderStatus.PAID, TicketOrderStatus.PENDING_PAYMENT] },
+      });
+      expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuse aussi une commande en attente de règlement', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status: EventStatus.ONGOING })));
+      ticketOrderModel.countDocuments.mockResolvedValueOnce(1);
+      await expect(service.cancel(eventId, organizerId)).rejects.toThrow(ConflictException);
+      expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('bloque fail-closed une admission payante configurée même sans commande', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({
+        status: EventStatus.PUBLISHED,
+        admissionModes: [AdmissionMode.PAID_TICKET],
+      })));
+      await expect(service.cancel(eventId, organizerId)).rejects.toThrow(ConflictException);
+      expect(ticketOrderModel.countDocuments).not.toHaveBeenCalled();
+      expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('bloque un type de billet payant conservé après retrait du mode d’admission', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({
+        status: EventStatus.PUBLISHED,
+        admissionModes: [AdmissionMode.REGISTRATION_ONLY],
+      })));
+      ticketTypeModel.countDocuments.mockResolvedValueOnce(1);
+
+      await expect(service.cancel(eventId, organizerId)).rejects.toThrow(ConflictException);
+      expect(ticketTypeModel.countDocuments).toHaveBeenCalledWith({
+        event: new Types.ObjectId(eventId),
+        $or: [{ isFree: false }, { price: { $gt: 0 } }],
+      });
+      expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('bloque aussi un billet payant legacy sans commande', async () => {
+      eventModel.findById.mockReturnValue(
+        makeChainable(mockEvent({ status: EventStatus.PUBLISHED })),
+      );
+      ticketPurchaseModel.countDocuments.mockResolvedValueOnce(1);
+
+      await expect(service.cancel(eventId, organizerId)).rejects.toThrow(
+        ConflictException,
+      );
+      expect(ticketPurchaseModel.countDocuments).toHaveBeenCalledWith({
+        event: new Types.ObjectId(eventId),
+        order: null,
+        price: { $gt: 0 },
+        status: { $in: ['valid', 'used'] },
+      });
+      expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('informe une seule fois les participants connus après la transition gagnante', async () => {
+      const participantId = new Types.ObjectId();
+      eventModel.findById.mockReturnValue(
+        makeChainable(mockEvent({ status: EventStatus.PUBLISHED, title: 'Gala Boréal' })),
+      );
+      eventModel.findOneAndUpdate.mockReturnValue(
+        makeChainable(mockEvent({ status: EventStatus.CANCELLED })),
+      );
+      registrationModel.find.mockReturnValue(
+        makeChainable([{ participantId }]),
+      );
+      userModel.find.mockReturnValue(
+        makeChainable([{ _id: participantId, email: 'participant@example.com', fullName: 'Camille' }]),
+      );
+
+      await service.cancel(eventId, organizerId);
+
+      expect(notificationsService.create).toHaveBeenCalledWith(
+        participantId.toString(),
+        'EVENT_CANCELLED',
+        { eventId, eventTitle: 'Gala Boréal' },
+      );
+      expect(emailsService.sendEventCancellation).toHaveBeenCalledWith(
+        'participant@example.com',
+        { fullName: 'Camille', eventTitle: 'Gala Boréal' },
+      );
+    });
+
+    it('avertit par e-mail les invités ayant une adresse réelle, sans doublon', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status: EventStatus.PUBLISHED })));
+      eventModel.findOneAndUpdate.mockReturnValue(makeChainable(mockEvent({ status: EventStatus.CANCELLED })));
+      guestModel.find.mockReturnValue(makeChainable([
+        { email: 'invite@example.com', status: GuestStatus.CONFIRMED },
+        { email: 'invite@example.com', status: GuestStatus.INVITED },
+      ]));
+
+      await service.cancel(eventId, organizerId);
+
+      expect(emailsService.sendEventCancellation).toHaveBeenCalledTimes(1);
+      expect(emailsService.sendEventCancellation).toHaveBeenCalledWith(
+        'invite@example.com',
+        expect.objectContaining({ eventTitle: 'Gala de printemps' }),
+      );
+    });
+
+    it.each([EventStatus.DRAFT, EventStatus.COMPLETED, EventStatus.CANCELLED])(
+      'refuse l’annulation depuis %s',
+      async (status) => {
+        eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status })));
+        await expect(service.cancel(eventId, organizerId)).rejects.toThrow(ConflictException);
+      },
+    );
+
+    it('refuse une annulation concurrente perdue', async () => {
+      eventModel.findById.mockReturnValue(makeChainable(mockEvent({ status: EventStatus.PUBLISHED })));
+      eventModel.findOneAndUpdate.mockReturnValue(makeChainable(null));
+      await expect(service.cancel(eventId, organizerId)).rejects.toThrow(ConflictException);
     });
   });
 
@@ -384,7 +594,7 @@ describe('EventsService', () => {
       // Assert
       expect(eventModel.findOne).toHaveBeenCalledWith(expect.objectContaining({
         slug,
-        status: EventStatus.PUBLISHED,
+        status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
         $or: expect.any(Array),
       }));
       expect((result as unknown as Record<string, unknown>).slug).toBe(slug);
@@ -397,7 +607,7 @@ describe('EventsService', () => {
       const vendorId = new Types.ObjectId();
       const event = mockEvent({
         slug,
-        status: EventStatus.PUBLISHED,
+        status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
         admissionModes: ['paid_ticket'],
         venueProfile: venueId,
         accessPolicy: {
@@ -417,7 +627,7 @@ describe('EventsService', () => {
       const related = mockEvent({
         _id: new Types.ObjectId(),
         slug: 'sommet-associe',
-        status: EventStatus.PUBLISHED,
+        status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
         startDate: new Date('2027-08-20T18:00:00.000Z'),
         organizer: new Types.ObjectId(),
       });
@@ -469,7 +679,7 @@ describe('EventsService', () => {
       expect(result.relatedEvents).toHaveLength(1);
       expect(serialized).not.toMatch(/codeHash|allowedDomains|creationProgress|contactEmail|onlineUrl|note interne|prive@/);
       expect(eventModel.find).toHaveBeenCalledWith(expect.objectContaining({
-        status: EventStatus.PUBLISHED,
+        status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
         discoverability: EventDiscoverability.PUBLIC,
         archivedAt: null,
         _id: { $ne: expect.anything() },
