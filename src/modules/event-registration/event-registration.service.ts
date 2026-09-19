@@ -17,7 +17,7 @@ import {
   RegistrationAlreadyExistsError,
   translateMongoE11000,
 } from '../../shared/consistency/errors/consistency.errors';
-import { Event, AdmissionMode, EventDocument, EventStatus } from '../events/event.schema';
+import { Event, AdmissionMode, EventDocument } from '../events/event.schema';
 import {
   EventAccessService,
 } from '../events/event-access.service';
@@ -26,6 +26,7 @@ import {
   normalizeLegacyEventAccess,
 } from '../events/event-access.policy';
 import { QueryEventRegistrationsDto } from './dto/query-event-registrations.dto';
+import { isActiveEventStatus } from '../events/event-lifecycle.state-machine';
 
 export interface EventRegistrationResult {
   _id: string;
@@ -69,7 +70,7 @@ export class EventRegistrationService {
           .lean()
           .select('status archivedAt admissionModes accessPolicy discoverability organizer accessModelVersion');
 
-        if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) {
+        if (!event || !isActiveEventStatus(event.status) || event.archivedAt) {
           throw new NotFoundException('Événement introuvable.');
         }
 

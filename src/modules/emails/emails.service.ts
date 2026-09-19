@@ -24,7 +24,19 @@ export class EmailsService {
     }
 
     this.logger.log('Envoi d’un courriel transactionnel via Resend');
-    const { data, error } = await this.resend.emails.send({ from: this.from, to, subject, html });
+    // Un libellé métier (titre d’événement, nom de lieu…) peut contribuer au
+    // sujet. Neutraliser les contrôles ici protège tous les gabarits contre
+    // l’injection d’en-têtes, indépendamment de leur appelant.
+    const safeSubject = Array.from(subject, (character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint < 32 || codePoint === 127 ? ' ' : character;
+    }).join('').replace(/\s+/g, ' ').trim();
+    const { data, error } = await this.resend.emails.send({
+      from: this.from,
+      to,
+      subject: safeSubject,
+      html,
+    });
 
     if (error) {
       this.logger.error(
@@ -179,6 +191,22 @@ export class EmailsService {
     `);
 
     await this.sendEmail(to, `Rappel — ${opts.eventTitle}`, html);
+  }
+
+  async sendEventCancellation(to: string, opts: {
+    fullName: string;
+    eventTitle: string;
+  }): Promise<void> {
+    const fullName = this.escapeHtml(opts.fullName);
+    const eventTitle = this.escapeHtml(opts.eventTitle);
+    const html = this.baseTemplate(`
+      <h2 style="color:#0D1E35;margin:0 0 16px;">Événement annulé</h2>
+      <p style="color:#444;">Bonjour ${fullName},</p>
+      <p style="color:#444;">L'événement <strong>${eventTitle}</strong> a été annulé par son organisateur.</p>
+      <p style="color:#666;font-size:13px;margin-top:20px;">Si vous avez effectué un paiement, aucune action financière n'est réalisée automatiquement : les modalités vous seront communiquées séparément.</p>
+    `);
+
+    await this.sendEmail(to, `Événement annulé — ${opts.eventTitle}`, html);
   }
 
   // ── E-09 : Invitation à laisser un avis ──

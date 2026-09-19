@@ -30,9 +30,10 @@ import {
   TicketType,
   TicketTypeDocument,
 } from '../ticket.schema';
-import { Event, AdmissionMode, EventDocument, EventStatus } from '../../events/event.schema';
+import { Event, AdmissionMode, EventDocument } from '../../events/event.schema';
 import { EventAccessService } from '../../events/event-access.service';
 import { canPurchaseTicket, normalizeLegacyEventAccess } from '../../events/event-access.policy';
+import { isActiveEventStatus } from '../../events/event-lifecycle.state-machine';
 import { IdempotencyService } from '../../../shared/consistency/idempotency/idempotency.service';
 import { TransactionService } from '../../../shared/consistency/transactions/transaction.service';
 import { CriticalOperationLogger } from '../../../shared/consistency/observability/critical-operation.logger';
@@ -262,7 +263,7 @@ export class TicketOrdersService {
       .session(session)
       .lean()
       .select('-accessPolicy.codeHash');
-    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) {
+    if (!event || !isActiveEventStatus(event.status) || event.archivedAt) {
       throw new NotFoundException('Événement introuvable.');
     }
     if (!(event.admissionModes ?? []).includes(AdmissionMode.PAID_TICKET)) {

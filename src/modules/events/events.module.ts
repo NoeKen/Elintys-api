@@ -13,7 +13,12 @@ import {
 } from './event-access-request.schema';
 import { User, UserSchema } from '../auth/user.schema';
 import { Guest, GuestSchema } from '../guests/guest.schema';
-import { TicketType, TicketTypeSchema } from '../tickets/ticket.schema';
+import {
+  TicketPurchase,
+  TicketPurchaseSchema,
+  TicketType,
+  TicketTypeSchema,
+} from '../tickets/ticket.schema';
 import { Invitation, InvitationSchema } from '../invitations/invitation.schema';
 import { VenueProfile, VenueProfileSchema } from '../venues/venue.schema';
 import {
@@ -23,6 +28,13 @@ import {
   VendorRequestSchema,
 } from '../vendors/vendor.schema';
 import { InvitationsModule } from '../invitations/invitations.module';
+import { EventLifecycleScheduler } from './event-lifecycle.scheduler';
+import { TicketOrder, TicketOrderSchema } from '../tickets/orders/ticket-order.schema';
+import {
+  EventRegistration,
+  EventRegistrationSchema,
+} from '../event-registration/event-registration.schema';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -36,13 +48,22 @@ import { InvitationsModule } from '../invitations/invitations.module';
       { name: VenueProfile.name, schema: VenueProfileSchema },
       { name: VendorProfile.name, schema: VendorProfileSchema },
       { name: VendorRequest.name, schema: VendorRequestSchema },
+      { name: TicketOrder.name, schema: TicketOrderSchema },
+      { name: TicketPurchase.name, schema: TicketPurchaseSchema },
+      { name: EventRegistration.name, schema: EventRegistrationSchema },
     ]),
     JwtModule.register({}),
     MediaModule,
     InvitationsModule,
+    NotificationsModule,
   ],
   controllers: [EventsController],
-  providers: [EventsService, EventMediaService, EventAccessService],
+  providers: [
+    EventsService,
+    EventMediaService,
+    EventAccessService,
+    EventLifecycleScheduler,
+  ],
   exports: [EventsService, EventAccessService, MongooseModule],
 })
 export class EventsModule {}

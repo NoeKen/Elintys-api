@@ -42,6 +42,12 @@ import {
 } from './event.schema';
 import { EventAccessPolicyDto } from './dto/create-event.dto';
 import { UpdateEventAccessConfigurationDto } from './dto/update-event-access-configuration.dto';
+import {
+  ACTIVE_EVENT_STATUSES,
+  isActiveEventStatus,
+  isTerminalEventStatus,
+} from './event-lifecycle.state-machine';
+import { ErrorCodes } from '../../shared/constants/error-codes';
 
 type AccessGrantPayload = { sub: string; eventId: string; purpose: 'event-access' };
 
@@ -96,6 +102,9 @@ export class EventAccessService {
     const event = await this.eventModel.findById(eventId).select('+accessPolicy.codeHash').exec();
     if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
     if (!canManageEvent(actor, event).allowed) throw new ForbiddenException('EVENT_NOT_OWNER');
+    if ([EventStatus.COMPLETED, EventStatus.CANCELLED].includes(event.status)) {
+      throw new ConflictException('EVENT_INVALID_STATUS_TRANSITION');
+    }
 
     const prepared = await this.preparePolicy(dto.accessPolicy, event.accessPolicy?.codeHash);
     const candidate = {
@@ -107,17 +116,33 @@ export class EventAccessService {
     const validation = validateEventAccessConfiguration(candidate);
     if (!validation.valid) throw new BadRequestException(validation.errors);
 
-    event.discoverability = dto.discoverability;
-    event.accessPolicy = prepared;
-    event.admissionModes = dto.admissionModes;
-    event.accessModelVersion = 2;
-    await event.save();
-    return this.toSafeEvent(event.toObject());
+    const updated = await this.eventModel
+      .findOneAndUpdate(
+        {
+          _id: eventId,
+          status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] },
+        },
+        {
+          $set: {
+            discoverability: dto.discoverability,
+            accessPolicy: prepared,
+            admissionModes: dto.admissionModes,
+            accessModelVersion: 2,
+          },
+        },
+        { new: true, runValidators: true },
+      )
+      .lean()
+      .select('-__v');
+    if (!updated) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
+    return this.toSafeEvent(updated);
   }
 
   async verifyCode(eventId: string, code: string, requestId?: string): Promise<{ authorized: true; accessGrant: string }> {
     const event = await this.eventModel
-      .findOne({ _id: eventId, status: EventStatus.PUBLISHED, archivedAt: null })
+      .findOne({ _id: eventId, status: { $in: ACTIVE_EVENT_STATUSES }, archivedAt: null })
       .select('+accessPolicy.codeHash accessPolicy.type')
       .exec();
     const hash = event?.accessPolicy?.codeHash;
@@ -149,7 +174,7 @@ export class EventAccessService {
       });
       if (payload.purpose !== 'event-access') throw new Error('invalid purpose');
       const eventQuery = this.eventModel
-        .findOne({ _id: payload.eventId, status: EventStatus.PUBLISHED, archivedAt: null })
+        .findOne({ _id: payload.eventId, status: { $in: ACTIVE_EVENT_STATUSES }, archivedAt: null })
         .lean()
         .select('-__v -accessPolicy.codeHash');
       if (session) eventQuery.session(session);
@@ -167,7 +192,7 @@ export class EventAccessService {
       this.eventModel.findById(eventId).lean().select('accessPolicy status archivedAt'),
       this.userModel.findById(userId).lean().select('email isEmailVerified'),
     ]);
-    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) throw new NotFoundException('EVENT_NOT_FOUND');
+    if (!event || !isActiveEventStatus(event.status) || event.archivedAt) throw new NotFoundException('EVENT_NOT_FOUND');
     if (event.accessPolicy?.type !== EventAccessPolicyType.EMAIL_DOMAIN) throw new BadRequestException('EMAIL_DOMAIN_POLICY_NOT_ACTIVE');
     if (!user?.isEmailVerified) {
       this.logDecision(eventId, 'email_domain', 'denied', 'VERIFIED_EMAIL_REQUIRED', requestId);
@@ -181,7 +206,7 @@ export class EventAccessService {
 
   async findAuthorizedEvent(eventId: string, userId: string, accessGrant?: string, requestId?: string): Promise<Event> {
     const event = await this.eventModel
-      .findOne({ _id: eventId, status: EventStatus.PUBLISHED, archivedAt: null })
+      .findOne({ _id: eventId, status: { $in: ACTIVE_EVENT_STATUSES }, archivedAt: null })
       .lean()
       .select('-__v -accessPolicy.codeHash');
     if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
@@ -197,7 +222,7 @@ export class EventAccessService {
 
   async requestAccess(eventId: string, userId: string, requestId?: string): Promise<EventAccessRequest> {
     const event = await this.eventModel.findById(eventId).lean().select('accessPolicy status archivedAt');
-    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) throw new NotFoundException('EVENT_NOT_FOUND');
+    if (!event || !isActiveEventStatus(event.status) || event.archivedAt) throw new NotFoundException('EVENT_NOT_FOUND');
     if (event.accessPolicy?.type !== EventAccessPolicyType.MANUAL_APPROVAL) throw new BadRequestException('MANUAL_APPROVAL_NOT_ACTIVE');
     try {
       const request = await this.requestModel.create({ eventId: new Types.ObjectId(eventId), userId: new Types.ObjectId(userId) });
@@ -214,7 +239,10 @@ export class EventAccessService {
       userId: { _id: Types.ObjectId; fullName: string; email: string };
     }
   >> {
-    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    const event = await this.eventModel
+      .findById(eventId)
+      .lean()
+      .select('organizer status');
     if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
     if (!canManageEvent(actor, event).allowed) throw new ForbiddenException('EVENT_NOT_OWNER');
     return this.requestModel
@@ -234,9 +262,15 @@ export class EventAccessService {
     actor: EventActor,
     status: EventAccessRequestStatus.APPROVED | EventAccessRequestStatus.REJECTED,
   ): Promise<EventAccessRequest> {
-    const event = await this.eventModel.findById(eventId).lean().select('organizer');
+    const event = await this.eventModel
+      .findById(eventId)
+      .lean()
+      .select('organizer status');
     if (!event) throw new NotFoundException('EVENT_NOT_FOUND');
     if (!canManageEvent(actor, event).allowed) throw new ForbiddenException('EVENT_NOT_OWNER');
+    if (isTerminalEventStatus(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
     const updated = await this.requestModel.findOneAndUpdate(
       { _id: requestId, eventId: new Types.ObjectId(eventId) },
       { status, reviewedAt: new Date(), reviewedBy: new Types.ObjectId(actor.userId!) },
@@ -323,7 +357,7 @@ export class EventAccessService {
         .lean()
         .select('status requestedAt reviewedAt'),
     ]);
-    if (!event || event.status !== EventStatus.PUBLISHED || event.archivedAt) {
+    if (!event || !isActiveEventStatus(event.status) || event.archivedAt) {
       throw new NotFoundException('EVENT_NOT_FOUND');
     }
     if (event.accessPolicy?.type !== EventAccessPolicyType.MANUAL_APPROVAL) {

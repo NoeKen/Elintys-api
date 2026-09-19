@@ -24,6 +24,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { WaitlistModule } from './modules/waitlist/waitlist.module';
 import { HealthModule } from './modules/health/health.module';
 import { EventRegistrationModule } from './modules/event-registration/event-registration.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { EventRegistrationModule } from './modules/event-registration/event-regi
         limit: THROTTLE_TIERS.PUBLIC_READ.limit,
       },
     ]),
+    ScheduleModule.forRoot(),
     EmailsModule,
     AuthModule,
     EventsModule,

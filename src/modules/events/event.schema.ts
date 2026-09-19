@@ -10,6 +10,7 @@ export type EventDocument = HydratedDocument<Event>;
 export enum EventStatus {
   DRAFT = 'draft',
   PUBLISHED = 'published',
+  ONGOING = 'ongoing',
   CANCELLED = 'cancelled',
   COMPLETED = 'completed',
 }
@@ -245,6 +246,18 @@ export class Event {
   @Prop({ enum: Object.values(EventStatus), default: EventStatus.DRAFT })
   status!: EventStatus;
 
+  @Prop({ type: Date, default: null })
+  publishedAt?: Date | null;
+
+  @Prop({ type: Date, default: null })
+  startedAt?: Date | null;
+
+  @Prop({ type: Date, default: null })
+  completedAt?: Date | null;
+
+  @Prop({ type: Date, default: null })
+  cancelledAt?: Date | null;
+
   /** Archive opérationnelle, indépendante du cycle de vie de publication. */
   @Prop({ type: Date, default: null })
   archivedAt?: Date | null;
@@ -274,6 +287,8 @@ EventSchema.index({ slug: 1 }, { unique: true, sparse: true });
 EventSchema.index({ organizer: 1, status: 1 });
 EventSchema.index({ organizer: 1, archivedAt: 1, updatedAt: -1 });
 EventSchema.index({ startDate: 1 });
+EventSchema.index({ status: 1, startDate: 1 });
+EventSchema.index({ status: 1, endDate: 1 });
 EventSchema.index({ 'location.city': 1, status: 1 });
 EventSchema.index({ eventType: 1, status: 1, visibility: 1 });
 EventSchema.index({ eventType: 1, status: 1, discoverability: 1 });

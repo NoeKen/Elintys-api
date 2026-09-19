@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -38,7 +39,13 @@ import {
   validateEventAccessConfiguration,
   validateEventPublishability,
 } from './event-access.policy';
-import { TicketType, TicketTypeDocument } from '../tickets/ticket.schema';
+import {
+  TicketPurchase,
+  TicketPurchaseDocument,
+  TicketPurchaseStatus,
+  TicketType,
+  TicketTypeDocument,
+} from '../tickets/ticket.schema';
 import {
   EventAccessRequest,
   EventAccessRequestDocument,
@@ -62,6 +69,27 @@ import {
   PublicEventVenue,
   PublicRelatedEvent,
 } from './dto/public-event-detail.dto';
+import {
+  TicketOrder,
+  TicketOrderDocument,
+  TicketOrderStatus,
+} from '../tickets/orders/ticket-order.schema';
+import { ACTIVE_EVENT_STATUSES, isTerminalEventStatus } from './event-lifecycle.state-machine';
+import {
+  EventRegistration,
+  EventRegistrationDocument,
+  EventRegistrationStatus,
+} from '../event-registration/event-registration.schema';
+import {
+  Invitation,
+  InvitationDocument,
+  InvitationStatus,
+  InvitationType,
+} from '../invitations/invitation.schema';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationType } from '../notifications/notification.schema';
+import { EmailsService } from '../emails/emails.service';
+import { Guest, GuestDocument, GuestStatus } from '../guests/guest.schema';
 
 /**
  * Tri stable obligatoire sur toute requête paginée : sans ordre explicite,
@@ -111,6 +139,8 @@ export interface OrganizerDashboardSummary {
 
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(
     @InjectModel(Event.name) private readonly eventModel: Model<EventDocument>,
     @InjectModel(TicketType.name) private readonly ticketTypeModel: Model<TicketTypeDocument>,
@@ -119,8 +149,15 @@ export class EventsService {
     @InjectModel(VenueProfile.name) private readonly venueModel: Model<VenueProfileDocument>,
     @InjectModel(VendorProfile.name) private readonly vendorModel: Model<VendorProfileDocument>,
     @InjectModel(VendorRequest.name) private readonly vendorRequestModel: Model<VendorRequestDocument>,
+    @InjectModel(TicketOrder.name) private readonly ticketOrderModel: Model<TicketOrderDocument>,
+    @InjectModel(TicketPurchase.name) private readonly ticketPurchaseModel: Model<TicketPurchaseDocument>,
+    @InjectModel(EventRegistration.name) private readonly registrationModel: Model<EventRegistrationDocument>,
+    @InjectModel(Invitation.name) private readonly invitationModel: Model<InvitationDocument>,
+    @InjectModel(Guest.name) private readonly guestModel: Model<GuestDocument>,
     private readonly eventMediaService: EventMediaService,
     private readonly eventAccessService: EventAccessService,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailsService: EmailsService,
   ) {}
 
   async create(organizerId: string, dto: CreateEventDto): Promise<Event> {
@@ -172,7 +209,7 @@ export class EventsService {
     const skip = (page - 1) * limit;
 
     const filter: Record<string, unknown> = {
-      status: EventStatus.PUBLISHED,
+      status: { $in: ACTIVE_EVENT_STATUSES },
       archivedAt: null,
       $or: [
         { discoverability: EventDiscoverability.PUBLIC },
@@ -206,7 +243,7 @@ export class EventsService {
     total: number;
   }> {
     const filter = {
-      status: EventStatus.PUBLISHED,
+      status: { $in: ACTIVE_EVENT_STATUSES },
       $or: [
         { discoverability: EventDiscoverability.PUBLIC },
         { accessModelVersion: { $exists: false }, visibility: EventVisibility.PUBLIC },
@@ -221,7 +258,7 @@ export class EventsService {
         { $sort: { count: -1, _id: 1 } },
       ]),
       this.eventModel.countDocuments({
-        status: EventStatus.PUBLISHED,
+        status: { $in: ACTIVE_EVENT_STATUSES },
         archivedAt: null,
         $or: [
           { discoverability: EventDiscoverability.PUBLIC },
@@ -274,6 +311,9 @@ export class EventsService {
     const event = await this.eventModel.findById(id).select('+accessPolicy.codeHash').lean();
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     this.assertCanManage(event, organizerId, roles);
+    if (isTerminalEventStatus(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
 
     const { accessPolicy, ...dtoWithoutAccessPolicy } = dto;
     const preparedPolicy = accessPolicy
@@ -299,9 +339,16 @@ export class EventsService {
       : normalizedDto;
 
     const updated = await this.eventModel
-      .findByIdAndUpdate(id, updatePayload, { new: true, runValidators: true })
+      .findOneAndUpdate(
+        { _id: id, status: { $nin: [EventStatus.COMPLETED, EventStatus.CANCELLED] } },
+        updatePayload,
+        { new: true, runValidators: true },
+      )
       .lean()
       .select('-__v');
+    if (!updated) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
     return this.eventAccessService.toSafeEvent(updated!);
   }
 
@@ -309,10 +356,19 @@ export class EventsService {
     const event = await this.eventModel
       .findById(id)
       .lean()
-      .select('organizer coverImage gallery');
+      .select('organizer status coverImage gallery');
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     this.assertCanManage(event, organizerId, roles);
-    await this.eventModel.findByIdAndDelete(id);
+    if (event.status !== EventStatus.DRAFT) {
+      throw new ConflictException(ErrorCodes.EVENT_DRAFT_ONLY_DELETE);
+    }
+    const deleted = await this.eventModel.findOneAndDelete({
+      _id: id,
+      status: EventStatus.DRAFT,
+    });
+    if (!deleted) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
     await this.eventMediaService.cleanupAfterEventDeletion(id, event);
   }
 
@@ -321,11 +377,26 @@ export class EventsService {
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     this.assertCanManage(event, organizerId, roles);
     if (event.archivedAt) throw new ConflictException('EVENT_ARCHIVED');
+    if (event.status !== EventStatus.DRAFT) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
     const readiness = await this.getPublishReadinessForEvent(event);
     if (!readiness.publishable) {
       throw new ConflictException({ code: 'EVENT_NOT_PUBLISHABLE', ...readiness });
     }
-    return this.update(id, organizerId, { status: EventStatus.PUBLISHED } as UpdateEventDto, roles);
+    const publishedAt = new Date();
+    const updated = await this.eventModel
+      .findOneAndUpdate(
+        { _id: id, status: EventStatus.DRAFT, archivedAt: null },
+        { $set: { status: EventStatus.PUBLISHED, publishedAt } },
+        { new: true, runValidators: true },
+      )
+      .lean()
+      .select('-__v');
+    if (!updated) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
+    return this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(updated));
   }
 
   async getPublishReadiness(id: string, organizerId: string, roles: string[] = []) {
@@ -344,14 +415,153 @@ export class EventsService {
   }
 
   async cancel(id: string, organizerId: string, roles: string[] = []): Promise<Event> {
-    return this.update(id, organizerId, { status: EventStatus.CANCELLED } as UpdateEventDto, roles);
+    const event = await this.eventModel.findById(id).lean().select('organizer status title admissionModes');
+    if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
+    this.assertCanManage(event, organizerId, roles);
+    if (![EventStatus.PUBLISHED, EventStatus.ONGOING].includes(event.status)) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
+
+    // Aucune annulation tant que l'admission payante reste configurée : une
+    // commande peut entrer en transaction pendant la vérification des ventes.
+    // Le filtre atomique ci-dessous répète cette règle après les lectures.
+    if ((event.admissionModes ?? []).includes(AdmissionMode.PAID_TICKET)) {
+      throw new ConflictException(ErrorCodes.EVENT_CANCELLATION_BLOCKED_BY_PAID_ORDERS);
+    }
+
+    const eventObjectId = new Types.ObjectId(id);
+    const [paidOrders, legacyPaidAdmissions, paidTicketTypes] = await Promise.all([
+      this.ticketOrderModel.countDocuments({
+        event: eventObjectId,
+        status: { $in: [TicketOrderStatus.PAID, TicketOrderStatus.PENDING_PAYMENT] },
+      }),
+      this.ticketPurchaseModel.countDocuments({
+        event: eventObjectId,
+        order: null,
+        price: { $gt: 0 },
+        status: { $in: [TicketPurchaseStatus.VALID, TicketPurchaseStatus.USED] },
+      }),
+      this.ticketTypeModel.countDocuments({
+        event: eventObjectId,
+        $or: [{ isFree: false }, { price: { $gt: 0 } }],
+      }),
+    ]);
+    if (paidOrders > 0 || legacyPaidAdmissions > 0 || paidTicketTypes > 0) {
+      throw new ConflictException(ErrorCodes.EVENT_CANCELLATION_BLOCKED_BY_PAID_ORDERS);
+    }
+
+    const cancelledAt = new Date();
+    const updated = await this.eventModel
+      .findOneAndUpdate(
+        {
+          _id: id,
+          status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
+          admissionModes: { $ne: AdmissionMode.PAID_TICKET },
+        },
+        { $set: { status: EventStatus.CANCELLED, cancelledAt } },
+        { new: true, runValidators: true },
+      )
+      .lean()
+      .select('-__v');
+    if (!updated) {
+      throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
+    }
+    await this.announceCancellation(id, event.title).catch((error: unknown) => {
+      this.logger.error(
+        `EVENT_CANCELLATION_ANNOUNCEMENT_FAILED eventId=${id}`,
+        error instanceof Error ? error.stack : undefined,
+      );
+    });
+    return this.eventAccessService.toSafeEvent(normalizeLegacyEventAccess(updated));
+  }
+
+  private async announceCancellation(eventId: string, eventTitle: string): Promise<void> {
+    const eventObjectId = new Types.ObjectId(eventId);
+    const [registrations, tickets, invitations, guests] = await Promise.all([
+      this.registrationModel
+        .find({ eventId: eventObjectId, status: EventRegistrationStatus.ACTIVE })
+        .lean()
+        .select('participantId'),
+      this.ticketPurchaseModel
+        .find({
+          event: eventObjectId,
+          status: { $in: [TicketPurchaseStatus.VALID, TicketPurchaseStatus.USED] },
+        })
+        .lean()
+        .select('buyerId guestEmail'),
+      this.invitationModel
+        .find({
+          eventId: eventObjectId,
+          type: InvitationType.PARTICIPANT,
+          status: { $in: [InvitationStatus.PENDING, InvitationStatus.ACCEPTED] },
+        })
+        .lean()
+        .select('email convertedUserId'),
+      this.guestModel
+        .find({
+          event: eventObjectId,
+          status: { $in: [GuestStatus.INVITED, GuestStatus.CONFIRMED, GuestStatus.PRESENT] },
+          email: { $exists: true, $ne: '' },
+        })
+        .lean()
+        .select('email'),
+    ]);
+
+    const userIds = new Set<string>();
+    registrations.forEach((registration) => userIds.add(registration.participantId.toString()));
+    tickets.forEach((ticket) => {
+      if (ticket.buyerId) userIds.add(ticket.buyerId.toString());
+    });
+    invitations.forEach((invitation) => {
+      if (invitation.convertedUserId) userIds.add(invitation.convertedUserId.toString());
+    });
+
+    const users = userIds.size
+      ? await this.userModel
+        .find({ _id: { $in: [...userIds].map((id) => new Types.ObjectId(id)) } })
+        .lean()
+        .select('email fullName')
+      : [];
+
+    const notificationResults = await Promise.allSettled(
+      [...userIds].map((userId) =>
+        this.notificationsService.create(userId, NotificationType.EVENT_CANCELLED, {
+          eventId,
+          eventTitle,
+        }),
+      ),
+    );
+    const notificationFailures = notificationResults.filter((result) => result.status === 'rejected').length;
+    if (notificationFailures > 0) {
+      this.logger.warn(`EVENT_CANCELLATION_NOTIFICATION_FAILED eventId=${eventId} count=${notificationFailures}`);
+    }
+
+    const recipients = new Map<string, string>();
+    users.forEach((user) => recipients.set(user.email, user.fullName));
+    tickets.forEach((ticket) => {
+      if (ticket.guestEmail) recipients.set(ticket.guestEmail, ticket.guestEmail);
+    });
+    invitations.forEach((invitation) => recipients.set(invitation.email, invitation.email));
+    guests.forEach((guest) => {
+      if (guest.email) recipients.set(guest.email, guest.email);
+    });
+
+    const emailResults = await Promise.allSettled(
+      [...recipients].map(([email, fullName]) =>
+        this.emailsService.sendEventCancellation(email, { fullName, eventTitle }),
+      ),
+    );
+    const emailFailures = emailResults.filter((result) => result.status === 'rejected').length;
+    if (emailFailures > 0) {
+      this.logger.warn(`EVENT_CANCELLATION_EMAIL_FAILED eventId=${eventId} count=${emailFailures}`);
+    }
   }
 
   async findBySlug(slug: string): Promise<PublicEventDetail> {
     const event = await this.eventModel
       .findOne({
         slug,
-        status: EventStatus.PUBLISHED,
+        status: { $in: ACTIVE_EVENT_STATUSES },
         archivedAt: null,
         $or: [
           { discoverability: { $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED] } },
@@ -425,7 +635,7 @@ export class EventsService {
     if (relevance.length === 0) return null;
     return {
       _id: { $ne: eventId },
-      status: EventStatus.PUBLISHED,
+      status: { $in: ACTIVE_EVENT_STATUSES },
       archivedAt: null,
       discoverability: EventDiscoverability.PUBLIC,
       startDate: { $gte: new Date() },

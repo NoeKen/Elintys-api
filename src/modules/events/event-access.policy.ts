@@ -8,6 +8,7 @@ import {
   EventType,
   EventVisibility,
 } from './event.schema';
+import { isActiveEventStatus } from './event-lifecycle.state-machine';
 
 const ASCII_DOMAIN = /^(?=.{1,253}$)(?!-)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
 
@@ -244,7 +245,9 @@ export function canManageEvent(actor: EventActor, event: AccessControlledEvent):
 
 export function canViewEvent(actor: EventActor, event: AccessControlledEvent): PolicyDecision {
   if (canManageEvent(actor, event).allowed) return { allowed: true, reason: 'MANAGER' };
-  if (event.status !== EventStatus.PUBLISHED) return { allowed: false, reason: 'EVENT_NOT_PUBLISHED' };
+  if (!event.status || !isActiveEventStatus(event.status)) {
+    return { allowed: false, reason: 'EVENT_NOT_PUBLISHED' };
+  }
   if (event.discoverability !== EventDiscoverability.PRIVATE) return { allowed: true, reason: 'PUBLIC_DETAILS' };
   if (actor.accessGrant || actor.hasApprovedRequest || actor.hasInvitation || actor.isOnGuestList) {
     return { allowed: true, reason: 'PRIVATE_GRANT' };

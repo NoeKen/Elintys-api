@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Event, EventDiscoverability, EventDocument, EventStatus, EventVisibility } from '../events/event.schema';
+import { Event, EventDiscoverability, EventDocument, EventVisibility } from '../events/event.schema';
 import { VendorProfile, VendorProfileDocument } from '../vendors/vendor.schema';
 import { VenueProfile, VenueProfileDocument } from '../venues/venue.schema';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
@@ -10,6 +10,7 @@ import { EventType } from '../events/event.schema';
 import { VendorCategory } from '../vendors/vendor.schema';
 import { VenueType } from '../venues/venue.schema';
 import { VendorPriceTier } from '../vendors/dto/query-vendor.dto';
+import { ACTIVE_EVENT_STATUSES } from '../events/event-lifecycle.state-machine';
 
 export interface SearchResults {
   events: Event[];
@@ -28,7 +29,7 @@ const PUBLIC_VENUE_SEARCH_FIELDS =
   '_id name type description address capacity photos amenities pricePerDay rating reviewCount isActive';
 
 const publicEventFilter = {
-  status: EventStatus.PUBLISHED,
+  status: { $in: ACTIVE_EVENT_STATUSES },
   archivedAt: null,
   $or: [
     { discoverability: EventDiscoverability.PUBLIC },
