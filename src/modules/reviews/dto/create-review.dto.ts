@@ -2,17 +2,21 @@ import { IsEnum, IsInt, IsMongoId, IsString, Max, MaxLength, Min, MinLength } fr
 import { Transform } from 'class-transformer';
 import { trimValue } from '../../../shared/utils/transform';
 import { ApiProperty } from '@nestjs/swagger';
-import { ReviewTargetType } from '../review.schema';
+import { ReviewContextType, ReviewTargetType } from '../review.schema';
 
 export class CreateReviewDto {
   @ApiProperty({ enum: ReviewTargetType, example: ReviewTargetType.EVENT, description: 'Type de cible' })
   @IsEnum(ReviewTargetType)
   targetType!: ReviewTargetType;
 
-  /** Validé comme ObjectId : un identifiant malformé produit un 400, pas un CastError en 500. */
-  @ApiProperty({ example: '664f1a2b3c4d5e6f7a8b9c0d', description: 'MongoDB ObjectId de la cible' })
+  @ApiProperty({ enum: ReviewContextType, example: ReviewContextType.EVENT })
+  @IsEnum(ReviewContextType)
+  contextType!: ReviewContextType;
+
+  /** La relation métier, jamais la cible, est fournie par le client. */
+  @ApiProperty({ example: '664f1a2b3c4d5e6f7a8b9c0d', description: 'Événement, demande prestataire ou réservation vérifiable' })
   @IsMongoId()
-  targetId!: string;
+  contextId!: string;
 
   @ApiProperty({ example: 5, description: 'Note de 1 à 5', minimum: 1, maximum: 5 })
   @IsInt()

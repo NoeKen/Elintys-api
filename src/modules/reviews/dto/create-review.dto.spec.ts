@@ -2,12 +2,13 @@ import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import { Types } from 'mongoose';
 import { CreateReviewDto } from './create-review.dto';
-import { ReviewTargetType } from '../review.schema';
+import { ReviewContextType, ReviewTargetType } from '../review.schema';
 
 describe('CreateReviewDto', () => {
   const valid = {
     targetType: ReviewTargetType.EVENT,
-    targetId: new Types.ObjectId().toString(),
+    contextType: ReviewContextType.EVENT,
+    contextId: new Types.ObjectId().toString(),
     rating: 5,
     comment: 'Une expérience remarquable.',
   };

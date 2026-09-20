@@ -594,7 +594,7 @@ describe('EventsService', () => {
       // Assert
       expect(eventModel.findOne).toHaveBeenCalledWith(expect.objectContaining({
         slug,
-        status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING] },
+        status: { $in: [EventStatus.PUBLISHED, EventStatus.ONGOING, EventStatus.COMPLETED] },
         $or: expect.any(Array),
       }));
       expect((result as unknown as Record<string, unknown>).slug).toBe(slug);

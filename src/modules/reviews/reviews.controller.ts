@@ -1,12 +1,13 @@
-import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, HttpStatus, Param, Patch, Post, Query } from '@nestjs/common';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiResponse, ApiParam, ApiQuery } from '@nestjs/swagger';
 import { ReviewsService } from './reviews.service';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
-import { QueryReviewsDto, ReviewTargetParamsDto } from './dto/query-reviews.dto';
+import { QueryReviewsDto, ReviewContextParamsDto, ReviewTargetParamsDto } from './dto/query-reviews.dto';
 import { ReviewTargetType } from './review.schema';
 import { Public } from '../../shared/decorators/public.decorator';
+import { UpdateReviewDto } from './dto/update-review.dto';
 
 @ApiTags('Reviews')
 @ApiBearerAuth('access-token')
@@ -23,6 +24,33 @@ export class ReviewsController {
   @ApiResponse({ status: 409, description: 'Avis déjà soumis (REVIEW_ALREADY_SUBMITTED)' })
   create(@CurrentUser() user: JwtPayload, @Body() dto: CreateReviewDto) {
     return this.reviewsService.create(user.sub, dto);
+  }
+
+  @Get('me/received')
+  @ApiOperation({ summary: "Lister les avis vérifiés reçus comme organisateur" })
+  findOrganizerReceived(@CurrentUser() user: JwtPayload, @Query() query: QueryReviewsDto) {
+    return this.reviewsService.findOrganizerReceived(user.sub, query.page, query.limit);
+  }
+
+  @Get('eligibility/:targetType/:targetId')
+  @ApiOperation({ summary: "Vérifier l'éligibilité du compte connecté pour une cible" })
+  eligibility(@CurrentUser() user: JwtPayload, @Param() params: ReviewTargetParamsDto) {
+    return this.reviewsService.eligibilityForTarget(user.sub, params.targetType, params.targetId);
+  }
+
+  @Get('context/:contextType/:contextId/eligibility')
+  @ApiOperation({ summary: "Vérifier l'éligibilité du compte connecté pour une interaction précise" })
+  contextEligibility(@CurrentUser() user: JwtPayload, @Param() params: ReviewContextParamsDto) {
+    return this.reviewsService.eligibilityForContext(user.sub, params.contextType, params.contextId);
+  }
+
+  @Patch(':id')
+  update(
+    @Param('id', ParseObjectIdPipe) id: string,
+    @CurrentUser() user: JwtPayload,
+    @Body() dto: UpdateReviewDto,
+  ) {
+    return this.reviewsService.update(id, user.sub, dto);
   }
 
   @Public()

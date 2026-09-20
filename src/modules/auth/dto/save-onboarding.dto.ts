@@ -20,6 +20,18 @@ const trimStringArray = ({ value }: { value: unknown }): unknown =>
     : value;
 
 export class SaveOnboardingDto {
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(200)
+  professionalName?: string;
+
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MaxLength(150)
+  region?: string;
+
   @ApiPropertyOptional({ type: [String], description: "Types d'événements préférés" })
   @IsOptional()
   @Transform(trimStringArray)

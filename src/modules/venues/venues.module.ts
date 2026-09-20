@@ -6,9 +6,11 @@ import { VenueProfile, VenueProfileSchema, VenueBooking, VenueBookingSchema } fr
 import { NotificationsModule } from '../notifications/notifications.module';
 import { User, UserSchema } from '../auth/user.schema';
 import { Event, EventSchema } from '../events/event.schema';
+import { VenueManagersModule } from '../venue-managers/venue-managers.module';
 
 @Module({
   imports: [
+    VenueManagersModule,
     MongooseModule.forFeature([
       { name: VenueProfile.name, schema: VenueProfileSchema },
       { name: VenueBooking.name, schema: VenueBookingSchema },

@@ -28,10 +28,14 @@ class VenueAddress {
   postalCode?: string;
 }
 
-@Schema({ timestamps: true })
+@Schema({ timestamps: true, collection: 'venueprofiles', autoIndex: false })
 export class VenueProfile {
-  @Prop({ type: Types.ObjectId, ref: 'User', required: true, unique: true })
+  // Legacy account link retained for compatibility, never used for authorization.
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true, immutable: true })
   user!: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'VenueManagerProfile', required: true, immutable: true })
+  managerProfile!: Types.ObjectId;
 
   @Prop({ required: true, trim: true, maxlength: 200 })
   name!: string;
@@ -74,6 +78,7 @@ export class VenueProfile {
 }
 
 export const VenueProfileSchema = SchemaFactory.createForClass(VenueProfile);
+VenueProfileSchema.index({ managerProfile: 1, createdAt: -1, _id: 1 });
 VenueProfileSchema.index({ 'address.city': 1, isActive: 1 });
 VenueProfileSchema.index({ type: 1, isActive: 1 });
 VenueProfileSchema.index({ capacity: 1 });

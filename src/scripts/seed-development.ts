@@ -481,12 +481,19 @@ async function upsertVenues(
   for (const input of inputs) {
     const { userKey, ...profile } = input;
     const user = requireId(userIds, userKey);
-    const venue = await venueModel.findOneAndUpdate(
+    const manager = await venueModel.db.collection('venuemanagerprofiles').findOneAndUpdate(
       { user },
+      { $setOnInsert: { user, professionalName: profile.name, createdAt: new Date(), updatedAt: new Date() } },
+      { upsert: true, returnDocument: 'after' },
+    );
+    if (!manager) throw new Error('VENUE_MANAGER_SEED_FAILED');
+    const venue = await venueModel.findOneAndUpdate(
+      { user, name: profile.name },
       {
         $set: {
           ...profile,
           user,
+          managerProfile: manager._id,
           photos: [],
           isActive: true,
           contactEmail: DEMO_USERS.find((item) => item.key === userKey)?.email,

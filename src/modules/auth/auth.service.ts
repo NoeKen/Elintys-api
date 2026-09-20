@@ -87,7 +87,7 @@ const PUBLIC_REGISTRATION_ROLES = new Set<UserRole>([
 const ONBOARDING_FIELDS_BY_ROLE: Record<OnboardingRole, SaveOnboardingField[]> = {
   [UserRole.ORGANISATEUR]: ['eventTypes', 'frequency', 'avatar', 'displayName', 'city'],
   [UserRole.PRESTATAIRE]: ['category', 'logo', 'description', 'serviceArea', 'rate'],
-  [UserRole.GESTIONNAIRE_SALLE]: ['venueName', 'venueType', 'capacity', 'address', 'photo', 'availability'],
+  [UserRole.GESTIONNAIRE_SALLE]: ['professionalName', 'region'],
 };
 
 // Hash bcrypt pré-calculé utilisé comme leurre pour égaliser le temps de réponse
@@ -605,6 +605,8 @@ export class AuthService {
 
   private pickOnboardingData(role: OnboardingRole, dto: SaveOnboardingDto): SavedOnboardingData {
     const candidates: Record<SaveOnboardingField, OnboardingValue | undefined> = {
+      professionalName: dto.professionalName,
+      region: dto.region,
       eventTypes: dto.eventTypes,
       frequency: dto.frequency,
       avatar: dto.avatar,

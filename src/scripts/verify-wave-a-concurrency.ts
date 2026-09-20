@@ -245,9 +245,14 @@ async function insertVenueBooking(
   const bookingId = new Types.ObjectId();
   const now = new Date();
 
+  const managerProfile = new Types.ObjectId();
+  await connection.db!.collection('venuemanagerprofiles').insertOne({
+    _id: managerProfile, user: venueUserId, professionalName: `${PREFIX} gestionnaire`, createdAt: now, updatedAt: now,
+  });
   await connection.db!.collection('venueprofiles').insertOne({
     _id: venueId,
     user: venueUserId,
+    managerProfile,
     name: `${PREFIX} salle`,
     type: 'other',
     address: { street: '1 rue Test', city: 'Montréal', province: 'QC' },
@@ -290,6 +295,7 @@ async function purge(connection: Connection, cleanup: Cleanup): Promise<void> {
   await database.collection('vendorprofiles').deleteMany({ _id: { $in: cleanup.vendors } });
   await database.collection('venuebookings').deleteMany({ _id: { $in: cleanup.venueBookings } });
   await database.collection('venueprofiles').deleteMany({ _id: { $in: cleanup.venues } });
+  await database.collection('venuemanagerprofiles').deleteMany({ user: { $in: cleanup.users } });
   await database.collection('notifications').deleteMany({ userId: { $in: cleanup.users } });
   await database.collection('events').deleteMany({ _id: { $in: cleanup.events } });
   await database.collection('users').deleteMany({ _id: { $in: cleanup.users } });
