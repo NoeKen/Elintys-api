@@ -30,6 +30,9 @@
     "wave5:concurrency": "ts-node src/scripts/verify-wave5-concurrency.ts",
     "sprint3-wave6:migrate": "ts-node src/scripts/migrate-sprint3-wave6-indexes.ts",
     "wave-a:concurrency": "ts-node src/scripts/verify-wave-a-concurrency.ts"
+    ,"wave-j:venues:migrate": "ts-node src/scripts/migrate-s4-wave-j-venues.ts"
+    ,"wave-j:reviews:migrate": "ts-node src/scripts/migrate-s4-wave-j-reviews.ts"
+    ,"wave-j:reviews:concurrency": "ts-node src/scripts/verify-wave-j-review-concurrency.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",

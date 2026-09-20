@@ -13,6 +13,7 @@ afterEach(async () => {
 const mockReviewsService = {
   create: jest.fn(),
   findForTarget: jest.fn(),
+  eligibilityForContext: jest.fn(),
   remove: jest.fn(),
 };
 
@@ -28,6 +29,18 @@ describe('ReviewsController', () => {
     }).compile();
 
     controller = testingModule.get<ReviewsController>(ReviewsController);
+  });
+
+  describe('contextEligibility', () => {
+    it('dérive l’identité depuis la session et transmet uniquement le contexte validé', async () => {
+      mockReviewsService.eligibilityForContext.mockResolvedValue({ canReview: false });
+      await controller.contextEligibility(mockUser as never, {
+        contextType: 'vendor_request', contextId: 'context-id',
+      } as never);
+      expect(mockReviewsService.eligibilityForContext).toHaveBeenCalledWith(
+        mockUser.sub, 'vendor_request', 'context-id',
+      );
+    });
   });
 
   afterEach(() => jest.clearAllMocks());

@@ -53,7 +53,7 @@ class ObjectIdContractController {
 
   @Post('body')
   byBody(@Body() dto: CreateReviewDto) {
-    return { targetId: dto.targetId };
+    return { contextId: dto.contextId };
   }
 }
 
@@ -129,20 +129,20 @@ describe('Contrat HTTP des ObjectId (e2e)', () => {
   });
 
   describe('corps de requête', () => {
-    const body = { targetType: 'event', rating: 5, comment: 'Excellent' };
+    const body = { targetType: 'event', contextType: 'event', rating: 5, comment: 'Excellent' };
 
-    it.each(INVALID_IDS)('devrait refuser targetId %p avec un 400', async (targetId) => {
+    it.each(INVALID_IDS)('devrait refuser contextId %p avec un 400', async (contextId) => {
       const response = await request(app.getHttpServer())
         .post('/object-id-contract/body')
-        .send({ ...body, targetId });
+        .send({ ...body, contextId });
 
       expect(response.status).toBe(400);
     });
 
-    it('devrait accepter un targetId valide', async () => {
+    it('devrait accepter un contextId valide', async () => {
       const response = await request(app.getHttpServer())
         .post('/object-id-contract/body')
-        .send({ ...body, targetId: VALID });
+        .send({ ...body, contextId: VALID });
 
       expect(response.status).toBe(201);
     });
@@ -150,7 +150,7 @@ describe('Contrat HTTP des ObjectId (e2e)', () => {
     it('ne devrait jamais retourner une erreur interne', async () => {
       const response = await request(app.getHttpServer())
         .post('/object-id-contract/body')
-        .send({ ...body, targetId: 'pas-un-id' });
+        .send({ ...body, contextId: 'pas-un-id' });
 
       // Le point du finding : l'utilisateur recevait « Une erreur interne est
       // survenue » pour une simple faute de frappe dans une URL.

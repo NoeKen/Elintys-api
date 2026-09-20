@@ -337,6 +337,17 @@ describe('AuthService', () => {
 
   // ── saveOnboarding ──
   describe('saveOnboarding', () => {
+    it('sauvegarde uniquement les données métier gestionnaire et ne crée aucun lieu', async () => {
+      const manager = { ...mockUser, roles: ['gestionnaire_salle'] };
+      userModel.findById.mockReturnValue(makeChainable(manager));
+      userModel.findByIdAndUpdate.mockReturnValue(makeChainable(manager));
+      await service.saveOnboarding(userId.toString(), 'gestionnaire', {
+        professionalName: 'Gestion ABC', region: 'Montréal', venueName: 'Ancien lieu', capacity: 400,
+      } as never);
+      expect(userModel.findByIdAndUpdate.mock.calls[0][1].$set['onboardingData.gestionnaire_salle']).toEqual({
+        professionalName: 'Gestion ABC', region: 'Montréal',
+      });
+    });
     it("sauvegarde les informations d'onboarding du rôle actif", async () => {
       const updatedUser = {
         ...mockUser,

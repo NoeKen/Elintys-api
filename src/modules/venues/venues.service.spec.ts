@@ -15,6 +15,7 @@ import { EmailsService } from '../emails/emails.service';
 import { User } from '../auth/user.schema';
 import { Event, EventStatus } from '../events/event.schema';
 import { NotificationType } from '../notifications/notification.schema';
+import { VenueManagersService } from '../venue-managers/venue-managers.service';
 
 const flushAsync = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -43,11 +44,13 @@ describe('VenuesService', () => {
   let emailsService: Record<string, jest.Mock>;
   let eventModel: Record<string, jest.Mock>;
   let userModel: Record<string, jest.Mock>;
+  let managers: Record<string, jest.Mock>;
 
   const userId = new Types.ObjectId().toString();
   const venueId = new Types.ObjectId().toString();
   const bookingId = new Types.ObjectId().toString();
   const eventId = new Types.ObjectId().toString();
+  const managerId = new Types.ObjectId();
 
   const mockVenue = (overrides = {}) => ({
     _id: new Types.ObjectId(venueId),
@@ -55,6 +58,7 @@ describe('VenuesService', () => {
     capacity: 500,
     isActive: true,
     user: { toString: () => userId },
+    managerProfile: managerId,
     toObject: jest.fn().mockReturnThis(),
     ...overrides,
   });
@@ -95,6 +99,11 @@ describe('VenuesService', () => {
     venueModel.findById.mockReturnValue(makeChainable(mockVenue()));
     venueModel.findOne.mockReturnValue(makeChainable(null));
     venueModel.countDocuments.mockResolvedValue(1);
+    venueModel.findOneAndUpdate.mockReturnValue(makeChainable(mockVenue()));
+    managers = {
+      findMine: jest.fn().mockImplementation((id: string) => Promise.resolve({ _id: id === userId ? managerId : new Types.ObjectId(), user: id })),
+      ownerOf: jest.fn().mockResolvedValue(userId),
+    };
 
     venueBookingModel.find.mockReturnValue(makeChainable([mockBooking()]));
     venueBookingModel.findById.mockReturnValue(makeChainable(mockBooking()));
@@ -114,6 +123,7 @@ describe('VenuesService', () => {
     testingModule = await Test.createTestingModule({
       providers: [
         VenuesService,
+        { provide: VenueManagersService, useValue: managers },
         { provide: getModelToken(VenueProfile.name), useValue: venueModel },
         { provide: getModelToken(VenueBooking.name), useValue: venueBookingModel },
         { provide: getModelToken(User.name), useValue: userModel },
@@ -131,6 +141,11 @@ describe('VenuesService', () => {
 
   // ── create ──
   describe('create', () => {
+    it('refuse de créer un lieu sans profil métier gestionnaire', async () => {
+      managers.findMine.mockRejectedValue(new NotFoundException('VENUE_MANAGER_PROFILE_NOT_FOUND'));
+      await expect(service.create(userId, { name: 'Salle', capacity: 100 } as never)).rejects.toThrow('VENUE_MANAGER_PROFILE_NOT_FOUND');
+      expect(venueModel.create).not.toHaveBeenCalled();
+    });
     it('crée un profil de salle et le retourne', async () => {
       const dto = {
         name: 'Salle des Mille Étoiles',
@@ -147,12 +162,13 @@ describe('VenuesService', () => {
       expect(result).toBeDefined();
     });
 
-    it('lève ConflictException si un profil existe déjà pour ce compte', async () => {
+    it('autorise un deuxième lieu pour le même gestionnaire', async () => {
       venueModel.findOne.mockReturnValue(makeChainable({ _id: venueId }));
+      venueModel.create.mockResolvedValue(mockVenue({ name: 'Deuxième salle' }));
 
       await expect(
         service.create(userId, { name: 'Salle', capacity: 100 } as never),
-      ).rejects.toThrow(ConflictException);
+      ).resolves.toMatchObject({ name: 'Deuxième salle' });
     });
   });
 
@@ -204,7 +220,7 @@ describe('VenuesService', () => {
     it('met à jour et retourne la salle modifiée', async () => {
       const dto = { name: 'Grande Salle' };
       const updated = mockVenue(dto);
-      venueModel.findByIdAndUpdate.mockReturnValue(makeChainable(updated));
+      venueModel.findOneAndUpdate.mockReturnValue(makeChainable(updated));
 
       const result = await service.update(venueId, userId, dto as never);
 
@@ -225,18 +241,52 @@ describe('VenuesService', () => {
   });
 
   // ── findMyProfile ──
+  describe('owned venues', () => {
+    it('paginates only manager venues including inactive ones', async () => {
+      const data = [mockVenue({ isActive: false })];
+      const query = makeChainable(data);
+      venueModel.find.mockReturnValue(query);
+      venueModel.countDocuments.mockResolvedValue(31);
+      await expect(service.findMine(userId, { page: 2, limit: 10 })).resolves.toEqual({ data, total: 31, page: 2, limit: 10 });
+      expect(venueModel.find).toHaveBeenCalledWith({ managerProfile: managerId });
+      expect(query.skip).toHaveBeenCalledWith(10);
+      expect(query.limit).toHaveBeenCalledWith(10);
+    });
+    it('returns inactive owned venue directly', async () => {
+      const venue = mockVenue({ isActive: false });
+      venueModel.findById.mockReturnValue(makeChainable(venue));
+      await expect(service.findOwnVenue(userId, venueId)).resolves.toBe(venue);
+    });
+    it('rejects another manager and reports missing venue', async () => {
+      venueModel.findById.mockReturnValue(makeChainable(mockVenue({ managerProfile: new Types.ObjectId() })));
+      await expect(service.findOwnVenue(userId, venueId)).rejects.toThrow(ForbiddenException);
+      venueModel.findById.mockReturnValue(makeChainable(null));
+      await expect(service.findOwnVenue(userId, venueId)).rejects.toThrow(NotFoundException);
+    });
+  });
+
   describe('findMyProfile', () => {
+    it('refuse aussi une écriture legacy ambiguë sans modifier de lieu', async () => {
+      venueModel.find.mockReturnValue(makeChainable([mockVenue(), mockVenue({ _id: new Types.ObjectId() })]));
+      await expect(service.updateMyProfile(userId, { name: 'Erreur' })).rejects.toThrow('VENUE_SELECTION_REQUIRED');
+      expect(venueModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+    it('refuse le contrat legacy ambigu avec plusieurs lieux', async () => {
+      venueModel.find.mockReturnValue(makeChainable([mockVenue(), mockVenue({ _id: new Types.ObjectId() })]));
+      venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
+      await expect(service.findMyProfile(userId)).rejects.toThrow('VENUE_SELECTION_REQUIRED');
+    });
     it('devrait retourner le profil de salle de l\'utilisateur connecté', async () => {
       venueModel.findOne.mockReturnValue(makeChainable(mockVenue()));
 
       const result = await service.findMyProfile(userId);
 
-      expect(venueModel.findOne).toHaveBeenCalledWith({ user: expect.any(Types.ObjectId) });
+      expect(venueModel.find).toHaveBeenCalledWith({ managerProfile: managerId });
       expect(result).toBeDefined();
     });
 
     it('devrait lever NotFoundException si profil introuvable', async () => {
-      venueModel.findOne.mockReturnValue(makeChainable(null));
+      venueModel.find.mockReturnValue(makeChainable([]));
 
       await expect(service.findMyProfile(userId)).rejects.toThrow(NotFoundException);
     });
@@ -363,8 +413,9 @@ describe('VenuesService', () => {
 
       await service.updateMyProfile(userId, { name: 'Nouvelle salle' });
 
-      const [filter] = venueModel.findOneAndUpdate.mock.calls[0] as [{ user: Types.ObjectId }];
-      expect(filter.user.toString()).toBe(userId);
+      const [filter] = venueModel.findOneAndUpdate.mock.calls[0] as [{ managerProfile: Types.ObjectId; _id: Types.ObjectId }];
+      expect(filter.managerProfile.toString()).toBe(managerId.toString());
+      expect(filter._id.toString()).toBe(venueId);
     });
 
     it('lève NotFoundException si aucune fiche n’existe encore', async () => {
@@ -460,6 +511,24 @@ describe('VenuesService', () => {
 
   // ── respondToBooking ──
   describe('respondToBooking', () => {
+    it('autorise la réservation du deuxième lieu et utilise ce lieu exact', async () => {
+      const secondId = new Types.ObjectId();
+      venueBookingModel.findById.mockReturnValue(makeChainable(mockBooking({ venue: secondId })));
+      venueModel.findOne.mockImplementation((filter: { _id: Types.ObjectId; managerProfile: Types.ObjectId }) =>
+        makeChainable(filter._id?.equals(secondId) && filter.managerProfile?.equals(managerId)
+          ? mockVenue({ _id: secondId, name: 'Deuxième lieu' }) : null));
+      venueBookingModel.findOneAndUpdate.mockReturnValue(makeChainable(mockBooking({ venue: secondId, status: VenueBookingStatus.CONFIRMED })));
+      const result = await service.respondToBooking(bookingId, userId, { status: VenueBookingStatus.CONFIRMED });
+      expect(result.venue).toEqual(secondId);
+      expect(venueBookingModel.findOneAndUpdate.mock.calls[0][0]).toMatchObject({ venue: secondId, status: VenueBookingStatus.PENDING });
+      await flushAsync();
+      expect(emailsService.sendVenueBookingUpdate).toHaveBeenCalledWith('org@test.com', expect.objectContaining({ venueName: 'Deuxième lieu' }));
+    });
+    it('refuse la propriété legacy si le profil gestionnaire ne possède pas le lieu', async () => {
+      venueModel.findOne.mockReturnValue(makeChainable(null));
+      await expect(service.respondToBooking(bookingId, userId, { status: VenueBookingStatus.CONFIRMED })).rejects.toThrow(ForbiddenException);
+      expect(venueBookingModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
     const confirmDto = { status: VenueBookingStatus.CONFIRMED as VenueBookingStatus.CONFIRMED };
     const myProfile = () =>
       makeChainable({ _id: new Types.ObjectId(venueId), name: 'Salle Saint-Paul' });
@@ -531,7 +600,7 @@ describe('VenuesService', () => {
     });
 
     it("lève NotFoundException si le gestionnaire n'a pas de fiche", async () => {
-      venueModel.findOne.mockReturnValue(makeChainable(null));
+      managers.findMine.mockRejectedValue(new NotFoundException('VENUE_MANAGER_PROFILE_NOT_FOUND'));
 
       await expect(service.respondToBooking(bookingId, userId, confirmDto)).rejects.toThrow(
         NotFoundException,
@@ -608,6 +677,13 @@ describe('VenuesService', () => {
 
   // ── listMyBookings ──
   describe('listMyBookings', () => {
+    it('inclut tous les lieux du profil gestionnaire sans inclure ceux des autres profils', async () => {
+      const secondId = new Types.ObjectId();
+      venueModel.find.mockReturnValue(makeChainable([mockVenue(), mockVenue({ _id: secondId })]));
+      await service.listMyBookings(userId);
+      expect(venueModel.find).toHaveBeenCalledWith({ managerProfile: managerId });
+      expect(venueBookingModel.find).toHaveBeenCalledWith({ venue: { $in: [new Types.ObjectId(venueId), secondId] } });
+    });
     it('devrait retourner les réservations reçues par la salle', async () => {
       venueModel.findOne.mockReturnValue(makeChainable({ _id: new Types.ObjectId(venueId) }));
       venueBookingModel.find.mockReturnValue(makeChainable([mockBooking()]));
@@ -618,7 +694,7 @@ describe('VenuesService', () => {
     });
 
     it('devrait lever NotFoundException si profil de salle introuvable', async () => {
-      venueModel.findOne.mockReturnValue(makeChainable(null));
+      managers.findMine.mockRejectedValue(new NotFoundException('VENUE_MANAGER_PROFILE_NOT_FOUND'));
 
       await expect(service.listMyBookings(userId)).rejects.toThrow(NotFoundException);
     });
@@ -645,6 +721,7 @@ describe('VenuesService', () => {
 
       const projection = venueModel.find.mock.results[0].value.select.mock.calls[0][0] as string;
       expect(projection).not.toContain('user');
+      expect(projection).not.toContain('managerProfile');
       expect(projection).not.toContain('contactPhone');
       expect(projection).toContain('name');
     });
