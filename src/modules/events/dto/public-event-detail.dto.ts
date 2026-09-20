@@ -4,6 +4,7 @@ import {
   EventDiscoverability,
   EventLocationType,
   EventType,
+  EventStatus,
 } from '../event.schema';
 
 export interface PublicEventMedia {
@@ -79,6 +80,7 @@ export interface PublicEventDetail {
   _id: string;
   slug: string;
   title: string;
+  status: EventStatus;
   shortDescription?: string;
   description?: string;
   eventType?: EventType;

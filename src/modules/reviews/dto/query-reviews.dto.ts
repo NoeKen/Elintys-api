@@ -1,7 +1,7 @@
-import { IsEnum, IsInt, IsMongoId, IsOptional, Max, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsMongoId, IsOptional, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ReviewTargetType } from '../review.schema';
+import { ReviewContextType, ReviewTargetType } from '../review.schema';
 
 /** Même plafond que Discovery : ces routes sont publiques et anonymes. */
 export const REVIEWS_MAX_LIMIT = 50;
@@ -13,7 +13,7 @@ export class ReviewTargetParamsDto {
    * une valeur invalide comme un résultat légitime.
    */
   @ApiProperty({ enum: ReviewTargetType })
-  @IsEnum(ReviewTargetType)
+  @IsIn([ReviewTargetType.EVENT, ReviewTargetType.VENDOR, ReviewTargetType.VENUE])
   targetType!: ReviewTargetType;
 
   /**
@@ -24,6 +24,16 @@ export class ReviewTargetParamsDto {
   @ApiProperty({ example: '664f1a2b3c4d5e6f7a8b9c0d' })
   @IsMongoId()
   targetId!: string;
+}
+
+export class ReviewContextParamsDto {
+  @ApiProperty({ enum: ReviewContextType })
+  @IsEnum(ReviewContextType)
+  contextType!: ReviewContextType;
+
+  @ApiProperty({ example: '664f1a2b3c4d5e6f7a8b9c0d' })
+  @IsMongoId()
+  contextId!: string;
 }
 
 export class QueryReviewsDto {

@@ -13,6 +13,7 @@ import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-booking.dto';
 import { RespondVenueBookingDto } from './dto/respond-booking.dto';
 import { QueryVenueDto } from './dto/query-venue.dto';
+import { QueryMyVenuesDto } from './dto/query-my-venues.dto';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { Public } from '../../shared/decorators/public.decorator';
@@ -47,9 +48,23 @@ export class VenuesController {
     return this.venuesService.findAll(query);
   }
 
+  @Get('mine')
+  @Roles(Role.GESTIONNAIRE_SALLE)
+  @ApiOperation({ summary: 'Tous mes lieux, y compris inactifs' })
+  mine(@CurrentUser() user: JwtPayload, @Query() query: QueryMyVenuesDto) {
+    return this.venuesService.findMine(user.sub, query);
+  }
+
+  @Get('mine/:id')
+  @Roles(Role.GESTIONNAIRE_SALLE)
+  ownVenue(@CurrentUser() user: JwtPayload, @Param('id', ParseObjectIdPipe) id: string) {
+    return this.venuesService.findOwnVenue(user.sub, id);
+  }
+
   @Get('me')
   @Roles(Role.GESTIONNAIRE_SALLE)
   @ApiOperation({ summary: 'Mon profil de salle (gestionnaire connecté)' })
+  @ApiResponse({ status: 409, description: 'VENUE_SELECTION_REQUIRED : utiliser /venues/mine puis /venues/:id' })
   @ApiResponse({ status: 200, description: 'Profil de salle' })
   @ApiResponse({ status: 401, description: 'Non authentifié' })
   @ApiResponse({ status: 403, description: 'Rôle insuffisant' })

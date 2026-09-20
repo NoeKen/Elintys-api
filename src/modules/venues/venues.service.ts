@@ -21,6 +21,7 @@ import { UpdateVenueDto } from './dto/update-venue.dto';
 import { CreateVenueBookingDto } from './dto/create-booking.dto';
 import { RespondVenueBookingDto } from './dto/respond-booking.dto';
 import { QueryVenueDto } from './dto/query-venue.dto';
+import { QueryMyVenuesDto } from './dto/query-my-venues.dto';
 import { PaginatedResult } from '../../shared/interfaces/paginated-result.interface';
 import { ErrorCodes } from '../../shared/constants/error-codes';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -28,10 +29,10 @@ import { NotificationType } from '../notifications/notification.schema';
 import { EmailsService } from '../emails/emails.service';
 import { User, UserDocument } from '../auth/user.schema';
 import { Event, EventDocument } from '../events/event.schema';
-import { isDuplicateKeyError } from '../../shared/utils/mongo-errors';
 import { escapeRegExp } from '../../shared/utils/escape-regexp';
 import { canManageEvent } from '../events/event-access.policy';
 import { isTerminalEventStatus } from '../events/event-lifecycle.state-machine';
+import { VenueManagersService } from '../venue-managers/venue-managers.service';
 
 /**
  * Projection des routes PUBLIQUES — voir VendorsService pour le raisonnement :
@@ -51,20 +52,13 @@ export class VenuesService {
     private readonly notificationsService: NotificationsService,
     private readonly emailsService: EmailsService,
     private readonly configService: ConfigService,
+    private readonly venueManagers: VenueManagersService,
   ) {}
 
   async create(userId: string, dto: CreateVenueDto): Promise<VenueProfile> {
-    const exists = await this.venueModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
-    if (exists) throw new ConflictException(ErrorCodes.VENUE_PROFILE_EXISTS);
-
-    try {
-      const venue = await this.venueModel.create({ ...dto, user: new Types.ObjectId(userId) });
-      return venue.toObject();
-    } catch (error) {
-      // L'index unique sur `user` est l'autorité en cas de double soumission.
-      if (isDuplicateKeyError(error)) throw new ConflictException(ErrorCodes.VENUE_PROFILE_EXISTS);
-      throw error;
-    }
+    const manager = await this.venueManagers.findMine(userId);
+    const venue = await this.venueModel.create({ ...dto, user: new Types.ObjectId(userId), managerProfile: manager._id });
+    return venue.toObject();
   }
 
   /**
@@ -72,12 +66,8 @@ export class VenuesService {
    * L'identité vient du JWT : aucune autorité métier n'est acceptée du client.
    */
   async updateMyProfile(userId: string, dto: UpdateVenueDto): Promise<VenueProfile> {
-    const updated = await this.venueModel
-      .findOneAndUpdate({ user: new Types.ObjectId(userId) }, dto, { new: true, runValidators: true })
-      .lean()
-      .select('-__v');
-    if (!updated) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
-    return updated;
+    const venue = await this.findMyProfile(userId);
+    return this.update((venue as VenueProfileDocument)._id.toString(), userId, dto);
   }
 
   async findAll(query: QueryVenueDto): Promise<PaginatedResult<VenueProfile>> {
@@ -115,19 +105,42 @@ export class VenuesService {
   }
 
   async update(id: string, userId: string, dto: UpdateVenueDto): Promise<VenueProfile> {
-    const venue = await this.venueModel.findById(id).lean().select('user');
+    const manager = await this.venueManagers.findMine(userId);
+    const venue = await this.venueModel.findById(id).lean().select('managerProfile');
     if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
-    if (venue.user.toString() !== userId) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
+    if (venue.managerProfile?.toString() !== manager._id.toString()) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
 
-    const updated = await this.venueModel.findByIdAndUpdate(id, dto, { new: true }).lean().select('-__v');
+    const updated = await this.venueModel.findOneAndUpdate(
+      { _id: new Types.ObjectId(id), managerProfile: manager._id }, dto, { new: true, runValidators: true },
+    ).lean().select('-__v');
     // Peut être null si la fiche a été supprimée entre la vérification et l'écriture.
     if (!updated) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
     return updated;
   }
 
   async findMyProfile(userId: string): Promise<VenueProfile> {
-    const venue = await this.venueModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('-__v');
-    if (!venue) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
+    const manager = await this.venueManagers.findMine(userId);
+    const venues = await this.venueModel.find({ managerProfile: manager._id }).limit(2).lean().select('-__v');
+    if (venues.length === 0) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
+    if (venues.length > 1) throw new ConflictException(ErrorCodes.VENUE_SELECTION_REQUIRED);
+    return venues[0];
+  }
+
+  async findMine(userId: string, { page = 1, limit = 20 }: QueryMyVenuesDto = {}): Promise<PaginatedResult<VenueProfile>> {
+    const manager = await this.venueManagers.findMine(userId);
+    const filter = { managerProfile: manager._id };
+    const [data, total] = await Promise.all([
+      this.venueModel.find(filter).sort({ createdAt: -1, _id: 1 }).skip((page - 1) * limit).limit(limit).lean().select('-__v'),
+      this.venueModel.countDocuments(filter),
+    ]);
+    return { data, total, page, limit };
+  }
+
+  async findOwnVenue(userId: string, id: string): Promise<VenueProfile> {
+    const manager = await this.venueManagers.findMine(userId);
+    const venue = await this.venueModel.findById(id).lean().select('-__v');
+    if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
+    if (venue.managerProfile?.toString() !== manager._id.toString()) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     return venue;
   }
 
@@ -138,7 +151,7 @@ export class VenuesService {
 
     const [event, venue] = await Promise.all([
       this.eventModel.findById(eventId).lean().select('organizer title status'),
-      this.venueModel.findOne({ _id: dto.venueId, isActive: true }).lean().select('_id user name'),
+      this.venueModel.findOne({ _id: dto.venueId, isActive: true }).lean().select('_id managerProfile name'),
     ]);
     if (!event) throw new NotFoundException(ErrorCodes.EVENT_NOT_FOUND);
     if (!canManageEvent({ userId: organizerId, roles }, event).allowed) {
@@ -148,6 +161,7 @@ export class VenuesService {
       throw new ConflictException(ErrorCodes.EVENT_INVALID_STATUS_TRANSITION);
     }
     if (!venue) throw new NotFoundException(ErrorCodes.VENUE_NOT_FOUND);
+    const venueUserId = await this.venueManagers.ownerOf(venue.managerProfile);
 
     const booking = await this.venueBookingModel.create({
       event: new Types.ObjectId(eventId),
@@ -165,7 +179,7 @@ export class VenuesService {
       eventId,
       eventTitle: event.title,
       organizerId,
-      venueUserId: venue.user.toString(),
+      venueUserId,
       venueName: venue.name,
     }).catch(() => undefined);
 
@@ -234,11 +248,15 @@ export class VenuesService {
    * réservation.
    */
   async respondToBooking(bookingId: string, userId: string, dto: RespondVenueBookingDto): Promise<VenueBooking> {
+    const manager = await this.venueManagers.findMine(userId);
+    const booking = await this.venueBookingModel.findById(bookingId).lean().select('venue');
+    if (!booking) throw new NotFoundException(ErrorCodes.BOOKING_NOT_FOUND);
+    if (!booking.venue) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
     const venueProfile = await this.venueModel
-      .findOne({ user: new Types.ObjectId(userId) })
+      .findOne({ _id: booking.venue, managerProfile: manager._id })
       .lean()
       .select('_id name');
-    if (!venueProfile) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
+    if (!venueProfile) throw new ForbiddenException(ErrorCodes.ACCESS_DENIED);
 
     const updated = await this.venueBookingModel
       .findOneAndUpdate(
@@ -372,11 +390,11 @@ export class VenuesService {
   }
 
   async listMyBookings(userId: string): Promise<VenueBooking[]> {
-    const venueProfile = await this.venueModel.findOne({ user: new Types.ObjectId(userId) }).lean().select('_id');
-    if (!venueProfile) throw new NotFoundException(ErrorCodes.VENUE_PROFILE_NOT_FOUND);
+    const manager = await this.venueManagers.findMine(userId);
+    const venues = await this.venueModel.find({ managerProfile: manager._id }).lean().select('_id');
 
     return this.venueBookingModel
-      .find({ venue: venueProfile._id })
+      .find({ venue: { $in: venues.map((venue) => venue._id) } })
       .populate('event', 'title startDate slug')
       // Même raison que côté prestataire : l'écran affiche le nom de
       // l'organisateur, il doit donc être peuplé.

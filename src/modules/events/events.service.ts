@@ -561,7 +561,9 @@ export class EventsService {
     const event = await this.eventModel
       .findOne({
         slug,
-        status: { $in: ACTIVE_EVENT_STATUSES },
+        // Un événement terminé reste une page historique consultable : c'est
+        // aussi la surface où un participant admissible dépose son avis.
+        status: { $in: [...ACTIVE_EVENT_STATUSES, EventStatus.COMPLETED] },
         archivedAt: null,
         $or: [
           { discoverability: { $in: [EventDiscoverability.PUBLIC, EventDiscoverability.UNLISTED] } },
@@ -657,6 +659,7 @@ export class EventsService {
       _id: this.idOf(event),
       slug: event.slug!,
       title: event.title,
+      status: event.status,
       ...(event.shortDescription ? { shortDescription: event.shortDescription } : {}),
       ...(event.description ? { description: event.description } : {}),
       ...(event.eventType ? { eventType: event.eventType } : {}),
