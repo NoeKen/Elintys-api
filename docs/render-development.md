@@ -1,5 +1,7 @@
 # API de développement sur Render
 
+> Note (2026-09) : `api.dev.elintys.com` pointe actuellement vers la production et le web dev appelle `elintys-api-dev-1pdh.onrender.com` — voir [`operations/environments.md`](./operations/environments.md#anomalies-connues). Le service UAT est décrit dans le même `render.yaml`.
+
 Le fichier `render.yaml` décrit le service `elintys-api-dev` :
 
 - dépôt `NoeKen/Elintys-api`, branche `dev`;

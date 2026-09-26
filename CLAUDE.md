@@ -16,6 +16,63 @@ Ce dépôt est le **backend NestJS** de la plateforme.
 - Base de données : MongoDB Atlas (Mongoose)
 - Owner GitHub : `@NoeKen`
 
+> **Actualisation (septembre 2026)** — certaines mentions de ce fichier sont
+> obsolètes : l'API est déployée sur **Render** (pas Railway), tourne sous
+> **Node 22** (pas 20), le frontend est en **Next.js 16**, et le fournisseur
+> de paiement visé est **PayPal** (Stripe = code historique). Voir
+> [`docs/architecture/architecture-current.md`](./docs/architecture/architecture-current.md).
+> Consignes plateforme pour les agents : [`AGENTS.md`](./AGENTS.md).
+
+---
+
+## Plateforme — état réel et workflow
+
+### Architecture réelle
+NestJS 11 + MongoDB/Mongoose, JWT en cookies httpOnly host-only
+(`SameSite=Lax`), Resend, Cloudinary (dossier par environnement), PayPal ;
+Render (API) + Vercel (web). La cible PostgreSQL/Prisma/Workspaces/Redis est
+**non implémentée** (`docs/architecture/architecture-target.md`).
+
+### Commandes
+`npm run lint` · `npm run typecheck` · `npm run build` · `npm test` ·
+`npm run test:e2e` · `npm run start:dev`.
+
+### Branches
+`master` = production (ne pas renommer), `uat` = promotion, `dev` =
+intégration. `feature/*` | `fix/*` → PR `dev` → PR `dev → uat` → recette →
+PR `uat → master`. Jamais de commit direct sur `uat`/`master`, jamais de
+force-push.
+
+### CI
+`.github/workflows/ci.yml` — checks requis `quality`, `unit`, `e2e`,
+`security`, `dependency-review`. Base `mongo:7` éphémère, aucun secret de
+dépôt (`docs/operations/ci-cd.md`).
+
+### Tests
+Portes : lint + typecheck + build + `npm test` (+ `test:e2e` si le
+comportement HTTP change). Toute nouvelle mutation respecte « courriel non
+vérifié = lecture seule » (`docs/security/email-verification.md`).
+
+### Environnement — `ELINTYS_ENV`
+`local` | `ci` | `dev` | `uat` | `prod`, distinct de `NODE_ENV`.
+`src/config/env.validation.ts` refuse le démarrage si la configuration ne
+correspond pas à l'environnement (`docs/operations/environments.md`).
+
+### Migrations
+`npm run <migration> -- --environment=<dev|uat|prod> [--env-file=…]
+[--apply|--rollback] [--backup-path=…] [--confirm-database=…]` : dry-run par
+défaut, backup + post-validation + rapport en écriture, production
+verrouillée (`docs/operations/database-migrations.md`).
+
+### Interdits
+Aucun secret en clair (Git, docs, logs) ; aucune action sur la production ;
+aucun `reset:uat` / `--apply` sans demande explicite ; aucun test désactivé
+pour passer la CI ; pas de migration de stack.
+
+### PR
+Petite PR vers `dev`, description = quoi / pourquoi / comment tester, CI
+verte obligatoire, issue référencée pour un bug (`docs/operations/bug-workflow.md`).
+
 ---
 
 ## Stack technique — immuable
@@ -185,6 +242,19 @@ CLOUDINARY_API_SECRET=
 ANTHROPIC_API_KEY=          # Phase 2
 FRONTEND_URL=http://localhost:3000
 NODE_ENV=development
+```
+
+Variables ajoutées par la stabilisation UAT (voir `.env.example` et
+`docs/operations/environments.md` pour la matrice complète) :
+
+```bash
+ELINTYS_ENV=local               # local | ci | dev | uat | prod
+EMAIL_DELIVERY_ENABLED=true     # false = aucun envoi réel (CI/E2E)
+CLOUDINARY_FOLDER=              # vide => dérivé de ELINTYS_ENV
+UAT_SEED_PASSWORD=              # scripts seed:uat / reset:uat uniquement
+PAYPAL_PROVIDER_ENABLED=false
+PAYPAL_ENV=sandbox              # live réservé à ELINTYS_ENV=prod
+CORS_ORIGINS=                   # exigé en uat/prod (https, sans *)
 ```
 
 ---
