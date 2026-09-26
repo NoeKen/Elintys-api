@@ -1,5 +1,5 @@
 import { resolveCookieDomain } from './cookie-domain';
-import { resolveElintysEnvironment } from './elintys-environment';
+import { isStrictElintysEnvironment, resolveElintysEnvironment } from './elintys-environment';
 import {
   resolvePaidTicketHoldMinutes,
   resolveTestPaymentProviderEnabled,
@@ -12,7 +12,11 @@ export default () => {
     process.env.ELINTYS_ENV,
     nodeEnv,
   );
-  const frontendUrl = process.env.FRONTEND_URL ?? 'http://localhost:3000';
+  // Repli localhost réservé au poste de développement : sous NODE_ENV=production
+  // (dev, uat, prod), FRONTEND_URL est obligatoire (cf. env.validation.ts).
+  const frontendUrl =
+    process.env.FRONTEND_URL?.trim() ||
+    (nodeEnv === 'production' ? undefined : 'http://localhost:3000');
   resolveCookieDomain(process.env.COOKIE_DOMAIN);
 
   return {
@@ -62,6 +66,11 @@ export default () => {
       cloudName: process.env.CLOUDINARY_CLOUD_NAME,
       apiKey: process.env.CLOUDINARY_API_KEY,
       apiSecret: process.env.CLOUDINARY_API_SECRET,
+      /**
+       * Dossier d'environnement sous `Elintys/` (ex. `uat`). Absent ⇒ dérivé
+       * de ELINTYS_ENV (cf. getMediaRootPrefix).
+       */
+      folder: process.env.CLOUDINARY_FOLDER?.trim() || undefined,
     },
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY,
@@ -104,7 +113,9 @@ export default () => {
     },
     frontendUrl,
     authCookie: {
-      secure: nodeEnv === 'production',
+      // uat/prod exigent déjà NODE_ENV=production ; la condition explicite
+      // garantit des cookies Secure même si cette exigence était contournée.
+      secure: nodeEnv === 'production' || isStrictElintysEnvironment(elintysEnv),
     },
   };
 };
