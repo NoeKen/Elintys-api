@@ -210,6 +210,42 @@ describe('AuthService', () => {
         expect.objectContaining({ refreshToken: expect.any(String) }),
       );
     });
+
+    it("devrait rattacher les achats invités à la connexion d'un compte vérifié", async () => {
+      userModel.findOne.mockReturnValue(makeChainable({ ...mockUser, isEmailVerified: true }));
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      userModel.findByIdAndUpdate.mockResolvedValue({});
+
+      await service.login({ email: 'jean@test.com', password: 'motdepasse123' });
+
+      expect(testingModule.get(TicketsService).linkGuestPurchases).toHaveBeenCalledWith(
+        mockUser.email,
+        mockUser._id.toString(),
+      );
+    });
+
+    it("ne devrait pas rattacher les achats invités d'un compte non vérifié", async () => {
+      userModel.findOne.mockReturnValue(makeChainable(mockUser));
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      userModel.findByIdAndUpdate.mockResolvedValue({});
+
+      await service.login({ email: 'jean@test.com', password: 'motdepasse123' });
+
+      expect(testingModule.get(TicketsService).linkGuestPurchases).not.toHaveBeenCalled();
+    });
+
+    it('devrait connecter même si le rattachement des achats invités échoue', async () => {
+      userModel.findOne.mockReturnValue(makeChainable({ ...mockUser, isEmailVerified: true }));
+      (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+      userModel.findByIdAndUpdate.mockResolvedValue({});
+      (testingModule.get(TicketsService).linkGuestPurchases as jest.Mock).mockRejectedValueOnce(
+        new Error('mongo indisponible'),
+      );
+
+      await expect(
+        service.login({ email: 'jean@test.com', password: 'motdepasse123' }),
+      ).resolves.toHaveProperty('accessToken');
+    });
   });
 
   // ── logoutFromCookie ──
