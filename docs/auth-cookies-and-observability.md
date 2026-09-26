@@ -1,5 +1,7 @@
 # Cookies d'authentification et observabilité HTTP
 
+> Note (2026-09) : ce modèle suppose une API sur un sous-domaine d'`elintys.com` ; les URLs `*.onrender.com` utilisées en dev/uat sont cross-site — voir [`operations/environments.md`](./operations/environments.md#anomalies-connues).
+
 ## Domaines apparentés
 
 L'API conserve les jetons dans des cookies host-only `HttpOnly`,
