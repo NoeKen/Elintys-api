@@ -16,6 +16,7 @@ interface UserModelStub {
 }
 
 function makeService(userModel: UserModelStub, emails: Record<string, jest.Mock> = {}) {
+  const ticketsService = { linkGuestPurchases: jest.fn().mockResolvedValue(undefined) };
   const emailsService = {
     sendPasswordReset: jest.fn().mockResolvedValue(undefined),
     sendEmailVerification: jest.fn().mockResolvedValue(undefined),
@@ -26,9 +27,9 @@ function makeService(userModel: UserModelStub, emails: Record<string, jest.Mock>
     { signAsync: jest.fn().mockResolvedValue('jwt') } as never,
     { getOrThrow: jest.fn().mockReturnValue('secret'), get: jest.fn() } as never,
     emailsService as never,
-    { attachGuestPurchases: jest.fn().mockResolvedValue(undefined) } as never,
+    ticketsService as never,
   );
-  return { service, emailsService };
+  return { service, emailsService, ticketsService };
 }
 
 /** .findOne().select().lean() → valeur */
@@ -141,10 +142,11 @@ describe('AuthService — resetPassword', () => {
 
 describe('AuthService — verifyEmail', () => {
   it('devrait refuser un jeton de vérification inconnu', async () => {
-    const { service } = makeService({ find: findChain([]) });
+    const { service, ticketsService } = makeService({ find: findChain([]) });
     await expect(service.verifyEmail('jeton')).rejects.toThrow(
       new BadRequestException(ErrorCodes.INVALID_VERIFICATION_TOKEN),
     );
+    expect(ticketsService.linkGuestPurchases).not.toHaveBeenCalled();
   });
 
   it('devrait ignorer les comptes sans jeton de vérification', async () => {
@@ -157,12 +159,22 @@ describe('AuthService — verifyEmail', () => {
   it('devrait marquer le courriel comme vérifié et purger le jeton', async () => {
     const userId = new Types.ObjectId();
     const findByIdAndUpdate = jest.fn().mockResolvedValue(null);
-    const { service } = makeService({
-      find: findChain([{ _id: userId, emailVerificationToken: await bcrypt.hash('bon', 4) }]),
+    const { service, ticketsService } = makeService({
+      find: findChain([{
+        _id: userId,
+        email: 'verifie@example.ca',
+        emailVerificationToken: await bcrypt.hash('bon', 4),
+      }]),
       findByIdAndUpdate,
     });
 
     await service.verifyEmail('bon');
+
+    // Les achats invités ne sont rattachés qu'une fois l'adresse prouvée.
+    expect(ticketsService.linkGuestPurchases).toHaveBeenCalledWith(
+      'verifie@example.ca',
+      userId.toString(),
+    );
 
     const [id, update] = findByIdAndUpdate.mock.calls[0];
     expect(id).toBe(userId);
