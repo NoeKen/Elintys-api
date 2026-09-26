@@ -5,7 +5,7 @@
 | | URL |
 | --- | --- |
 | Application web | https://uat.elintys.com |
-| API (santé) | https://elintys-api-uat.onrender.com/api/v1/health |
+| API (santé) | https://api.uat.elintys.com/api/v1/health (en attendant le domaine : https://elintys-api-uat.onrender.com/api/v1/health) |
 
 L'environnement est `uat` : l'application affiche un badge **« UAT »** en bas
 à gauche, et la santé de l'API renvoie `"environment":"uat"`. Si le badge

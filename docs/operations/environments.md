@@ -15,7 +15,7 @@ validation citées sont celles du code : `src/config/env.validation.ts`,
 | `ELINTYS_ENV` (API) / `NEXT_PUBLIC_ELINTYS_ENV` (web) | `local` (défaut si absent et `NODE_ENV` ∈ development/test) | `ci` | `dev` | `uat` | `prod` |
 | Branche API / web | quelconque | PR et push `dev`/`uat`/`master` · `dev`/`uat`/`main` | `dev` / `dev` | `uat` / `uat` | `master` / `main` |
 | URL web | `http://localhost:3000` | dans le runner | `https://dev.elintys.com` | `https://uat.elintys.com` | `https://app.elintys.com` |
-| URL API | `http://localhost:3001/api/v1` | dans le runner | `https://elintys-api-dev-1pdh.onrender.com/api/v1` | `https://elintys-api-uat.onrender.com/api/v1` | `https://api.elintys.com/api/v1` (Render `https://elintys-api-s9fo.onrender.com`) |
+| URL API | `http://localhost:3001/api/v1` | dans le runner | `https://elintys-api-dev-1pdh.onrender.com/api/v1` | `https://api.uat.elintys.com/api/v1` (domaine Render à rattacher ; direct : `elintys-api-uat.onrender.com`) | `https://api.elintys.com/api/v1` (Render `https://elintys-api-s9fo.onrender.com`) |
 | Service API | poste | job GitHub Actions | Render `elintys-api-dev` (ohio) | Render `elintys-api-uat` (ohio) | Render `Elintys-api` (oregon) |
 | Base MongoDB | MongoDB local, ou `elintys-dev` distante (avertissement) | conteneur `mongo:7`, base `elintys-test` — **jamais Atlas** | `elintys-dev` (exigé) | `elintys-uat` (exigé, à créer) | nom explicite sans `dev`/`uat`/`test`/`local` — **à confirmer** |
 | Paiement | désactivé ou sandbox ; fournisseur de test possible | désactivé | sandbox ; fournisseur de test possible | **PayPal sandbox uniquement** (`PAYPAL_ENV=sandbox` exigé) ; actuellement fermé | PayPal `live` (exigé si PayPal activé) |
@@ -98,7 +98,7 @@ en local, `ci.yml` en CI. Détail : `Elintys-web/docs/deployment-environments.md
 | Variable | local | ci | dev (branche `dev`) | uat (branche `uat`) | prod (`main`) |
 | --- | --- | --- | --- | --- | --- |
 | `NEXT_PUBLIC_ELINTYS_ENV` | `local` (défaut) | `ci` | `dev` | `uat` | `prod` |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:3001/api/v1` | factice / API stub | `https://elintys-api-dev-1pdh.onrender.com/api/v1` | `https://elintys-api-uat.onrender.com/api/v1` | `https://api.elintys.com/api/v1` |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:3001/api/v1` | factice / API stub | `https://elintys-api-dev-1pdh.onrender.com/api/v1` | `https://api.uat.elintys.com/api/v1` (domaine Render à rattacher ; direct : `elintys-api-uat.onrender.com`) | `https://api.elintys.com/api/v1` |
 | `NEXT_PUBLIC_SITE_URL` | `http://localhost:3000` | factice | `https://dev.elintys.com` | `https://uat.elintys.com` | `https://app.elintys.com` |
 | `NEXT_PUBLIC_PAYPAL_ENV` | `sandbox` | `sandbox` | `sandbox` | `sandbox` | `live` (quand l'API l'est) |
 | `NEXT_PUBLIC_DISABLE_DEVTOOLS` | `false` | `true` | `true` | `true` | `true` |

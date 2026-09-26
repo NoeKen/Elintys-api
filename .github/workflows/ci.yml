@@ -107,6 +107,8 @@ jobs:
       JWT_SECRET: test-only-jwt-access-secret
       JWT_REFRESH_SECRET: test-only-jwt-refresh-secret
       EMAIL_DELIVERY_ENABLED: "false"
+      # EmailsService lit la clé au démarrage même quand l'envoi est désactivé.
+      RESEND_API_KEY: re_ci_disabled_not_a_key
       PAID_CHECKOUT_ENABLED: "false"
       PAYPAL_PROVIDER_ENABLED: "false"
       TEST_PAYMENT_PROVIDER_ENABLED: "false"
