@@ -240,6 +240,15 @@ Première exécution manuelle de `e2e-full` : échec de configuration (comptes Q
 tests sensibles au timing (focus clavier des onglets, mesure de débordement avant stabilisation) → assertions
 rendues asynchrones sans relâcher les seuils (smoke 51/51 sur 3 répétitions). Le smoke de démarrage de l'API a
 révélé que `EmailsService` exige `RESEND_API_KEY` même courriel désactivé → clé factice en CI (à corriger P3).
+Le smoke a aussi révélé un **vrai bug d'interface** : à 768 px, l'en-tête public débordait de 21 px (« S'inscrire
+gratuitement » coupé) avec les polices Linux → menu burger jusqu'à 1024 px (`PublicNavbar.tsx`).
+
+État de `e2e-full` en CI (exécution manuelle du 2026-09-26, 5ᵉ itération) : **257 réussis, 7 échecs, 43 non
+exécutés (séries interrompues), 2 skips historiques**. Corrections d'infrastructure apportées : comptes QA transmis,
+jeu de démonstration `seed:dev` dans le conteneur jetable, MongoDB en **replica set** (l'API utilise des
+transactions), build propre avant le smoke. Échecs restants : 6 specs médias (Cloudinary non configuré en CI →
+503 `MEDIA_STORAGE_NOT_CONFIGURED`, secrets de dépôt optionnels prévus, dossier `Elintys/ci`) et 1 ressource 404
+dans la console de la page Paramètres (à analyser). `e2e-full` reste **non bloquant** tant qu'il n'est pas vert.
 
 ## 26. Déploiement Web UAT
 
@@ -286,7 +295,7 @@ en prod).
 |---|---|---|
 | lint / typecheck / build | vert | vert |
 | unitaires | 90 suites / 1562 tests | 81 fichiers / 496 tests |
-| E2E | 11 suites / 208 tests | smoke 17/17 ; `e2e-full` : voir exécution CI |
+| E2E | 11 suites / 208 tests + smoke de démarrage | smoke 17/17 ; `e2e-full` 257 ✓ / 7 ✗ (§25) |
 | npm audit (prod) | 0 | 0 |
 | gitleaks | aucune fuite | aucune fuite (2 SHA d'audit ignorés via `.gitleaksignore`) |
 | `git diff --check` | propre | propre |
@@ -315,7 +324,7 @@ Agent distinct, lecture seule. Constats et suite donnée :
 - P1 (infra) : domaine `api.uat.elintys.com` requis pour que la session fonctionne en UAT (§18).
 - P1 (prod, hors mission) : variables prod à mettre en conformité avant la prochaine promotion `uat → master`.
 - P2 : `api.dev.elintys.com` pointe vers la prod ; enregistrement racine `elintys.com` (ALIAS Railway + A) incohérent.
-- P3 : §34 n° 8–10 ; pas de route de suppression de compte (droit Loi 25) ; outil de restauration non scripté ;
+- P3 : §34 n° 8–10 ; ressource 404 sur la page Paramètres (`e2e-full`) ; `EmailsService` exige `RESEND_API_KEY` même courriel désactivé ; pas de route de suppression de compte (droit Loi 25) ; outil de restauration non scripté ;
   Stripe encore câblé (activer PayPal et le paiement ensemble).
 
 ## 36. Risques restants
@@ -339,7 +348,8 @@ Agent distinct, lecture seule. Constats et suite donnée :
 | 8 | Cloudinary | Copier les identifiants dans Render UAT (dossier `uat` déjà configuré) | — | médias UAT | upload vers `Elintys/uat` |
 | 9 | GitHub | Merger #63 et #112 vers `dev`, puis PR de promotion `dev → uat` | — | déploiement UAT | CI verte, Render/Vercel UAT déployés |
 | 10 | Opérateur | `migrate:uat:wave-j` (dry-run puis `--apply`), `seed:uat` avec `UAT_SEED_PASSWORD` | — | données UAT | rapport de migration |
-| 11 | GitHub | Ajouter `e2e-full` aux checks requis de `uat`/`main` après une exécution verte | — | gate de promotion | — |
+| 11 | GitHub (Elintys-web) | Secrets de dépôt `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` (dossier `Elintys/ci` isolé) | — | specs médias de `e2e-full` | `e2e-full` vert |
+| 12 | GitHub | Ajouter `e2e-full` aux checks requis de `uat`/`main` après une exécution verte | — | gate de promotion | — |
 
 ## 38. URLs UAT
 
