@@ -136,15 +136,15 @@ export class AuthService {
       refreshToken: await bcrypt.hash(tokens.refreshToken, 12),
     });
 
-    await Promise.all([
-      this.emailsService.sendEmailVerification(user.email, {
-        fullName: user.fullName,
-        token: verificationToken,
-      }).catch(() => {
-        this.logger.error('Échec de l’envoi du courriel de vérification');
-      }),
-      this.ticketsService.linkGuestPurchases(user.email, userId),
-    ]);
+    // Les achats invités rattachés à cette adresse ne sont liés au compte
+    // qu'APRÈS vérification du courriel (cf. verifyEmail) : sinon n'importe qui
+    // pourrait s'approprier les billets d'autrui en s'inscrivant avec son adresse.
+    await this.emailsService.sendEmailVerification(user.email, {
+      fullName: user.fullName,
+      token: verificationToken,
+    }).catch(() => {
+      this.logger.error('Échec de l’envoi du courriel de vérification');
+    });
 
     return {
       accessToken:  tokens.accessToken,
@@ -540,6 +540,12 @@ export class AuthService {
       emailVerificationToken: null,
       emailVerificationExpiresAt: null,
     });
+
+    // Propriété de l'adresse désormais prouvée : rattacher les achats invités.
+    await this.ticketsService.linkGuestPurchases(
+      matchedUser.email,
+      (matchedUser._id as Types.ObjectId).toString(),
+    );
   }
 
   async resendVerification(email: string): Promise<void> {

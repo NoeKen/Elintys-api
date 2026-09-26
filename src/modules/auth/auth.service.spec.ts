@@ -140,6 +140,8 @@ describe('AuthService', () => {
       expect(userModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'jean@test.com' }),
       );
+      // Adresse non encore prouvée : aucun achat invité ne doit être rattaché.
+      expect(testingModule.get(TicketsService).linkGuestPurchases).not.toHaveBeenCalled();
     });
 
     it('lève ConflictException si le courriel existe déjà', async () => {
