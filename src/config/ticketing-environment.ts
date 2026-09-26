@@ -40,13 +40,16 @@ export function resolvePaidTicketHoldMinutes(raw: string | undefined): number {
 /**
  * Le fournisseur simulé n'est autorisé que si TOUTES ces conditions sont vraies :
  *   - `TEST_PAYMENT_PROVIDER_ENABLED === 'true'` (opt-in explicite)
- *   - `ELINTYS_ENV === 'dev'`
- *   - `NODE_ENV !== 'production'`
+ *   - `ELINTYS_ENV` ∈ {local, ci, dev} (`local` est l'ancien « dev » implicite
+ *     d'un poste de développement ; uat et prod sont TOUJOURS exclus)
+ *   - `NODE_ENV !== 'production'` (exclut donc tout déploiement Render)
  *
  * Toute demande d'activation dans un environnement non autorisé lève une erreur
  * au chargement de la configuration : impossible d'activer accidentellement en
  * production, et impossible de démarrer « à moitié activé ».
  */
+export const TEST_PAYMENT_PROVIDER_ENVIRONMENTS: readonly string[] = ['local', 'ci', 'dev'];
+
 export function resolveTestPaymentProviderEnabled(
   raw: string | undefined,
   elintysEnv: string,
@@ -55,9 +58,9 @@ export function resolveTestPaymentProviderEnabled(
   const requested = raw === 'true';
   if (!requested) return false;
 
-  if (elintysEnv !== 'dev' || nodeEnv === 'production') {
+  if (!TEST_PAYMENT_PROVIDER_ENVIRONMENTS.includes(elintysEnv) || nodeEnv === 'production') {
     throw new Error(
-      'TEST_PAYMENT_PROVIDER_ENABLED is only allowed when ELINTYS_ENV=dev and NODE_ENV is not production.',
+      'TEST_PAYMENT_PROVIDER_ENABLED is only allowed when ELINTYS_ENV is local, ci or dev and NODE_ENV is not production.',
     );
   }
   return true;

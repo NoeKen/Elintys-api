@@ -32,14 +32,17 @@ describe('resolveTestPaymentProviderEnabled', () => {
     },
   );
 
-  it('devrait autoriser le fournisseur simulé en dev', () => {
-    expect(resolveTestPaymentProviderEnabled('true', 'dev', 'development')).toBe(true);
+  it.each(['local', 'ci', 'dev'])('devrait autoriser le fournisseur simulé en %s', (elintysEnv) => {
+    expect(resolveTestPaymentProviderEnabled('true', elintysEnv, 'development')).toBe(true);
   });
 
   it.each([
     ['prod', 'production'],
     ['prod', 'development'],
+    ['uat', 'production'],
+    ['uat', 'development'],
     ['dev', 'production'],
+    ['local', 'production'],
   ])(
     'devrait refuser de démarrer avec ELINTYS_ENV=%s et NODE_ENV=%s',
     (elintysEnv, nodeEnv) => {
