@@ -1,16 +1,15 @@
-import 'dotenv/config';
-import mongoose from 'mongoose';
-import type { Db } from 'mongodb';
 import {
-  assertEnvironmentGuards,
+  applyValidation,
+  assertIndexMigrationPreconditions,
   IndexSpec,
   MinimalCollection,
   MinimalDb,
-  parseMode,
+  rollbackValidation,
   runApply,
   runPreflight,
   runRollback,
 } from './migrate-sprint3-wave4-indexes';
+import { MigrationDefinition, runMigrationCli } from './lib/migration-runner';
 
 /**
  * migrate-sprint3-wave5-indexes.ts — Paid Ticketing Core (Vague 5).
@@ -26,8 +25,9 @@ import {
  *   --apply           — création idempotente des index + backfill additif.
  *   --rollback        — suppression UNIQUEMENT des index listés ici.
  *
- * Gardes strictes (héritées) : `ELINTYS_ENV === 'dev'` ET base `elintys-dev`.
- * Production : impossible par construction.
+ * Gardes : contrat partagé `--environment=<dev|uat|prod>` (lib/environment-guard.ts),
+ * backup automatique avant écriture (`--backup-path`). Production bloquée sauf
+ * confirmations explicites complètes.
  *
  * BACKFILL — `tickettypes.reserved = 0`
  * -------------------------------------
@@ -158,80 +158,28 @@ export async function runReservedBackfill(
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
-async function connectAndRun(argv: string[]): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  // L'URI n'est jamais lue ni logguée en clair : on ne signale que son absence.
-  if (!uri) throw new Error('MONGODB_URI absent — aucune connexion tentée');
-
-  const elintysEnv = process.env.ELINTYS_ENV;
-  const mode = parseMode(argv);
-
-  await mongoose.connect(uri);
-  const db = mongoose.connection.db as unknown as Db;
-  if (!db) throw new Error('CONNECTION_FAILED: mongoose.connection.db indisponible');
-
-  try {
-    assertEnvironmentGuards(elintysEnv, db.databaseName);
-
+export const wave5Migration: MigrationDefinition = {
+  name: 'sprint3-wave5-indexes',
+  supportsRollback: true,
+  async run({ db, mode, target }) {
     const minimalDb = db as unknown as MinimalDb;
     const backfillDb = db as unknown as MinimalDbWithUpdate;
-
-    const preflight = await runPreflight(minimalDb, elintysEnv as string, WAVE5_INDEXES);
-    const backfillCandidates = await countBackfillCandidates(backfillDb);
-
-    console.log('\n===== PRÉFLIGHT VAGUE 5 (read-only) =====');
-    console.log(JSON.stringify({ ...preflight, backfillCandidates }, null, 2));
-
-    if (mode === 'dry-run') {
-      console.log('\n===== DRY-RUN — aucune écriture =====');
-      console.log('Pour appliquer : --apply');
-      console.log('Pour supprimer les index de cette vague : --rollback');
-      return;
-    }
-
-    if (preflight.summary.conflicts > 0) {
-      throw new Error('APPLY_REFUSED: conflits de spec — voir preflight.indexPlan');
-    }
-    if (!preflight.environment.replicaSet.transactionsAvailable) {
-      throw new Error(
-        'MIGRATION_REFUSED: transactions MongoDB indisponibles (replica set + sessions + primary writable requis)',
-      );
-    }
-    if (preflight.summary.invalidDocuments > 0) {
-      throw new Error('MIGRATION_REFUSED: documents invalides détectés');
-    }
-
+    const preflight = {
+      ...(await runPreflight(minimalDb, target.environment, WAVE5_INDEXES)),
+      backfillCandidates: await countBackfillCandidates(backfillDb),
+    };
+    if (mode === 'dry-run') return { preflight };
+    assertIndexMigrationPreconditions(preflight, mode === 'apply');
     if (mode === 'apply') {
-      if (preflight.summary.blockingDuplicates > 0) {
-        throw new Error(
-          'APPLY_REFUSED: doublons bloquant un index unique — voir preflight.blockingDuplicates',
-        );
-      }
       const indexReport = await runApply(minimalDb, WAVE5_INDEXES);
       const backfillReport = await runReservedBackfill(backfillDb);
-      console.log('\n===== APPLY VAGUE 5 =====');
-      console.log(JSON.stringify({ indexReport, backfillReport }, null, 2));
-      if (!indexReport.verificationPassed) {
-        throw new Error('APPLY_FAILED: vérification post-apply échouée');
-      }
-      return;
+      return { preflight, changes: { indexReport, backfillReport }, postValidation: applyValidation(indexReport) };
     }
-
+    // Le champ `reserved` n'est PAS retiré : toute suppression de champ est destructive et reste manuelle.
     const rollbackReport = await runRollback(minimalDb, WAVE5_INDEXES);
-    console.log('\n===== ROLLBACK VAGUE 5 (index uniquement) =====');
-    console.log(JSON.stringify(rollbackReport, null, 2));
-    console.log(
-      "Le champ `reserved` n'est PAS retiré : toute suppression de champ est destructive et reste manuelle.",
-    );
-  } finally {
-    await mongoose.disconnect();
-  }
-}
+    return { preflight, changes: rollbackReport, postValidation: rollbackValidation(rollbackReport) };
+  },
+};
 
 /* istanbul ignore next -- CLI entrypoint */
-if (require.main === module) {
-  connectAndRun(process.argv.slice(2)).catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  });
-}
+if (require.main === module) runMigrationCli(wave5Migration);

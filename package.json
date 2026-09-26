@@ -29,10 +29,15 @@
     "sprint3-wave5:migrate": "ts-node src/scripts/migrate-sprint3-wave5-indexes.ts",
     "wave5:concurrency": "ts-node src/scripts/verify-wave5-concurrency.ts",
     "sprint3-wave6:migrate": "ts-node src/scripts/migrate-sprint3-wave6-indexes.ts",
-    "wave-a:concurrency": "ts-node src/scripts/verify-wave-a-concurrency.ts"
-    ,"wave-j:venues:migrate": "ts-node src/scripts/migrate-s4-wave-j-venues.ts"
-    ,"wave-j:reviews:migrate": "ts-node src/scripts/migrate-s4-wave-j-reviews.ts"
-    ,"wave-j:reviews:concurrency": "ts-node src/scripts/verify-wave-j-review-concurrency.ts"
+    "wave-a:concurrency": "ts-node src/scripts/verify-wave-a-concurrency.ts",
+    "wave-j:venues:migrate": "ts-node src/scripts/migrate-s4-wave-j-venues.ts",
+    "wave-j:reviews:migrate": "ts-node src/scripts/migrate-s4-wave-j-reviews.ts",
+    "wave-j:migrate": "ts-node src/scripts/migrate-s4-wave-j.ts",
+    "wave-j:reviews:concurrency": "ts-node src/scripts/verify-wave-j-review-concurrency.ts",
+    "migrate:uat:wave-j": "ts-node src/scripts/migrate-s4-wave-j.ts --environment=uat",
+    "backup:db": "ts-node src/scripts/backup-database.ts",
+    "seed:uat": "ts-node src/scripts/seed-uat.ts",
+    "reset:uat": "ts-node src/scripts/reset-uat.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.19",

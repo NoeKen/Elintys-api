@@ -1,6 +1,13 @@
-import 'dotenv/config';
-import mongoose from 'mongoose';
-import type { Db } from 'mongodb';
+import {
+  ScriptGuardError,
+  assertEnvironmentGuards,
+  REQUIRED_DB_NAME,
+  REQUIRED_ELINTYS_ENV,
+} from './lib/environment-guard';
+import { MigrationDefinition, runMigrationCli } from './lib/migration-runner';
+
+// Compatibilité : la garde dev historique vit désormais dans lib/environment-guard.ts.
+export { assertEnvironmentGuards, REQUIRED_DB_NAME, REQUIRED_ELINTYS_ENV };
 
 /**
  * migrate-sprint3-wave4-indexes.ts — Critical Operations Wave 4.
@@ -12,14 +19,16 @@ import type { Db } from 'mongodb';
  *   --apply             — création idempotente + vérification post-apply.
  *   --rollback          — suppression ciblée UNIQUEMENT des indexes de cette migration.
  *
- * Gardes strictes appliquées AVANT toute écriture :
- *   - `ELINTYS_ENV === 'dev'`
- *   - Nom de la base MongoDB connectée === `elintys-dev`
+ * Gardes strictes appliquées AVANT toute écriture (lib/environment-guard.ts) :
+ *   - `--environment=<dev|uat|prod>` obligatoire, égal à `ELINTYS_ENV`
+ *   - base attendue : dev → `elintys-dev`, uat → `elintys-uat` ; prod bloqué
+ *     sauf confirmations explicites complètes
+ *   - `--apply` / `--rollback` exigent `--backup-path=<dir>` (backup complet)
  *
  * L'URI Mongo n'est JAMAIS lue ni logguée en clair.
  *
- * Pré-requis : backup de la base `elintys-dev` déjà réalisé
- * (script existant : `npm run backup:dev`).
+ * Backup : réalisé automatiquement par le runner avant toute écriture
+ * (`--backup-path`), rapport JSON écrit à côté du backup.
  *
  * Rollback documenté :
  *   Chaque index créé par ce script porte un `name` explicite ci-dessous
@@ -31,11 +40,6 @@ import type { Db } from 'mongodb';
  *   est authentifiée (participantId obligatoire) — aucun guestEmail n'est
  *   persisté depuis la Wave 4.
  */
-
-export const REQUIRED_ELINTYS_ENV = 'dev';
-export const REQUIRED_DB_NAME = 'elintys-dev';
-
-export type MigrationMode = 'dry-run' | 'apply' | 'rollback';
 
 export interface IndexSpec {
   collection: string;
@@ -104,35 +108,6 @@ export const INDEXES: readonly IndexSpec[] = [
     description: 'Contrainte permanente : UNE PaymentIntent = UNE finalisation',
   },
 ] as const;
-
-// ── Fonctions pures ─────────────────────────────────────────────────────────
-
-export function parseMode(argv: readonly string[]): MigrationMode {
-  const hasApply = argv.includes('--apply');
-  const hasRollback = argv.includes('--rollback');
-  if (hasApply && hasRollback) {
-    throw new Error('CONFLICTING_FLAGS: --apply et --rollback sont mutuellement exclusifs');
-  }
-  if (hasRollback) return 'rollback';
-  if (hasApply) return 'apply';
-  return 'dry-run';
-}
-
-export function assertEnvironmentGuards(
-  elintysEnv: string | undefined,
-  dbName: string | undefined,
-): void {
-  if (elintysEnv !== REQUIRED_ELINTYS_ENV) {
-    throw new Error(
-      `ENV_GUARD_FAILED: ELINTYS_ENV doit être exactement '${REQUIRED_ELINTYS_ENV}' (reçu: '${elintysEnv ?? 'undefined'}')`,
-    );
-  }
-  if (dbName !== REQUIRED_DB_NAME) {
-    throw new Error(
-      `DB_GUARD_FAILED: la base connectée doit être exactement '${REQUIRED_DB_NAME}' (reçu: '${dbName ?? 'undefined'}')`,
-    );
-  }
-}
 
 // ── Types de rapports ───────────────────────────────────────────────────────
 
@@ -544,83 +519,63 @@ export async function runRollback(
 
 // ── CLI ─────────────────────────────────────────────────────────────────────
 
-async function connectAndRun(argv: string[]): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) {
-    // Ne jamais logguer l'URI — on log seulement l'absence.
-    throw new Error('MONGODB_URI absent — aucune connexion tentée');
+/**
+ * Refus communs aux vagues d'index 4/5/6 avant toute écriture (apply ou rollback).
+ * `checkDuplicates` : un doublon ne bloque que la création d'un index unique.
+ */
+export function assertIndexMigrationPreconditions(
+  preflight: PreflightReport,
+  checkDuplicates: boolean,
+): void {
+  if (preflight.summary.conflicts > 0) {
+    throw new ScriptGuardError('APPLY_REFUSED', 'conflits de spec — voir preflight.indexPlan');
   }
-
-  const elintysEnv = process.env.ELINTYS_ENV;
-  const mode = parseMode(argv);
-
-  await mongoose.connect(uri);
-  const db = mongoose.connection.db as unknown as Db;
-  if (!db) {
-    throw new Error('CONNECTION_FAILED: mongoose.connection.db indisponible');
+  if (!preflight.environment.replicaSet.transactionsAvailable) {
+    throw new ScriptGuardError(
+      'MIGRATION_REFUSED',
+      'transactions MongoDB indisponibles (replica set + sessions + primary writable requis)',
+    );
   }
+  if (preflight.summary.invalidDocuments > 0) {
+    throw new ScriptGuardError('MIGRATION_REFUSED', 'documents invalides détectés — aucune correction automatique');
+  }
+  if (checkDuplicates && preflight.summary.blockingDuplicates > 0) {
+    throw new ScriptGuardError('APPLY_REFUSED', 'doublons bloquant un index unique — voir preflight.blockingDuplicates');
+  }
+}
 
-  try {
-    assertEnvironmentGuards(elintysEnv, db.databaseName);
+export function rollbackValidation(report: RollbackReport) {
+  return {
+    passed: report.errors.length === 0,
+    checks: { dropped: report.dropped.length, notPresent: report.notPresent.length },
+    errors: report.errors.map((item) => `ROLLBACK_FAILED: ${item.indexName}`),
+  };
+}
 
+export function applyValidation(report: ApplyReport) {
+  return {
+    passed: report.verificationPassed,
+    checks: { created: report.created.length, alreadyPresent: report.alreadyPresent.length },
+    errors: report.verificationErrors,
+  };
+}
+
+export const wave4Migration: MigrationDefinition = {
+  name: 'sprint3-wave4-indexes',
+  supportsRollback: true,
+  async run({ db, mode, target }) {
     const minimalDb = db as unknown as MinimalDb;
-    const preflight = await runPreflight(minimalDb, elintysEnv!, INDEXES);
-    console.log('\n===== PRÉFLIGHT (read-only) =====');
-    console.log(JSON.stringify(preflight, null, 2));
-
-    if (mode === 'dry-run') {
-      console.log('\n===== DRY-RUN — aucune écriture =====');
-      console.log('Pour exécuter les créations : --apply');
-      console.log('Pour rollback (indexes de cette migration uniquement) : --rollback');
-      return;
-    }
-
-    if (preflight.summary.conflicts > 0) {
-      throw new Error(
-        'APPLY_REFUSED: des conflits de spec existent — voir preflight.indexPlan',
-      );
-    }
-    if (!preflight.environment.replicaSet.transactionsAvailable) {
-      throw new Error(
-        'MIGRATION_REFUSED: transactions MongoDB indisponibles (replica set + sessions + primary writable requis)',
-      );
-    }
-    if (preflight.summary.invalidDocuments > 0) {
-      throw new Error(
-        'MIGRATION_REFUSED: documents invalides détectés — aucune correction automatique autorisée',
-      );
-    }
-    if (mode === 'apply' && preflight.summary.blockingDuplicates > 0) {
-      throw new Error(
-        'APPLY_REFUSED: des doublons bloqueraient un index unique — voir preflight.blockingDuplicates',
-      );
-    }
-
+    const preflight = await runPreflight(minimalDb, target.environment, INDEXES);
+    if (mode === 'dry-run') return { preflight };
+    assertIndexMigrationPreconditions(preflight, mode === 'apply');
     if (mode === 'apply') {
       const report = await runApply(minimalDb, INDEXES);
-      console.log('\n===== APPLY =====');
-      console.log(JSON.stringify(report, null, 2));
-      if (!report.verificationPassed) {
-        throw new Error('APPLY_FAILED: vérification post-apply échouée');
-      }
-      return;
+      return { preflight, changes: report, postValidation: applyValidation(report) };
     }
-
-    if (mode === 'rollback') {
-      const report = await runRollback(minimalDb, INDEXES);
-      console.log('\n===== ROLLBACK =====');
-      console.log(JSON.stringify(report, null, 2));
-      return;
-    }
-  } finally {
-    await mongoose.disconnect();
-  }
-}
+    const report = await runRollback(minimalDb, INDEXES);
+    return { preflight, changes: report, postValidation: rollbackValidation(report) };
+  },
+};
 
 /* istanbul ignore next -- CLI entrypoint */
-if (require.main === module) {
-  connectAndRun(process.argv.slice(2)).catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  });
-}
+if (require.main === module) runMigrationCli(wave4Migration);
