@@ -8,7 +8,6 @@ import {
   countBlockingDuplicates,
   detectReplicaSet,
   isMatchingSpec,
-  parseMode,
   runApply,
   runPreflight,
   runRollback,
@@ -91,27 +90,6 @@ const buildFakeDb = (opts: {
     }),
   };
 };
-
-// ── parseMode ───────────────────────────────────────────────────────────────
-
-describe('parseMode', () => {
-  it('retourne dry-run par défaut', () => {
-    expect(parseMode([])).toBe('dry-run');
-    expect(parseMode(['--verbose'])).toBe('dry-run');
-  });
-
-  it('retourne apply si --apply', () => {
-    expect(parseMode(['--apply'])).toBe('apply');
-  });
-
-  it('retourne rollback si --rollback', () => {
-    expect(parseMode(['--rollback'])).toBe('rollback');
-  });
-
-  it('refuse la combinaison --apply + --rollback', () => {
-    expect(() => parseMode(['--apply', '--rollback'])).toThrow(/CONFLICTING_FLAGS/);
-  });
-});
 
 // ── assertEnvironmentGuards ─────────────────────────────────────────────────
 

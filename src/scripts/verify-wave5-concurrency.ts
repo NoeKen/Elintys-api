@@ -121,7 +121,7 @@ async function assertIndexesPresent(connection: Connection): Promise<void> {
   const holds = await connection.db!.collection('ticket_holds').listIndexes().toArray();
   if (!holds.some((index) => index.name === 'ticket_holds_unique_order_line')) {
     throw new Error(
-      "INDEXES_MISSING: exécuter `npm run sprint3-wave5:migrate -- --apply` avant ce script",
+      "INDEXES_MISSING: exécuter `npm run sprint3-wave5:migrate -- --environment=dev --apply --backup-path=<dir>` avant ce script",
     );
   }
 }

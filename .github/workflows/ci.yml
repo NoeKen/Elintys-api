@@ -1,0 +1,193 @@
+# CI de l'API Elintys.
+#
+# Les noms de jobs (`name:`) sont des contrats : ils servent de « required
+# status checks » sur master / uat / dev. Ne pas les renommer sans mettre à
+# jour la protection de branche.
+#
+# Aucun filtre de chemins : chaque push / PR exécute tous les jobs, afin que
+# les checks requis rapportent toujours un vrai résultat (jamais un faux vert
+# par omission). La suite complète reste courte (quelques minutes).
+#
+# Aucun secret de dépôt n'est utilisé : la base est un conteneur MongoDB
+# éphémère (elintys-test) et les secrets JWT sont des valeurs factices de test.
+name: CI
+
+on:
+  pull_request:
+    branches: [dev, uat, master]
+  push:
+    branches: [dev, uat, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Annule les exécutions obsolètes des PR et de dev ; jamais celles de master / uat.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' && github.ref != 'refs/heads/uat' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+      - name: Whitespace errors in the PR diff
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git diff --check "$BASE_SHA"...HEAD
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: |
+          set -o pipefail
+          mkdir -p ci-logs
+          npm test 2>&1 | tee ci-logs/unit.log
+      - name: Upload unit test logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: unit-test-logs
+          path: ci-logs/
+          retention-days: 7
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      # Base éphémère propre au job — jamais Atlas, jamais dev / uat / prod.
+      mongodb:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      ELINTYS_ENV: ci
+      MONGODB_URI: mongodb://localhost:27017/elintys-test
+      # Valeurs factices, réservées aux tests CI (aucune valeur réelle).
+      JWT_SECRET: test-only-jwt-access-secret
+      JWT_REFRESH_SECRET: test-only-jwt-refresh-secret
+      EMAIL_DELIVERY_ENABLED: "false"
+      PAID_CHECKOUT_ENABLED: "false"
+      PAYPAL_PROVIDER_ENABLED: "false"
+      TEST_PAYMENT_PROVIDER_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: E2E tests
+        run: |
+          set -o pipefail
+          mkdir -p ci-logs
+          npm run test:e2e 2>&1 | tee ci-logs/e2e.log
+      - name: Upload e2e test logs
+        if: failure()
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: e2e-test-logs
+          path: ci-logs/
+          retention-days: 7
+
+  security:
+    name: security
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .nvmrc
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Install gitleaks (checksum verified)
+        run: |
+          set -euo pipefail
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o "$RUNNER_TEMP/$archive" "$base/$archive"
+          curl -sSfL -o "$RUNNER_TEMP/checksums.txt" "$base/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          (cd "$RUNNER_TEMP" && grep " ${archive}\$" checksums.txt | sha256sum -c -)
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP" gitleaks
+      - name: Secret scan (gitleaks)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # PR : commits de la PR ; push : commits poussés ; dispatch : historique complet.
+          range=""
+          case "$EVENT_NAME" in
+            pull_request) range="${PR_BASE_SHA}..${PR_HEAD_SHA}" ;;
+            push)
+              if [ -z "$PUSH_BEFORE_SHA" ] || [ "$PUSH_BEFORE_SHA" = "0000000000000000000000000000000000000000" ]; then
+                range="-1 ${HEAD_SHA}"
+              else
+                range="${PUSH_BEFORE_SHA}..${HEAD_SHA}"
+              fi
+              ;;
+          esac
+          args=(git . --redact --no-banner --exit-code 1)
+          if [ -n "$range" ]; then args+=("--log-opts=${range}"); fi
+          "$RUNNER_TEMP/gitleaks" "${args[@]}"
+
+  dependency-review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: high
