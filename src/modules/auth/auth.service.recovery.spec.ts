@@ -141,6 +141,23 @@ describe('AuthService — resetPassword', () => {
 });
 
 describe('AuthService — verifyEmail', () => {
+  it('devrait valider le courriel même si le rattachement des achats invités échoue', async () => {
+    const userId = new Types.ObjectId();
+    const findByIdAndUpdate = jest.fn().mockResolvedValue(null);
+    const { service, ticketsService } = makeService({
+      find: findChain([{
+        _id: userId,
+        email: 'verifie@example.ca',
+        emailVerificationToken: await bcrypt.hash('bon', 4),
+      }]),
+      findByIdAndUpdate,
+    });
+    ticketsService.linkGuestPurchases.mockRejectedValueOnce(new Error('mongo indisponible'));
+
+    await expect(service.verifyEmail('bon')).resolves.toBeUndefined();
+    expect(findByIdAndUpdate).toHaveBeenCalledWith(userId, expect.objectContaining({ isEmailVerified: true }));
+  });
+
   it('devrait refuser un jeton de vérification inconnu', async () => {
     const { service, ticketsService } = makeService({ find: findChain([]) });
     await expect(service.verifyEmail('jeton')).rejects.toThrow(

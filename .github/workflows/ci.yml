@@ -124,6 +124,26 @@ jobs:
           set -o pipefail
           mkdir -p ci-logs
           npm run test:e2e 2>&1 | tee ci-logs/e2e.log
+      # Les specs e2e mockent Mongoose : ce smoke démarre la vraie application
+      # (validation d'environnement, connexion au conteneur mongo:7, routes).
+      - name: Boot smoke (dist/main + /api/v1/health)
+        env:
+          PORT: "3001"
+          API_HOST: 127.0.0.1
+        run: |
+          npm run build
+          node dist/main > ci-logs/boot.log 2>&1 &
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://127.0.0.1:3001/api/v1/health > ci-logs/health.json 2>/dev/null \
+              && grep -q '"environment":"ci"' ci-logs/health.json; then
+              cat ci-logs/health.json
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "L'API n'a pas répondu sur /api/v1/health" >&2
+          tail -n 50 ci-logs/boot.log >&2
+          exit 1
       - name: Upload e2e test logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

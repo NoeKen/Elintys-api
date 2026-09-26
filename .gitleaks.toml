@@ -1,0 +1,15 @@
+# Configuration gitleaks — règles par défaut + une exclusion ciblée.
+title = "Elintys gitleaks config"
+
+[extend]
+useDefault = true
+
+# Les rapports d'audit citent des SHA de commits Git (ex. « API : `8d32f4…` »),
+# que la règle generic-api-key prend pour des clés. On n'ignore QUE des chaînes
+# hexadécimales de 7 à 40 caractères, et seulement dans docs/audits/.
+[[allowlists]]
+description = "SHA de commits cités dans les rapports d'audit"
+condition = "AND"
+paths = ['''^docs/audits/.*\.md$''']
+regexTarget = "secret"
+regexes = ['''^[0-9a-f]{7,40}$''']
