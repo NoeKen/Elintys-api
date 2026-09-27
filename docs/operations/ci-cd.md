@@ -25,7 +25,7 @@ Permissions : `contents: read`. Node : `.nvmrc` (22), cache npm.
 | --- | --- | --- | --- |
 | `quality` | 15 min | `npm ci`, `npm run lint`, `npm run typecheck`, `npm run build`, `git diff --check` (PR) | — |
 | `unit` | 20 min | `npm test` (Jest) | `unit-test-logs` si échec (7 j) |
-| `e2e` | 20 min | `npm run test:e2e` contre un service `mongo:7`, base `elintys-test`, `ELINTYS_ENV=ci`, `NODE_ENV=test`, envoi courriel et paiements désactivés, secrets JWT **factices** | `e2e-test-logs` si échec (7 j) |
+| `e2e` | 20 min | `npm run test:e2e`, smoke de démarrage et répétition UAT contre un `mongo:7` en replica set local, base `elintys-test`, `ELINTYS_ENV=ci`, `NODE_ENV=test`, envoi courriel et paiements désactivés, secrets JWT **factices** | `e2e-test-logs` si échec (7 j) |
 | `security` | 10 min | `npm audit --omit=dev --audit-level=high` ; gitleaks 8.30.1 (binaire vérifié par checksum) sur les commits de la PR / du push, historique complet en `workflow_dispatch` | — |
 | `dependency-review` | 5 min | `actions/dependency-review-action`, échec si sévérité ≥ high — **PR uniquement** | — |
 
@@ -49,7 +49,7 @@ Variables globales (non secrètes) : `NEXT_PUBLIC_ELINTYS_ENV=ci`,
 | `unit` | 15 min | `npm test` (Vitest) | — |
 | `build` | 15 min | `npm run build` avec URLs factices `.invalid` ; vérifie l'absence de source maps publiques | — |
 | `e2e-smoke` | 20 min | build + `npm run test:e2e:smoke` (Chromium, API factice `e2e/smoke/stub-api.mjs`) | `playwright-smoke-<tentative>` si échec (14 j) |
-| `e2e-full` | 75 min | API NestJS (checkout de `NoeKen/Elintys-api`) + `mongo:7` éphémère ; `npm run test:e2e:functional` puis la batterie smoke | `playwright-full-<tentative>` si échec (14 j) |
+| `e2e-full` | 75 min | API NestJS (checkout de `NoeKen/Elintys-api`) + `mongo:7` éphémère en replica set, `seed:dev` ; `npm run test:e2e:functional` puis la batterie smoke | `playwright-full-<tentative>` si échec (14 j) |
 | `security` | 15 min | `npm audit --omit=dev --audit-level=high`, gitleaks (`gitleaks/gitleaks-action@v2`), dependency-review (PR) | — |
 
 `e2e-full` ne s'exécute que sur `schedule`, `workflow_dispatch` ou une PR
