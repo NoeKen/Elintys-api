@@ -182,7 +182,7 @@ Cookies `httpOnly`, `SameSite=Lax`, host-only, `secure` forcé en `uat`/`prod`. 
 **Point bloquant d'infra** : `uat.elintys.com` → `elintys-api-uat.onrender.com` est *cross-site*
 (`onrender.com` est un suffixe public) : les cookies ne seraient pas envoyés et la session ne tiendrait pas.
 → Domaine personnalisé Render `api.uat.elintys.com` + `NEXT_PUBLIC_API_URL=https://api.uat.elintys.com/api/v1`.
-Même constat pour dev (`api.dev.elintys.com` pointe aujourd'hui vers la **prod**).
+Même constat pour dev (`api.dev.elintys.com` pointait vers la prod — CNAME corrigé le 2026-09-27 ; reste à rattacher le domaine dans Render).
 
 ## 19. Durcissement de la vérification courriel
 
@@ -323,7 +323,7 @@ Agent distinct, lecture seule. Constats et suite donnée :
 - P0 : aucun.
 - P1 (infra) : domaine `api.uat.elintys.com` requis pour que la session fonctionne en UAT (§18).
 - P1 (prod, hors mission) : variables prod à mettre en conformité avant la prochaine promotion `uat → master`.
-- P2 : `api.dev.elintys.com` pointe vers la prod ; enregistrement racine `elintys.com` (ALIAS Railway + A) incohérent.
+- P2 : enregistrement racine `elintys.com` (ALIAS Railway + A) incohérent.
 - P3 : §34 n° 8–10 ; ressource 404 sur la page Paramètres (`e2e-full`) ; `EmailsService` exige `RESEND_API_KEY` même courriel désactivé ; pas de route de suppression de compte (droit Loi 25) ; outil de restauration non scripté ;
   Stripe encore câblé (activer PayPal et le paiement ensemble).
 
@@ -341,7 +341,7 @@ Agent distinct, lecture seule. Constats et suite donnée :
 | 1 | Google Cloud / Firebase | Révoquer/régénérer la clé exposée dans `Elintys-LP/.env`, la restreindre par domaine ; puis retirer `.env` du dépôt | clé révoquée | dépôt public | alerte GitHub fermée |
 | 2 | MongoDB Atlas | Créer l'utilisateur `elintys-uat` (`readWrite@elintys-uat`) — ou activer l'accès MCP de l'organisation | URI `…/elintys-uat` | isolation UAT | `list-databases` |
 | 3 | Render `elintys-api-uat` | Renseigner `MONGODB_URI` (UAT) et `RESEND_API_KEY` ; health check path `/api/v1/health` ; domaine perso `api.uat.elintys.com` | voir §11 | démarrage + cookies same-site | `/api/v1/health` → `environment: "uat"` |
-| 4 | Hostinger DNS | CNAME `api.uat` → `elintys-api-uat.onrender.com.` ; corriger `api.dev` → `elintys-api-dev-1pdh.onrender.com.` | CNAME | refusé à l'agent par la politique de sécurité | `dig` |
+| 4 | Hostinger DNS | ~~CNAME `api.uat` → `elintys-api-uat.onrender.com.` ; `api.dev` → `elintys-api-dev-1pdh.onrender.com.`~~ **Fait le 2026-09-27** | CNAME | cookies same-site | `dig` OK |
 | 5 | Render `elintys-api-dev` | Domaine perso `api.dev.elintys.com` | — | cookies same-site en dev | health 200 |
 | 6 | Vercel `elintys-web` | Domaine `uat.elintys.com` → branche `uat` ; variables §26 ; `NEXT_PUBLIC_ELINTYS_ENV=dev` + `NEXT_PUBLIC_SITE_URL` (dev), `prod` (Production) | §26 | environnement UAT web | badge UAT visible |
 | 7 | PayPal Developer | Copier Client ID/Secret sandbox vers Render UAT, créer un webhook sandbox vers l'API UAT, renseigner `PAYPAL_WEBHOOK_ID`, puis `PAYPAL_PROVIDER_ENABLED=true` **et** `PAID_CHECKOUT_ENABLED=true` | sandbox | paiements UAT | achat sandbox |
