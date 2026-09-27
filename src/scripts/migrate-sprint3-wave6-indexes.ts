@@ -1,15 +1,14 @@
-import 'dotenv/config';
-import mongoose from 'mongoose';
-import type { Db } from 'mongodb';
 import {
-  assertEnvironmentGuards,
+  applyValidation,
+  assertIndexMigrationPreconditions,
   IndexSpec,
   MinimalDb,
-  parseMode,
+  rollbackValidation,
   runApply,
   runPreflight,
   runRollback,
 } from './migrate-sprint3-wave4-indexes';
+import { MigrationDefinition, runMigrationCli } from './lib/migration-runner';
 
 /**
  * migrate-sprint3-wave6-indexes.ts — PayPal Sandbox (Vague 6).
@@ -19,8 +18,9 @@ import {
  * et rollback ciblé. Seule la LISTE d'index change — aucune abstraction n'est
  * dupliquée.
  *
- * Gardes héritées : `ELINTYS_ENV === 'dev'` ET base `elintys-dev`.
- * Production : impossible par construction.
+ * Gardes : contrat partagé `--environment=<dev|uat|prod>` (lib/environment-guard.ts),
+ * backup automatique avant écriture (`--backup-path`). Production bloquée sauf
+ * confirmations explicites complètes.
  *
  * Aucun champ n'est transformé ni supprimé : les deux collections concernées
  * ne reçoivent que des index. `payment.settlementReference` est un champ
@@ -62,68 +62,22 @@ export const WAVE6_INDEXES: readonly IndexSpec[] = [
   },
 ] as const;
 
-async function connectAndRun(argv: string[]): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  // L'URI n'est jamais lue ni logguée en clair : on ne signale que son absence.
-  if (!uri) throw new Error('MONGODB_URI absent — aucune connexion tentée');
-
-  const elintysEnv = process.env.ELINTYS_ENV;
-  const mode = parseMode(argv);
-
-  await mongoose.connect(uri);
-  const db = mongoose.connection.db as unknown as Db;
-  if (!db) throw new Error('CONNECTION_FAILED: mongoose.connection.db indisponible');
-
-  try {
-    assertEnvironmentGuards(elintysEnv, db.databaseName);
+export const wave6Migration: MigrationDefinition = {
+  name: 'sprint3-wave6-indexes',
+  supportsRollback: true,
+  async run({ db, mode, target }) {
     const minimalDb = db as unknown as MinimalDb;
-
-    const preflight = await runPreflight(minimalDb, elintysEnv as string, WAVE6_INDEXES);
-    console.log('\n===== PRÉFLIGHT VAGUE 6 (read-only) =====');
-    console.log(JSON.stringify(preflight, null, 2));
-
-    if (mode === 'dry-run') {
-      console.log('\n===== DRY-RUN — aucune écriture =====');
-      console.log('Pour appliquer : --apply');
-      console.log('Pour supprimer les index de cette vague : --rollback');
-      return;
-    }
-
-    if (preflight.summary.conflicts > 0) {
-      throw new Error('APPLY_REFUSED: conflits de spec — voir preflight.indexPlan');
-    }
-    if (!preflight.environment.replicaSet.transactionsAvailable) {
-      throw new Error('MIGRATION_REFUSED: transactions MongoDB indisponibles');
-    }
-    if (preflight.summary.invalidDocuments > 0) {
-      throw new Error('MIGRATION_REFUSED: documents invalides détectés');
-    }
-
+    const preflight = await runPreflight(minimalDb, target.environment, WAVE6_INDEXES);
+    if (mode === 'dry-run') return { preflight };
+    assertIndexMigrationPreconditions(preflight, mode === 'apply');
     if (mode === 'apply') {
-      if (preflight.summary.blockingDuplicates > 0) {
-        throw new Error('APPLY_REFUSED: doublons bloquant un index unique');
-      }
       const report = await runApply(minimalDb, WAVE6_INDEXES);
-      console.log('\n===== APPLY VAGUE 6 =====');
-      console.log(JSON.stringify(report, null, 2));
-      if (!report.verificationPassed) {
-        throw new Error('APPLY_FAILED: vérification post-apply échouée');
-      }
-      return;
+      return { preflight, changes: report, postValidation: applyValidation(report) };
     }
-
-    const rollback = await runRollback(minimalDb, WAVE6_INDEXES);
-    console.log('\n===== ROLLBACK VAGUE 6 (index uniquement) =====');
-    console.log(JSON.stringify(rollback, null, 2));
-  } finally {
-    await mongoose.disconnect();
-  }
-}
+    const report = await runRollback(minimalDb, WAVE6_INDEXES);
+    return { preflight, changes: report, postValidation: rollbackValidation(report) };
+  },
+};
 
 /* istanbul ignore next -- CLI entrypoint */
-if (require.main === module) {
-  connectAndRun(process.argv.slice(2)).catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exit(1);
-  });
-}
+if (require.main === module) runMigrationCli(wave6Migration);

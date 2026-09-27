@@ -143,19 +143,19 @@ de la laisser tourner à moitié branchée sur un fournisseur de paiement.
 
 ```bash
 cd Elintys-api
-npm run backup:dev -- backups/paypal-wave6     # obligatoire avant toute écriture
-npm run sprint3-wave6:migrate                  # dry-run, aucune écriture
-npm run sprint3-wave6:migrate -- --apply       # elintys-dev uniquement
+npm run sprint3-wave6:migrate -- --environment=dev                                      # dry-run, aucune écriture
+npm run sprint3-wave6:migrate -- --environment=dev --apply --backup-path=backups/paypal-wave6  # backup complet automatique
 ```
 
 Rollback des index de cette vague :
 
 ```bash
-npm run sprint3-wave6:migrate -- --rollback
+npm run sprint3-wave6:migrate -- --environment=dev --rollback --backup-path=backups/paypal-wave6
 ```
 
-Gardes : `ELINTYS_ENV=dev` **et** base nommée exactement `elintys-dev`.
-La production est impossible par construction.
+Gardes (`src/scripts/lib/environment-guard.ts`) : `--environment` égal à `ELINTYS_ENV`,
+base `elintys-dev` (dev) ou `elintys-uat` (uat). La production est bloquée sauf
+confirmations explicites complètes (`--confirm-database`, `ELINTYS_ALLOW_PRODUCTION_MIGRATION`, backup).
 
 ---
 

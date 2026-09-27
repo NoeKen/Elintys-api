@@ -12,11 +12,11 @@ Statut : procédure en cours de validation. Ne pas appliquer en production.
 
 ## Exécution contrôlée
 
-1. Arrêter les writers/API de test pendant la bascule. Vérifier `ELINTYS_ENV=dev` et base exactement `elintys-dev`.
-2. Exécuter le script sans `--apply` pour obtenir les volumes et anomalies. Aucun document n'est modifié par ce mode.
-3. Sauvegarder la base avec le provisionneur de backup existant, vers un répertoire privé hors Git. Le script de migration sauvegarde également les documents et index concernés avant écriture.
+1. Arrêter les writers/API de test pendant la bascule. Le script exige `--environment=<dev|uat>` égal à `ELINTYS_ENV` et la base correspondante (`elintys-dev` / `elintys-uat`) ; la production est bloquée sauf confirmations explicites (voir `src/scripts/lib/environment-guard.ts`).
+2. Exécuter `npm run wave-j:venues:migrate -- --environment=dev [--env-file=<fichier>]` (dry-run par défaut) pour obtenir les volumes et anomalies. Aucun document n'est modifié par ce mode.
+3. Choisir un répertoire privé hors Git (ou sous `backups/`, ignoré). En mode `--apply`, le runner sauvegarde TOUTE la base (EJSON + index + manifeste SHA-256) avant écriture et y écrit `migration-report.json`.
 4. Vérifier sauvegarde, volumes, absence de liens incohérents et propriétaires manquants.
-5. Exécuter `npx ts-node src/scripts/migrate-s4-wave-j-venues.ts --apply --backup-dir <répertoire-privé>` seulement après revue du préflight.
+5. Exécuter `npm run wave-j:venues:migrate -- --environment=dev --apply --backup-path=<répertoire-privé>` seulement après revue du préflight (UAT : `npm run migrate:uat:wave-j -- --env-file=.env.uat.local --apply --backup-path=<dir>` enchaîne salles puis avis).
 6. Rejouer le dry-run : zéro lien manquant et ancien index unique absent. Vérifier les IDs, références et propriétés existantes avant/après.
 7. Démarrer exclusivement la nouvelle version API, puis tester deux créations de lieux, lecture, édition, ownership et réservations.
 

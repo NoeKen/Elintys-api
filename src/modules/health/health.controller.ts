@@ -1,4 +1,5 @@
 import { Controller, Get, Req } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Public } from '../../shared/decorators/public.decorator';
@@ -24,14 +25,22 @@ export interface ClientResolution {
 @ApiTags('Health')
 @Controller('health')
 export class HealthController {
+  constructor(private readonly configService: ConfigService) {}
+
+  /**
+   * `environment` (ELINTYS_ENV) n'est pas sensible : il permet de vérifier
+   * depuis l'extérieur qu'un déploiement tourne bien dans l'environnement
+   * attendu (ex. uat ≠ prod) sans exposer aucune configuration.
+   */
   @Public()
   @Get()
   @ApiOperation({ summary: "Vérifier que l'API est disponible" })
   @ApiResponse({ status: 200, description: "L'API est opérationnelle" })
-  check(): { status: 'ok'; service: 'elintys-api' } {
+  check(): { status: 'ok'; service: 'elintys-api'; environment: string } {
     return {
       status: 'ok',
       service: 'elintys-api',
+      environment: this.configService.getOrThrow<string>('elintysEnv'),
     };
   }
 

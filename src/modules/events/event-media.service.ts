@@ -26,6 +26,7 @@ import {
 import { Event, EventDocument, EventStatus } from './event.schema';
 import { canManageEvent } from './event-access.policy';
 import { getMediaRootPrefix } from '../media/media-environment';
+import type { ElintysEnvironment } from '../../config/elintys-environment';
 
 export interface EventMediaState {
   coverImage: MediaImage | string | null;
@@ -51,7 +52,8 @@ export class EventMediaService {
     configService: ConfigService,
   ) {
     this.mediaRootPrefix = getMediaRootPrefix(
-      configService.get<'dev' | 'prod'>('elintysEnv'),
+      configService.get<ElintysEnvironment>('elintysEnv'),
+      configService.get<string>('cloudinary.folder'),
     );
   }
 

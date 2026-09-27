@@ -30,6 +30,7 @@ import { UpdateNotificationPreferencesDto } from './dto/update-notification-pref
 import { AddRoleDto } from './dto/add-role.dto';
 import { Public } from '../../shared/decorators/public.decorator';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
+import { AllowUnverifiedEmail } from '../../shared/decorators/allow-unverified-email.decorator';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -73,6 +74,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('register')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Créer un nouveau compte' })
@@ -91,6 +93,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Se connecter et obtenir un access token' })
@@ -107,6 +110,7 @@ export class AuthController {
   }
 
   @Public()
+  @AllowUnverifiedEmail()
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Renouveler la session via le cookie refresh_token httpOnly" })
@@ -146,6 +150,7 @@ export class AuthController {
   }
 
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('me/change-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Changer mon mot de passe et révoquer ma session' })
@@ -160,6 +165,7 @@ export class AuthController {
     return { message: 'Mot de passe modifié. Reconnectez-vous.' };
   }
 
+  @AllowUnverifiedEmail()
   @Patch('me/notification-preferences')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Modifier mes préférences de courriels métier' })
@@ -188,6 +194,7 @@ export class AuthController {
   }
 
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('me/resend-verification')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Renvoyer la vérification à mon adresse authentifiée' })
@@ -196,6 +203,7 @@ export class AuthController {
     return { message: 'Un lien a été envoyé si votre adresse doit encore être vérifiée.' };
   }
 
+  @AllowUnverifiedEmail()
   @Patch('onboarding/:role')
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('access-token')
@@ -215,6 +223,7 @@ export class AuthController {
   }
 
   @Public()
+  @AllowUnverifiedEmail()
   @Post('logout')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Se déconnecter — efface le cookie et révoque la session en base' })
@@ -232,6 +241,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: THROTTLE_TIERS.FORGOT_PASSWORD })
+  @AllowUnverifiedEmail()
   @Post('forgot-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Demander un lien de réinitialisation de mot de passe' })
@@ -244,6 +254,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Réinitialiser le mot de passe avec le token reçu par courriel' })
@@ -257,6 +268,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('verify-email')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Vérifier l'adresse courriel avec le token reçu" })
@@ -270,6 +282,7 @@ export class AuthController {
 
   @Public()
   @Throttle({ default: THROTTLE_TIERS.AUTH_STRICT })
+  @AllowUnverifiedEmail()
   @Post('resend-verification')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: "Renvoyer le courriel de vérification d'adresse" })
