@@ -9,6 +9,10 @@ import { JwtAuthGuard } from './shared/guards/jwt-auth.guard';
 import { RolesGuard } from './shared/guards/roles.guard';
 import { AllExceptionsFilter } from './shared/filters/http-exception.filter';
 import { ConfigService } from '@nestjs/config';
+import {
+  ElintysEnvironment,
+  isStrictElintysEnvironment,
+} from './config/elintys-environment';
 import { createRequestObservabilityMiddleware } from './shared/middleware/request-observability.middleware';
 import {
   createTrustedOriginMiddleware,
@@ -27,8 +31,11 @@ async function bootstrap(): Promise<void> {
   const port = configService.getOrThrow<number>('port');
   const apiHost = process.env.API_HOST ?? '0.0.0.0';
   const nodeEnv = configService.get<string>('nodeEnv');
-  const elintysEnv = configService.getOrThrow<string>('elintysEnv');
-  const enableSwagger = process.env.ENABLE_SWAGGER === 'true' || nodeEnv !== 'production';
+  const elintysEnv = configService.getOrThrow<ElintysEnvironment>('elintysEnv');
+  // uat/prod se comportent TOUJOURS comme la production (NODE_ENV=production y
+  // est de plus exigé par env.validation.ts).
+  const isProductionLike = nodeEnv === 'production' || isStrictElintysEnvironment(elintysEnv);
+  const enableSwagger = process.env.ENABLE_SWAGGER === 'true' || !isProductionLike;
 
   app.use(helmet());
   app.use(createRequestObservabilityMiddleware(elintysEnv));
@@ -49,7 +56,7 @@ async function bootstrap(): Promise<void> {
 
       const isConfiguredOrigin = corsOrigins.includes(origin);
       const isLocalNetworkOrigin =
-        nodeEnv !== 'production' &&
+        !isProductionLike &&
         /^https?:\/\/(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$/.test(
           origin,
         );

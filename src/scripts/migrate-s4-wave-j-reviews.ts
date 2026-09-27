@@ -1,53 +1,78 @@
-import 'dotenv/config';
-import mongoose from 'mongoose';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
-import { assertEnvironmentGuards } from './migrate-sprint3-wave4-indexes';
+import type { Db } from 'mongodb';
+import { MigrationDefinition, MigrationOutcome, runMigrationCli } from './lib/migration-runner';
+import { listIndexesOrEmpty } from './lib/collection-indexes';
+
+/**
+ * Wave J — index des avis vérifiés V2 (additif, aucun avis supprimé).
+ *
+ * Contrat CLI (voir lib/migration-runner.ts) :
+ *   npm run wave-j:reviews:migrate -- --environment=<dev|uat> [--env-file=.env.uat.local]
+ *   npm run wave-j:reviews:migrate -- --environment=<dev|uat> --apply --backup-path=<dir>
+ */
 
 const LEGACY_INDEX = 'author_1_targetType_1_targetId_1';
+const VERIFIED_UNIQUE_INDEX = 'review_verified_context_unique';
+const PUBLIC_FEED_INDEX = 'review_public_feed';
 
-export async function migrateReviewIndexes(apply: boolean, backupDirectory?: string): Promise<void> {
-  const uri = process.env.MONGODB_URI;
-  if (!uri) throw new Error('MONGODB_URI_REQUIRED');
-  assertEnvironmentGuards(process.env.ELINTYS_ENV, decodeURIComponent(new URL(uri).pathname.slice(1)));
-  if (apply && !backupDirectory) throw new Error('BACKUP_DIRECTORY_REQUIRED');
-  await mongoose.connect(uri, { serverSelectionTimeoutMS: 15_000, autoIndex: false });
-  try {
-    const db = mongoose.connection.db!;
-    assertEnvironmentGuards(process.env.ELINTYS_ENV, db.databaseName);
-    const reviews = db.collection('reviews');
-    const documents = await reviews.find({}).toArray();
-    const indexes = await reviews.indexes();
-    const legacy = indexes.find((index) => index.name === LEGACY_INDEX);
-    const verified = documents.filter((review) => review.schemaVersion === 2);
-    const invalid = verified.filter((review) => !review.contextType || !review.contextId || !review.direction || !review.verifiedAt);
-    if (invalid.length) throw new Error('INVALID_VERIFIED_REVIEW');
-    console.log(JSON.stringify({ mode: apply ? 'apply' : 'dry-run', database: db.databaseName, reviews: documents.length, verified: verified.length, legacyUniquePresent: Boolean(legacy) }));
-    if (!apply) return;
+export async function runReviewMigration(db: Db, apply: boolean): Promise<MigrationOutcome> {
+  const reviews = db.collection('reviews');
+  const documents = await reviews.find({}).toArray();
+  const indexes = await listIndexesOrEmpty(reviews);
+  const legacy = indexes.find((index) => index.name === LEGACY_INDEX);
+  const verified = documents.filter((review) => review.schemaVersion === 2);
+  const invalid = verified.filter((review) => !review.contextType || !review.contextId || !review.direction || !review.verifiedAt);
+  if (invalid.length) throw new Error('INVALID_VERIFIED_REVIEW');
+  const preflight = { database: db.databaseName, reviews: documents.length, verified: verified.length, legacyUniquePresent: Boolean(legacy) };
+  if (!apply) return { preflight };
 
-    const directory = resolve(backupDirectory!, `wave-j-reviews-${Date.now()}`);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    await writeFile(join(directory, 'reviews.ejson'), mongoose.mongo.BSON.EJSON.stringify(documents, { relaxed: false }), { mode: 0o600, flag: 'wx' });
-    await writeFile(join(directory, 'indexes.json'), JSON.stringify(indexes, null, 2), { mode: 0o600, flag: 'wx' });
-    await reviews.createIndex(
-      { author: 1, contextType: 1, contextId: 1, direction: 1 },
-      { unique: true, name: 'review_verified_context_unique', partialFilterExpression: { schemaVersion: 2 } },
-    );
-    await reviews.createIndex({ targetType: 1, targetId: 1, createdAt: -1, _id: -1 }, { name: 'review_public_feed' });
-    if (legacy) await reviews.dropIndex(LEGACY_INDEX);
-    if (await reviews.countDocuments({}) !== documents.length) throw new Error('REVIEW_COUNT_CHANGED');
-    console.log(JSON.stringify({ verified: true, preservedReviews: documents.length, backupDirectory: directory }));
-  } finally {
-    await mongoose.disconnect();
-  }
+  await reviews.createIndex(
+    { author: 1, contextType: 1, contextId: 1, direction: 1 },
+    { unique: true, name: VERIFIED_UNIQUE_INDEX, partialFilterExpression: { schemaVersion: 2 } },
+  );
+  await reviews.createIndex({ targetType: 1, targetId: 1, createdAt: -1, _id: -1 }, { name: PUBLIC_FEED_INDEX });
+  if (legacy) await reviews.dropIndex(LEGACY_INDEX);
+
+  // ── Post-validation ──
+  const after = await reviews.countDocuments({});
+  if (after !== documents.length) throw new Error('REVIEW_COUNT_CHANGED');
+  const current = await listIndexesOrEmpty(reviews);
+  const uniqueIndex = current.find((index) => index.name === VERIFIED_UNIQUE_INDEX);
+  const verifiedUniquePresent = uniqueIndex?.unique === true
+    && JSON.stringify(uniqueIndex.partialFilterExpression) === JSON.stringify({ schemaVersion: 2 });
+  const publicFeedPresent = current.some((index) => index.name === PUBLIC_FEED_INDEX);
+  const legacyStillPresent = current.some((index) => index.name === LEGACY_INDEX);
+  // Orphelins : signalés (pré-existants possibles), la migration ne les crée pas et n'y touche pas.
+  const authorIds = [...new Set(documents.map((review) => String(review.author)))];
+  const existingAuthors = authorIds.length
+    ? await db.collection('users').countDocuments({ _id: { $in: documents.map((review) => review.author) } })
+    : 0;
+  const errors: string[] = [];
+  if (!verifiedUniquePresent) errors.push('VERIFIED_REVIEW_UNIQUE_INDEX_MISSING');
+  if (!publicFeedPresent) errors.push('REVIEW_PUBLIC_FEED_INDEX_MISSING');
+  if (legacyStillPresent) errors.push('LEGACY_REVIEW_INDEX_STILL_PRESENT');
+
+  return {
+    preflight,
+    changes: { legacyIndexDropped: Boolean(legacy) },
+    postValidation: {
+      passed: errors.length === 0,
+      checks: {
+        reviewsBefore: documents.length,
+        reviewsAfter: after,
+        verifiedUniquePresent,
+        publicFeedPresent,
+        legacyStillPresent,
+        reviewAuthorsMissing: authorIds.length - existingAuthors,
+      },
+      errors,
+    },
+  };
 }
 
-if (require.main === module) {
-  const backupIndex = process.argv.indexOf('--backup-dir');
-  migrateReviewIndexes(process.argv.includes('--apply'), backupIndex < 0 ? undefined : process.argv[backupIndex + 1])
-    .catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : '';
-      console.error(`WAVE_J_REVIEW_MIGRATION_FAILED ${/^[A-Z][A-Z0-9_]{2,80}$/.test(message) ? message : 'PREFLIGHT_OR_DATABASE_ERROR'}`);
-      process.exitCode = 1;
-    });
-}
+export const reviewMigration: MigrationDefinition = {
+  name: 'wave-j-reviews',
+  run: ({ db, mode }) => runReviewMigration(db, mode === 'apply'),
+};
+
+/* istanbul ignore next -- CLI entrypoint */
+if (require.main === module) runMigrationCli(reviewMigration);

@@ -5,6 +5,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { ElintysThrottlerGuard } from './shared/guards/elintys-throttler.guard';
 import configuration from './config/configuration';
+import { validateEnvironment } from './config/env.validation';
 import { THROTTLE_TIERS } from './config/throttle.config';
 
 import { AuthModule } from './modules/auth/auth.module';
@@ -32,6 +33,9 @@ import { ScheduleModule } from '@nestjs/schedule';
       load: [configuration],
       isGlobal: true,
       envFilePath: '.env',
+      // Fail-fast : refuse de démarrer sur une configuration invalide pour
+      // l'environnement ELINTYS_ENV (cf. env.validation.ts). Noms seulement.
+      validate: validateEnvironment,
     }),
     MongooseModule.forRootAsync({
       imports: [ConfigModule],

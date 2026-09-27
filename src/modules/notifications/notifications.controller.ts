@@ -12,6 +12,7 @@ import { NotificationsService } from './notifications.service';
 import { CurrentUser, JwtPayload } from '../../shared/decorators/current-user.decorator';
 import { ParseObjectIdPipe } from '../../shared/pipes/parse-object-id.pipe';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
+import { AllowUnverifiedEmail } from '../../shared/decorators/allow-unverified-email.decorator';
 
 @ApiTags('Notifications')
 @Controller('notifications')
@@ -43,12 +44,14 @@ export class NotificationsController {
     });
   }
 
+  @AllowUnverifiedEmail()
   @Patch(':id/read')
   @HttpCode(HttpStatus.NO_CONTENT)
   markRead(@Param('id', ParseObjectIdPipe) id: string, @CurrentUser() user: JwtPayload) {
     return this.notificationsService.markRead(id, user.sub);
   }
 
+  @AllowUnverifiedEmail()
   @Patch('read-all')
   @HttpCode(HttpStatus.NO_CONTENT)
   markAllRead(@CurrentUser() user: JwtPayload) {

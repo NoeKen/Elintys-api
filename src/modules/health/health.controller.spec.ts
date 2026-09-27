@@ -1,18 +1,22 @@
+import { ConfigService } from '@nestjs/config';
 import { HealthController } from './health.controller';
+
+const configService = { getOrThrow: jest.fn().mockReturnValue('uat') } as unknown as ConfigService;
 
 describe('HealthController', () => {
   it("retourne un état stable exploitable par l'orchestrateur", () => {
-    const controller = new HealthController();
+    const controller = new HealthController(configService);
 
     expect(controller.check()).toEqual({
       status: 'ok',
       service: 'elintys-api',
+      environment: 'uat',
     });
   });
 });
 
 describe('HealthController — résolution de l’adresse cliente', () => {
-  const controller = new HealthController();
+  const controller = new HealthController(configService);
 
   /** Requête minimale, telle qu'Express la présente au contrôleur. */
   const requete = (options: {
