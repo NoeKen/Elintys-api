@@ -1,5 +1,6 @@
 import type { Db } from 'mongodb';
 import { MigrationDefinition, MigrationOutcome, runMigrationCli } from './lib/migration-runner';
+import { listIndexesOrEmpty } from './lib/collection-indexes';
 
 /**
  * Wave J — index des avis vérifiés V2 (additif, aucun avis supprimé).
@@ -16,7 +17,7 @@ const PUBLIC_FEED_INDEX = 'review_public_feed';
 export async function runReviewMigration(db: Db, apply: boolean): Promise<MigrationOutcome> {
   const reviews = db.collection('reviews');
   const documents = await reviews.find({}).toArray();
-  const indexes = await reviews.indexes();
+  const indexes = await listIndexesOrEmpty(reviews);
   const legacy = indexes.find((index) => index.name === LEGACY_INDEX);
   const verified = documents.filter((review) => review.schemaVersion === 2);
   const invalid = verified.filter((review) => !review.contextType || !review.contextId || !review.direction || !review.verifiedAt);
@@ -34,7 +35,7 @@ export async function runReviewMigration(db: Db, apply: boolean): Promise<Migrat
   // ── Post-validation ──
   const after = await reviews.countDocuments({});
   if (after !== documents.length) throw new Error('REVIEW_COUNT_CHANGED');
-  const current = await reviews.indexes();
+  const current = await listIndexesOrEmpty(reviews);
   const uniqueIndex = current.find((index) => index.name === VERIFIED_UNIQUE_INDEX);
   const verifiedUniquePresent = uniqueIndex?.unique === true
     && JSON.stringify(uniqueIndex.partialFilterExpression) === JSON.stringify({ schemaVersion: 2 });

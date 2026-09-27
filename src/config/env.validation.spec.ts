@@ -360,11 +360,36 @@ describe('evaluateEnvironment — courriel', () => {
     expect(warningsOf({ ...DEV, EMAIL_DELIVERY_ENABLED: 'yes' }).join('\n')).toContain('EMAIL_DELIVERY_ENABLED');
   });
 
+  it.each(['FALSE', ' false', 'false ', 'False'])(
+    'devrait refuser la variante %p en uat et la traiter comme à l’exécution (envoi actif)',
+    (variant) => {
+      const env = {
+        ...without(without(UAT, 'RESEND_API_KEY') as Record<string, string>, 'EMAIL_FROM'),
+        EMAIL_DELIVERY_ENABLED: variant,
+      };
+      const errors = errorsOf(env).join('\n');
+      expect(errors).toContain('EMAIL_DELIVERY_ENABLED must be one of the following values');
+      // configuration.ts n'éteint l'envoi que pour la valeur exacte "false" :
+      // la validation exige donc Resend, comme l'exécution l'utilisera.
+      expect(errors).toContain('RESEND_API_KEY is required');
+      expect(errors).toContain('EMAIL_FROM is required');
+    },
+  );
+
   it('devrait seulement avertir en dev si Resend manque', () => {
     const env = without(DEV, 'RESEND_API_KEY');
     expect(errorsOf(env)).toEqual([]);
     expect(warningsOf(env)).toContain('RESEND_API_KEY is required');
   });
+});
+
+describe('evaluateEnvironment — drapeaux booléens canoniques', () => {
+  it.each(['PAYPAL_PROVIDER_ENABLED', 'PAID_CHECKOUT_ENABLED', 'TEST_PAYMENT_PROVIDER_ENABLED'])(
+    'devrait refuser la variante TRUE de %s en uat',
+    (name) => {
+      expect(errorsOf({ ...UAT, [name]: 'TRUE' }).join('\n')).toContain(`${name} must be one of the following values`);
+    },
+  );
 });
 
 describe('evaluateEnvironment — Cloudinary', () => {

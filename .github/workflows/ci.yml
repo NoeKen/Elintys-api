@@ -88,21 +88,11 @@ jobs:
     name: e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      # Base éphémère propre au job — jamais Atlas, jamais dev / uat / prod.
-      mongodb:
-        image: mongo:7
-        ports:
-          - 27017:27017
-        options: >-
-          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok'"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
     env:
       NODE_ENV: test
       ELINTYS_ENV: ci
-      MONGODB_URI: mongodb://localhost:27017/elintys-test
+      # Base éphémère propre au job (replica set local au runner) — jamais Atlas.
+      MONGODB_URI: mongodb://127.0.0.1:27017/elintys-test?replicaSet=rs0
       # Valeurs factices, réservées aux tests CI (aucune valeur réelle).
       JWT_SECRET: test-only-jwt-access-secret
       JWT_REFRESH_SECRET: test-only-jwt-refresh-secret
@@ -120,6 +110,25 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      # Replica set à un nœud : l'API et les migrations utilisent des
+      # transactions, qu'un service container standalone refuse.
+      - name: MongoDB éphémère (replica set à un nœud)
+        run: |
+          docker run -d --name mongo -p 27017:27017 mongo:7 --replSet rs0 --bind_ip_all
+          for attempt in $(seq 1 30); do
+            docker exec mongo mongosh --quiet --eval 'db.runCommand({ ping: 1 }).ok' >/dev/null 2>&1 && break
+            sleep 2
+          done
+          docker exec mongo mongosh --quiet --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "127.0.0.1:27017" }] })'
+          for attempt in $(seq 1 30); do
+            if docker exec mongo mongosh --quiet --eval 'db.hello().isWritablePrimary' | grep -q true; then
+              echo "replica set prêt"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "replica set non prêt" >&2
+          exit 1
       - run: npm ci
       - name: E2E tests
         run: |
@@ -146,6 +155,33 @@ jobs:
           echo "L'API n'a pas répondu sur /api/v1/health" >&2
           tail -n 50 ci-logs/boot.log >&2
           exit 1
+      # Répétition de la séquence UAT documentée (database-migrations.md) sur
+      # une base `elintys-uat` VIERGE et jetable du runner : migrations Wave
+      # 4/5/6 puis Wave J (--apply, sauvegarde préalable), seed:uat, puis une
+      # seconde passe pour prouver l'idempotence. Aucune base distante.
+      - name: Répétition migration + seed UAT (base vierge jetable)
+        run: |
+          set -o pipefail
+          umask 077
+          env_file="$RUNNER_TEMP/uat-rehearsal.env"
+          seed_password="Ci-$(openssl rand -hex 16)"
+          echo "::add-mask::$seed_password"
+          {
+            echo "ELINTYS_ENV=uat"
+            echo "MONGODB_URI=mongodb://127.0.0.1:27017/elintys-uat?replicaSet=rs0"
+            echo "UAT_SEED_PASSWORD=$seed_password"
+          } > "$env_file"
+          backups="$RUNNER_TEMP/uat-backups"
+          for pass in 1 2; do
+            echo "::group::Passe $pass"
+            npm run sprint3-wave4:migrate -- --environment=uat --env-file="$env_file" --apply --backup-path="$backups/p$pass-w4"
+            npm run sprint3-wave5:migrate -- --environment=uat --env-file="$env_file" --apply --backup-path="$backups/p$pass-w5"
+            npm run sprint3-wave6:migrate -- --environment=uat --env-file="$env_file" --apply --backup-path="$backups/p$pass-w6"
+            npm run migrate:uat:wave-j -- --env-file="$env_file" --apply --backup-path="$backups/p$pass-wj"
+            npm run seed:uat -- --env-file="$env_file"
+            echo "::endgroup::"
+          done 2>&1 | tee ci-logs/uat-rehearsal.log
+          npm run migrate:uat:wave-j -- --env-file="$env_file" 2>&1 | tee -a ci-logs/uat-rehearsal.log
       - name: Upload e2e test logs
         if: failure()
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0

@@ -1,6 +1,7 @@
 import mongoose, { Types } from 'mongoose';
 import type { Db } from 'mongodb';
 import { MigrationDefinition, MigrationOutcome, runMigrationCli } from './lib/migration-runner';
+import { listIndexesOrEmpty } from './lib/collection-indexes';
 
 /**
  * Wave J — rattachement des salles à un profil gestionnaire (additif).
@@ -23,7 +24,7 @@ export async function runVenueMigration(db: Db, apply: boolean): Promise<Migrati
   const venues = db.collection('venueprofiles');
   const managers = db.collection('venuemanagerprofiles');
   const allVenues = await venues.find({}).toArray();
-  const indexes = await venues.indexes();
+  const indexes = await listIndexesOrEmpty(venues);
   const legacy = indexes.find(index => index.name === LEGACY_VENUE_INDEX);
   if (legacy && (JSON.stringify(legacy.key) !== JSON.stringify({ user: 1 }) || legacy.unique !== true)) {
     throw new Error('UNEXPECTED_LEGACY_INDEX');
@@ -77,7 +78,7 @@ export async function runVenueMigration(db: Db, apply: boolean): Promise<Migrati
     if (!owner) orphanVenues += 1;
   }
   if (orphanVenues) errors.push('VENUE_ORPHANS_AFTER_MIGRATION');
-  const [venueIndexes, managerIndexes] = [await venues.indexes(), await managers.indexes()];
+  const [venueIndexes, managerIndexes] = [await listIndexesOrEmpty(venues), await listIndexesOrEmpty(managers)];
   const ownershipIndexPresent = venueIndexes.some(index => index.name === VENUE_OWNERSHIP_INDEX);
   const managerUniquePresent = managerIndexes.some(index => index.name === MANAGER_USER_INDEX && index.unique === true);
   const legacyStillPresent = venueIndexes.some(index => index.name === LEGACY_VENUE_INDEX);

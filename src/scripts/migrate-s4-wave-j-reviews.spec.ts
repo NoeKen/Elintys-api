@@ -29,6 +29,25 @@ describe('Wave J review index migration', () => {
     expect(reviews.dropIndex).not.toHaveBeenCalled();
   });
 
+  it('devrait accepter une base vierge sans collection reviews (NamespaceNotFound)', async () => {
+    const missing = Object.assign(new Error('ns does not exist'), { code: 26 });
+    reviews.find.mockReturnValue({ toArray: async () => [] });
+    reviews.countDocuments.mockResolvedValue(0);
+    reviews.indexes.mockRejectedValueOnce(missing);
+    const dryRun = await runReviewMigration(db, false);
+    expect(dryRun.preflight).toEqual({ database: 'elintys-uat', reviews: 0, verified: 0, legacyUniquePresent: false });
+
+    reviews.indexes
+      .mockRejectedValueOnce(missing)
+      .mockResolvedValueOnce([
+        { name: 'review_verified_context_unique', unique: true, partialFilterExpression: { schemaVersion: 2 } },
+        { name: 'review_public_feed' },
+      ]);
+    const applied = await runReviewMigration(db, true);
+    expect(applied.postValidation?.passed).toBe(true);
+    expect(reviews.dropIndex).not.toHaveBeenCalled();
+  });
+
   it('devrait refuser un avis vérifié incomplet avant toute écriture', async () => {
     reviews.find.mockReturnValue({ toArray: async () => [{ ...verifiedReview, verifiedAt: undefined }] });
     await expect(runReviewMigration(db, true)).rejects.toThrow('INVALID_VERIFIED_REVIEW');

@@ -1,4 +1,5 @@
 import { resolveCookieDomain } from './cookie-domain';
+import { isOptInFlagEnabled, isOptOutFlagEnabled } from './env-flags';
 import { isStrictElintysEnvironment, resolveElintysEnvironment } from './elintys-environment';
 import {
   resolvePaidTicketHoldMinutes,
@@ -50,7 +51,7 @@ export default () => {
       secretKey: process.env.STRIPE_SECRET_KEY,
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
       // Fail closed: paid checkout is unsafe until stock is reserved before payment.
-      checkoutEnabled: process.env.PAID_CHECKOUT_ENABLED === 'true',
+      checkoutEnabled: isOptInFlagEnabled(process.env.PAID_CHECKOUT_ENABLED),
     },
     resend: {
       apiKey: process.env.RESEND_API_KEY,
@@ -60,7 +61,7 @@ export default () => {
       // Les E2E système valident les producteurs et l'UI sans envoyer de
       // courriels réels à leurs adresses fixtures. Le transport reste actif
       // par défaut dans tous les environnements.
-      enabled: process.env.EMAIL_DELIVERY_ENABLED !== 'false',
+      enabled: isOptOutFlagEnabled(process.env.EMAIL_DELIVERY_ENABLED),
     },
     cloudinary: {
       cloudName: process.env.CLOUDINARY_CLOUD_NAME,

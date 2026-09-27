@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { plainToInstance, Transform } from 'class-transformer';
 import { IsIn, IsOptional, Matches, validateSync } from 'class-validator';
+import { ENV_FLAG_VALUES, isOptInFlagEnabled, isOptOutFlagEnabled } from './env-flags';
 import {
   ELINTYS_ENVIRONMENTS,
   ElintysEnvironment,
@@ -29,7 +30,6 @@ export const DEV_DATABASE_NAME = 'elintys-dev';
 export const CI_DATABASE_NAME = 'elintys-test';
 export const CLOUDINARY_FOLDER_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
-const BOOLEAN_STRINGS = ['true', 'false'] as const;
 const FORBIDDEN_PROD_DATABASE_PATTERN = /dev|uat|test|local/i;
 const FORBIDDEN_PROD_FOLDER_PATTERN = /dev|uat|test|local|ci/i;
 const LOCAL_HOST_PATTERN =
@@ -53,13 +53,13 @@ export class EnvironmentVariables {
   ELINTYS_ENV?: string;
 
   @IsOptional()
-  @Transform(trimLower)
-  @IsIn(BOOLEAN_STRINGS)
+  // Valeur canonique exacte : même lecture qu'à l'exécution (env-flags.ts).
+  @IsIn(ENV_FLAG_VALUES)
   EMAIL_DELIVERY_ENABLED?: string;
 
   @IsOptional()
-  @Transform(trimLower)
-  @IsIn(BOOLEAN_STRINGS)
+  // Valeur canonique exacte : même lecture qu'à l'exécution (env-flags.ts).
+  @IsIn(ENV_FLAG_VALUES)
   PAYPAL_PROVIDER_ENABLED?: string;
 
   @IsOptional()
@@ -68,13 +68,13 @@ export class EnvironmentVariables {
   PAYPAL_ENV?: string;
 
   @IsOptional()
-  @Transform(trimLower)
-  @IsIn(BOOLEAN_STRINGS)
+  // Valeur canonique exacte : même lecture qu'à l'exécution (env-flags.ts).
+  @IsIn(ENV_FLAG_VALUES)
   PAID_CHECKOUT_ENABLED?: string;
 
   @IsOptional()
-  @Transform(trimLower)
-  @IsIn(BOOLEAN_STRINGS)
+  // Valeur canonique exacte : même lecture qu'à l'exécution (env-flags.ts).
+  @IsIn(ENV_FLAG_VALUES)
   TEST_PAYMENT_PROVIDER_ENABLED?: string;
 
   @IsOptional()
@@ -303,7 +303,7 @@ function checkPublicUrls(
 
 function checkPayments(env: RawEnvironment, elintysEnv: ElintysEnvironment, out: Collector): void {
   const paypalEnv = readString(env, 'PAYPAL_ENV')?.toLowerCase();
-  const paypalEnabled = readString(env, 'PAYPAL_PROVIDER_ENABLED')?.toLowerCase() === 'true';
+  const paypalEnabled = isOptInFlagEnabled(env.PAYPAL_PROVIDER_ENABLED);
 
   if (paypalEnv === 'live' && elintysEnv !== 'prod') {
     out.add(true, 'PAYPAL_ENV', 'live PayPal is only allowed when ELINTYS_ENV=prod');
@@ -315,7 +315,7 @@ function checkPayments(env: RawEnvironment, elintysEnv: ElintysEnvironment, out:
     out.add(true, 'PAYPAL_ENV', 'must be "live" when PAYPAL_PROVIDER_ENABLED=true and ELINTYS_ENV=prod');
   }
   if (
-    readString(env, 'TEST_PAYMENT_PROVIDER_ENABLED')?.toLowerCase() === 'true' &&
+    isOptInFlagEnabled(env.TEST_PAYMENT_PROVIDER_ENABLED) &&
     isStrictElintysEnvironment(elintysEnv)
   ) {
     out.add(true, 'TEST_PAYMENT_PROVIDER_ENABLED', `must not be enabled when ELINTYS_ENV=${elintysEnv}`);
@@ -325,8 +325,9 @@ function checkPayments(env: RawEnvironment, elintysEnv: ElintysEnvironment, out:
 function checkEmail(env: RawEnvironment, elintysEnv: ElintysEnvironment, out: Collector): void {
   const strict = isStrictElintysEnvironment(elintysEnv);
   if (!strict && elintysEnv !== 'dev') return;
-  // Même sémantique que configuration.ts : absent ⇒ envoi actif.
-  const enabled = readString(env, 'EMAIL_DELIVERY_ENABLED')?.toLowerCase() !== 'false';
+  // Lecture partagée avec configuration.ts : absent ⇒ envoi actif ; seule la
+  // valeur exacte `false` désactive (toute variante est refusée au format).
+  const enabled = isOptOutFlagEnabled(env.EMAIL_DELIVERY_ENABLED);
   if (!enabled) return;
   required(env, 'RESEND_API_KEY', strict, out);
   required(env, 'EMAIL_FROM', strict, out);

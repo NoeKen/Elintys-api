@@ -37,6 +37,25 @@ describe('Wave J migration safety', () => {
     expect(managers.findOneAndUpdate).not.toHaveBeenCalled();
   });
 
+  it('devrait accepter une base vierge sans collections (NamespaceNotFound)', async () => {
+    const missing = Object.assign(new Error('ns does not exist'), { code: 26 });
+    venues.find.mockReturnValue({ toArray: async () => [] });
+    venues.indexes.mockRejectedValueOnce(missing).mockResolvedValue([
+      { name: 'managerProfile_1_createdAt_-1__id_1', key: { managerProfile: 1, createdAt: -1, _id: 1 } },
+    ]);
+    venues.countDocuments.mockResolvedValue(0);
+    managers.indexes.mockResolvedValue([{ name: 'user_1', key: { user: 1 }, unique: true }]);
+    managers.countDocuments.mockResolvedValue(0);
+
+    const dryRun = await runVenueMigration(db, false);
+    expect(dryRun.preflight).toEqual({ database: 'elintys-dev', venues: 0, pendingLinks: 0, legacyUniquePresent: false });
+
+    venues.indexes.mockRejectedValueOnce(missing);
+    const applied = await runVenueMigration(db, true);
+    expect(applied.postValidation?.passed).toBe(true);
+    expect(venues.dropIndex).not.toHaveBeenCalled();
+  });
+
   it('devrait exiger --backup-path avant toute connexion en mode apply', async () => {
     const deps: RunnerDependencies = {
       connect: jest.fn(), disconnect: jest.fn(), backup: jest.fn(), writeReport: jest.fn(), log: jest.fn(),
