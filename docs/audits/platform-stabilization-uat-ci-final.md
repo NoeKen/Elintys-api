@@ -151,7 +151,12 @@ Séquence UAT (base neuve) : Wave 4/5/6 index → `npm run migrate:uat:wave-j` �
 
 ## 15. Exécution de la migration UAT
 
-**Non exécutée** — la base `elintys-uat` n'existe pas encore (§37).
+**Non exécutée sur Atlas** — la base `elintys-uat` n'existe pas encore (§37).
+**Répétée en CI** (job `e2e`, base vierge jetable, replica set) : Wave 4/5/6 + Wave J `--apply` puis `seed:uat`,
+deux passes, statut `succeeded` à chaque étape (0 → 41 documents, 3 lieux, 4 avis), dry-run final propre.
+Correctifs issus de la revue de la PR : collections absentes (`NamespaceNotFound`, code 26) traitées comme sans
+index dans les migrations Wave J ; drapeaux booléens d'environnement lus par un parseur unique (`env-flags.ts`) et
+variantes non canoniques (`FALSE`, ` false`) refusées au démarrage.
 
 ## 16. Services externes
 
@@ -294,7 +299,7 @@ en prod).
 | Contrôle | API | Web |
 |---|---|---|
 | lint / typecheck / build | vert | vert |
-| unitaires | 90 suites / 1562 tests | 81 fichiers / 496 tests |
+| unitaires | 1587 tests | 81 fichiers / 496 tests |
 | E2E | 11 suites / 208 tests + smoke de démarrage | smoke 17/17 ; `e2e-full` 257 ✓ / 7 ✗ (§25) |
 | npm audit (prod) | 0 | 0 |
 | gitleaks | aucune fuite | aucune fuite (2 SHA d'audit ignorés via `.gitleaksignore`) |

@@ -114,3 +114,12 @@ npm run test:e2e
 npm ci && npm run lint && npm run typecheck && npm test && npm run build
 NEXT_PUBLIC_API_URL=http://127.0.0.1:3999/api/v1 npm run build && npm run test:e2e:smoke
 ```
+
+
+## Répétition de la séquence UAT (job `e2e`)
+
+Le job `e2e` démarre un MongoDB **replica set à un nœud** local au runner (les migrations et l'API utilisent des
+transactions), puis rejoue la séquence UAT documentée sur une base `elintys-uat` **vierge et jetable** :
+Wave 4/5/6 et Wave J en `--apply` (sauvegarde préalable dans `$RUNNER_TEMP`), `seed:uat`, deux passes pour prouver
+l'idempotence, puis un dry-run Wave J final. Aucune base distante n'est utilisée. Journal : artefact `e2e-test-logs`
+(`uat-rehearsal.log`) en cas d'échec.
